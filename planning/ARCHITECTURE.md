@@ -47,7 +47,7 @@ ebiotrack/
 ├── ml/             # C  - optional
 ├── datasets/       # C (data), D (README)
 ├── docs/           # D  - plus slice write-ups from A, B, C, D
-├── planning/       # D  - architecture, team roles, original spec
+├── planning/       # D  - architecture, team roles, workflow, original spec
 └── .github/        # C  - CI
 ```
 
@@ -60,7 +60,7 @@ ebiotrack/
 | `ml/` | C | Optional |
 | `datasets/` | C / D | C data files, D documentation |
 | `docs/` | D | Slice write-ups by slice owners |
-| `planning/` | D | Project planning documents (this file, team roles, original spec) |
+| `planning/` | D | Project planning documents (this file, team roles, workflow, original spec) |
 | `.github/` | C | CI |
 
 ## Database slice map
@@ -319,6 +319,7 @@ Project-planning documents, kept apart from the deliverable documentation in `do
 |---|---|---|
 | `planning/TEAM_ROLES.md` | D | Team roles and work split |
 | `planning/ARCHITECTURE.md` | D | This file: architecture and file ownership |
+| `planning/WORKFLOW.md` | D | How the team works: task dependencies, parallel work, gates, schedule |
 | `planning/eBioTrack_README.md` | D | Original project specification |
 
 ## Rules for working in someone else's area
