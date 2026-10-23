@@ -7,10 +7,10 @@ Two dimensions keep the work equal:
 
 | Member | Discipline (whole project) | Database slice |
 |---|---|---|
-| **A** | **Backend** (including platform/DevOps) | Access, Projects & Audit |
-| **B** | **Frontend** | Laboratory & Sequencing |
-| **C** | **Testing & QA** | Analysis, Taxonomy & Analytics |
-| **D** | **Documentation & Demo** | Field & Samples |
+| **A** — Dhruve | **Backend** (including platform/DevOps) | Access, Projects & Audit |
+| **B** — Bhumi | **Frontend** | Laboratory & Sequencing |
+| **C** — Arvind | **Testing & QA** | Analysis, Taxonomy & Analytics |
+| **D** — Krishna | **Documentation & Demo** | Field & Samples |
 
 Database slices are chosen to fit each discipline: A's auth and audit slice pairs with the backend authorization work, and C's analysis slice (transactions, concurrency, query correctness) pairs with testing.
 

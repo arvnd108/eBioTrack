@@ -1,5 +1,7 @@
 # Member C — Testing & QA
 
+**Assigned to:** Arvind
+
 **Database slice:** Analysis, Taxonomy & Analytics
 
 Related documents: [TEAM_ROLES](../TEAM_ROLES.md) · [ARCHITECTURE](../ARCHITECTURE.md) · [WORKFLOW](../WORKFLOW.md)

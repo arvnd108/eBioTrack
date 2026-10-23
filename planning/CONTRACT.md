@@ -740,7 +740,7 @@ The backend resolves `scientific_name` and `taxon_rank` to `taxon_id` before cal
 
 Gate **G0** passes when all four have reviewed sections 1–12 and ticked their box.
 
-- [ ] **A** (Backend): conventions, API, permissions, error mapping, `090` list
-- [ ] **B** (Frontend): endpoints, example payloads, enums, import format
-- [ ] **C** (Testing): fixture world, enums, signatures, import format, error codes
-- [ ] **D** (Docs): all sections; ER diagram and `api.md` are drafted from this file
+- [ ] **A** — Dhruve (Backend): conventions, API, permissions, error mapping, `090` list
+- [ ] **B** — Bhumi (Frontend): endpoints, example payloads, enums, import format
+- [ ] **C** — Arvind (Testing): fixture world, enums, signatures, import format, error codes
+- [ ] **D** — Krishna (Docs): all sections; ER diagram and `api.md` are drafted from this file

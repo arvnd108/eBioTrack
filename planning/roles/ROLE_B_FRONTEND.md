@@ -1,5 +1,7 @@
 # Member B — Frontend
 
+**Assigned to:** Bhumi
+
 **Database slice:** Laboratory & Sequencing
 
 Related documents: [TEAM_ROLES](../TEAM_ROLES.md) · [ARCHITECTURE](../ARCHITECTURE.md) · [WORKFLOW](../WORKFLOW.md)

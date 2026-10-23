@@ -1,5 +1,7 @@
 # Member D — Documentation & Demo
 
+**Assigned to:** Krishna
+
 **Database slice:** Field & Samples
 
 Related documents: [TEAM_ROLES](../TEAM_ROLES.md) · [ARCHITECTURE](../ARCHITECTURE.md) · [WORKFLOW](../WORKFLOW.md)

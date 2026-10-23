@@ -6,10 +6,10 @@ This document lives in `planning/` and describes how the repository is organized
 
 | Member | Discipline | Database slice |
 |---|---|---|
-| **A** | Backend (incl. platform/DevOps) | Access, Projects & Audit |
-| **B** | Frontend | Laboratory & Sequencing |
-| **C** | Testing & QA | Analysis, Taxonomy & Analytics |
-| **D** | Docs & Demo | Field & Samples |
+| **A** — Dhruve | Backend (incl. platform/DevOps) | Access, Projects & Audit |
+| **B** — Bhumi | Frontend | Laboratory & Sequencing |
+| **C** — Arvind | Testing & QA | Analysis, Taxonomy & Analytics |
+| **D** — Krishna | Docs & Demo | Field & Samples |
 
 See [TEAM_ROLES.md](TEAM_ROLES.md) for the full responsibilities of each role.
 

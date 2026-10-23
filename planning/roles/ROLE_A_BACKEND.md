@@ -1,5 +1,7 @@
 # Member A — Backend (and platform/DevOps)
 
+**Assigned to:** Dhruve
+
 **Database slice:** Access, Projects & Audit
 
 Related documents: [TEAM_ROLES](../TEAM_ROLES.md) · [ARCHITECTURE](../ARCHITECTURE.md) · [WORKFLOW](../WORKFLOW.md)

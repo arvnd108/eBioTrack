@@ -6,10 +6,10 @@ Member key (see [TEAM_ROLES.md](TEAM_ROLES.md)):
 
 | Member | Discipline | Database slice |
 |---|---|---|
-| **A** | Backend (incl. platform/DevOps) | Access, Projects & Audit |
-| **B** | Frontend | Laboratory & Sequencing |
-| **C** | Testing & QA | Analysis, Taxonomy & Analytics |
-| **D** | Docs & Demo | Field & Samples |
+| **A** — Dhruve | Backend (incl. platform/DevOps) | Access, Projects & Audit |
+| **B** — Bhumi | Frontend | Laboratory & Sequencing |
+| **C** — Arvind | Testing & QA | Analysis, Taxonomy & Analytics |
+| **D** — Krishna | Docs & Demo | Field & Samples |
 
 Ownership of each file is in [ARCHITECTURE.md](ARCHITECTURE.md).
 
