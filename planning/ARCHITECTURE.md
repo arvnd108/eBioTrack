@@ -1,6 +1,6 @@
 # eBioTrack — Architecture and File Ownership
 
-This document describes how the repository is organized and **who owns which folder and file**. It is generated from the same list that created the folder skeleton, so every file below exists in the repo as a stub with an `Owner` header.
+This document lives in `planning/` and describes how the repository is organized and **who owns which folder and file**. It is generated from the same list that created the folder skeleton, so every file below exists in the repo as a stub with an `Owner` header.
 
 ## Team key
 
@@ -47,6 +47,7 @@ ebiotrack/
 ├── ml/             # C  - optional
 ├── datasets/       # C (data), D (README)
 ├── docs/           # D  - plus slice write-ups from A, B, C, D
+├── planning/       # D  - architecture, team roles, original spec
 └── .github/        # C  - CI
 ```
 
@@ -59,6 +60,7 @@ ebiotrack/
 | `ml/` | C | Optional |
 | `datasets/` | C / D | C data files, D documentation |
 | `docs/` | D | Slice write-ups by slice owners |
+| `planning/` | D | Project planning documents (this file, team roles, original spec) |
 | `.github/` | C | CI |
 
 ## Database slice map
@@ -295,9 +297,6 @@ Project documentation. **D** owns and compiles it; slice owners write the `docs/
 
 | File | Owner | Purpose |
 |---|---|---|
-| `docs/TEAM_ROLES.md` | D | Team roles and work split (already written) |
-| `docs/eBioTrack_README.md` | D | Original project specification (already added) |
-| `docs/ARCHITECTURE.md` | D | This file: architecture and file ownership |
 | `docs/er-diagram.md` | D | Combined ER/EER diagram |
 | `docs/normalization.md` | D | Normalization report compiled from slice write-ups |
 | `docs/api.md` | D | API reference (from backend routes) |
@@ -311,6 +310,16 @@ Project documentation. **D** owns and compiles it; slice owners write the `docs/
 | `docs/slices/field.md` | D | Slice write-up and normalization notes: Field & Samples |
 | `docs/slices/lab.md` | B | Slice write-up and normalization notes: Laboratory & Sequencing |
 | `docs/slices/analysis.md` | C | Slice write-up and normalization notes: Analysis, Taxonomy & Analytics |
+
+### Planning
+
+Project-planning documents, kept apart from the deliverable documentation in `docs/`. Owned by **D**.
+
+| File | Owner | Purpose |
+|---|---|---|
+| `planning/TEAM_ROLES.md` | D | Team roles and work split |
+| `planning/ARCHITECTURE.md` | D | This file: architecture and file ownership |
+| `planning/eBioTrack_README.md` | D | Original project specification |
 
 ## Rules for working in someone else's area
 
