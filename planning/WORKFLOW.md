@@ -41,7 +41,7 @@ Each member's database items are listed once per member (rows marked "each") but
 
 | ID | Task | Owner | Needs |
 |---|---|---|---|
-| T00 | Contract workshop: tables, keys, enums, statuses, seed ID ranges, endpoint list | All | — |
+| T00 | Contract workshop: review and sign off [CONTRACT.md](CONTRACT.md) (tables, keys, enums, statuses, seed ID ranges, procedure signatures, endpoints) | All | — |
 
 ### Phase 1 — Foundations
 
