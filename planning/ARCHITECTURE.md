@@ -319,7 +319,11 @@ Project-planning documents, kept apart from the deliverable documentation in `do
 |---|---|---|
 | `planning/TEAM_ROLES.md` | D | Team roles and work split |
 | `planning/ARCHITECTURE.md` | D | This file: architecture and file ownership |
-| `planning/WORKFLOW.md` | D | How the team works: task dependencies, parallel work, gates, schedule |
+| `planning/WORKFLOW.md` | D | How the team works: task dependencies, parallel work, gates, order of work |
+| `planning/roles/ROLE_A_BACKEND.md` | D | Member A guide: role, files, workflow, start-now and blocked tasks |
+| `planning/roles/ROLE_B_FRONTEND.md` | D | Member B guide: role, files, workflow, start-now and blocked tasks |
+| `planning/roles/ROLE_C_TESTING.md` | D | Member C guide: role, files, workflow, start-now and blocked tasks |
+| `planning/roles/ROLE_D_DOCS.md` | D | Member D guide: role, files, workflow, start-now and blocked tasks |
 | `planning/eBioTrack_README.md` | D | Original project specification |
 
 ## Rules for working in someone else's area
