@@ -1,0 +1,11 @@
+# Owner: A (Backend)
+# Purpose: Local PostgreSQL for development and tests
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ebiotrack
+      POSTGRES_PASSWORD: change_me
+      POSTGRES_DB: ebiotrack
+    ports:
+      - "5432:5432"

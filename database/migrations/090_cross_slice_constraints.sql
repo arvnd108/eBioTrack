@@ -1,0 +1,2 @@
+-- Owner: A (Backend)
+-- Purpose: Foreign keys across slices, applied last; reviewed by all

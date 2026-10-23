@@ -1,0 +1,2 @@
+-- Owner: B (Frontend)
+-- Purpose: Tables, keys, CHECK/UNIQUE constraints: Laboratory & Sequencing

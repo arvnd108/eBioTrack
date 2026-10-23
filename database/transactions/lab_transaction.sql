@@ -1,0 +1,2 @@
+-- Owner: B (Frontend)
+-- Purpose: 1 transaction scenario with rollback case: Laboratory & Sequencing

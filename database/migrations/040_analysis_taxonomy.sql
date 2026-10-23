@@ -1,0 +1,2 @@
+-- Owner: C (Testing & QA)
+-- Purpose: Tables, keys, CHECK/UNIQUE constraints: Analysis, Taxonomy & Analytics

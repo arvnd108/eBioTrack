@@ -1,0 +1,2 @@
+-- Owner: A (Backend)
+-- Purpose: Extensions and shared enum types (agreed by all)

@@ -1,0 +1,2 @@
+-- Owner: A (Backend)
+-- Purpose: Database roles and grants

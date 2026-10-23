@@ -1,0 +1,2 @@
+-- Owner: C (Testing & QA)
+-- Purpose: EXPLAIN (ANALYZE, BUFFERS) before and after indexes

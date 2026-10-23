@@ -1,0 +1,2 @@
+-- Owner: B (Frontend)
+-- Purpose: Seed rows: Laboratory & Sequencing

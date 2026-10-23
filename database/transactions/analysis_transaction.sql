@@ -1,0 +1,2 @@
+-- Owner: C (Testing & QA)
+-- Purpose: 1 transaction scenario with rollback case: Analysis, Taxonomy & Analytics

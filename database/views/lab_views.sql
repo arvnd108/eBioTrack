@@ -1,0 +1,2 @@
+-- Owner: B (Frontend)
+-- Purpose: 2 views: Laboratory & Sequencing
