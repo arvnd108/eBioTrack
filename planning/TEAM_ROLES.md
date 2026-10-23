@@ -150,13 +150,15 @@ The Analysis slice has the fewest tables but the most join-heavy queries and the
 - Parameterized queries only; never commit secrets.
 - Agree cross-slice FK names early (for example `samples.event_id`, `taxon_assignments.library_id`) and keep them stable.
 
-## 5. Timeline
+## 5. Order of work
 
-1. **Week 1:** agree the schema together; each member drafts their slice migration. A sets up the repo and migration runner; D starts the ER diagram.
-2. **Week 2:** constraints and seed data; A delivers auth and the API foundation; B delivers the app shell; C sets up the test harness and CI.
-3. **Weeks 3–4:** APIs (A) and pages (B) per slice in parallel; views, procedures, triggers (everyone, own slice).
-4. **Weeks 5–6:** transactions, concurrency, indexes, and tests (C with everyone); docs written as features land (D).
-5. **Final week:** integration, benchmarks, backup/restore, demo rehearsal.
+Work is organized by phase and dependency, not by dates. The full task list, prerequisites, and gates are in [WORKFLOW.md](WORKFLOW.md). In outline:
+
+1. **Contracts and schema:** agree table names, keys, and statuses together; each member drafts their slice migration. A sets up the repo and migration runner; D starts the ER diagram.
+2. **Seed data and foundation:** constraints and seeds; A delivers auth and the API foundation; B delivers the app shell; C sets up the test harness and CI.
+3. **Slice SQL, APIs, and pages:** APIs (A) and pages (B) per slice in parallel; views, procedures, and triggers (everyone, own slice).
+4. **Transactions, indexes, and tests:** transactions, concurrency, indexes, and tests (C with everyone); docs written as features land (D).
+5. **Integration and demo:** integration, benchmarks, backup/restore, demo rehearsal.
 
 ## 6. Demo ownership
 

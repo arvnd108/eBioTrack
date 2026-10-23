@@ -37,13 +37,13 @@ Work moves through **gates**. A gate is a checkpoint that must pass before the t
 
 Each member's database items are listed once per member (rows marked "each") but are separate tasks for each person's own slice.
 
-### Phase 0 — Contracts (Week 1)
+### Phase 0 — Contracts
 
 | ID | Task | Owner | Needs |
 |---|---|---|---|
 | T00 | Contract workshop: tables, keys, enums, statuses, seed ID ranges, endpoint list | All | — |
 
-### Phase 1 — Foundations (Weeks 1–2)
+### Phase 1 — Foundations
 
 | ID | Task | Owner | Needs |
 |---|---|---|---|
@@ -59,7 +59,7 @@ Each member's database items are listed once per member (rows marked "each") but
 | T10 | API foundation: validation, error format, pagination, response helpers | A | T01 |
 | **G1** | Schema complete | — | T06 |
 
-### Phase 2 — Data and database objects (Weeks 2–4)
+### Phase 2 — Data and database objects
 
 Every member works on their own slice through this order: **seed → queries → views → procedure → trigger → transaction → indexes**.
 
@@ -77,7 +77,7 @@ Every member works on their own slice through this order: **seed → queries →
 | T37 | Backup and restore scripts | A | T06, T11 |
 | **G2** | Seeded database | — | T11 (all four) |
 
-### Phase 3 — API and UI (Weeks 3–5)
+### Phase 3 — API and UI
 
 | ID | Task | Owner | Needs |
 |---|---|---|---|
@@ -94,7 +94,7 @@ Every member works on their own slice through this order: **seed → queries →
 | **G3** | Foundation ready | — | T10, T13, T24 |
 | **G4** | Feature complete | — | T20–T23, T25–T29 |
 
-### Phase 4 — Testing (Weeks 4–6)
+### Phase 4 — Testing
 
 C can write tests from the specification before the code exists (test-first), then run them when prerequisites land.
 
@@ -110,7 +110,7 @@ C can write tests from the specification before the code exists (test-first), th
 | T38 | Optional: anomaly-detection experiment | C | Approved detections (G2 plus T23) |
 | **G5** | Database objects verified | — | T14–T19 for all slices, T30–T36 |
 
-### Phase 5 — Documentation (continuous, finalized Weeks 5–6)
+### Phase 5 — Documentation (drafted continuously, finalized once the features land)
 
 | ID | Task | Owner | Needs |
 |---|---|---|---|
@@ -124,7 +124,7 @@ C can write tests from the specification before the code exists (test-first), th
 | T47 | `data-sources.md` and `datasets/README.md` | D | T12 |
 | T48 | Demo script and slides | D | G5 |
 
-### Phase 6 — Integration and demo (final week)
+### Phase 6 — Integration and demo
 
 | ID | Task | Owner | Needs |
 |---|---|---|---|
@@ -257,7 +257,7 @@ Blue = A, green = B, yellow = C, purple = D, grey = shared or each member for th
 
 ## 4. What can run in parallel
 
-### Day-one start (after T00)
+### Can start immediately (right after T00)
 
 These do not depend on anything except the contract and can all proceed at the same time:
 
@@ -318,9 +318,11 @@ When a prerequisite is not finished, use the contract from T00 instead of waitin
 
 ---
 
-## 7. Week-by-week plan
+## 7. Order of work
 
-| Week | Focus | Main tasks | Gate |
+The project advances by **phase and gate**, not by calendar. Move to the next step when its prerequisites are done, not when a date arrives.
+
+| Step | Focus | Main tasks | Gate |
 |---|---|---|---|
 | 1 | Contracts and schema drafts | T00, T01–T05, T07, T08, T09 | G0 |
 | 2 | Schema complete, foundation | T06, T10, T11, T13, T37 | G1, G2 |
@@ -330,17 +332,17 @@ When a prerequisite is not finished, use the contract from T00 instead of waitin
 | 6 | Benchmarks, recovery, docs | T35, T36, T41, T44–T47 | G5 |
 | 7 | Integration and demo | T48, T50–T52 | G6 |
 
-If your semester has fewer weeks, keep the order and compress the durations; the dependencies stay the same.
+Steps overlap: anyone whose prerequisites are done keeps going, even if others are still on an earlier step.
 
 ---
 
-## 8. Day-to-day process
+## 8. How we work day to day
 
 - **Branches:** one branch per task, named `<member>/<task-id>-<short-name>` (for example `a/t13-auth`, `d/t03-field-migration`).
 - **Pull requests:** one PR per task, linking the task ID. One reviewer in the rotation A → B → C → D → A. PRs that touch another member's files also request that owner.
 - **Merging:** merge to `main` only when CI passes and the reviewer approves. Keep `main` runnable at all times.
 - **Migrations:** numbered, never edited after merge. Add a new migration to fix an old one.
-- **Syncs:** two short syncs a week (start of week: plan and unblock; end of week: demo what merged and review gates). Post blockers in the group chat as soon as they appear, naming the task ID.
+- **Syncs:** hold a short sync whenever a gate is reached or someone is blocked: show what merged, check which tasks are now unblocked, and decide who picks them up. Post blockers in the group chat as soon as they appear, naming the task ID.
 - **Definition of done** for a task: code merged, tests added or updated, own-slice docs updated, task ID ticked in the tracker below.
 
 ## 9. Progress tracker
