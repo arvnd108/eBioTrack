@@ -61,7 +61,7 @@ Task IDs match [WORKFLOW.md](../WORKFLOW.md).
 9. **T40** Write up your slice.
 10. **T50 – T52** End-to-end run and demo rehearsal.
 
-Branches: `b/<task-id>-<short-name>` (for example `b/t24-shared-ui`). One pull request per task, one reviewer (C reviews yours).
+Branches: `b/<task-id>-<short-name>` (for example `b/t24-shared-ui`). One pull request per task; Arvind reviews and merges it (you cannot merge to `main` yourself).
 
 ## 5. Tasks you can start now
 

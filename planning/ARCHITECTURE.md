@@ -329,7 +329,7 @@ Project-planning documents, kept apart from the deliverable documentation in `do
 
 ## Rules for working in someone else's area
 
-- Do not edit a file owned by another member without telling them; open a pull request and request their review.
+- Do not edit a file owned by another member without telling them; open a pull request and request their review; Arvind merges it.
 - The `database/migrations/090_cross_slice_constraints.sql` file is the one shared exception: A maintains it, but every member adds their own cross-slice foreign keys through a pull request.
 - New files go in the folder that matches the layer (route, controller, service, page, etc.) and the author becomes the owner; add a row to the table above.
 - Slice owners provide the SQL (views, procedures, triggers); A calls them from services; C tests them; D documents them; B displays the results.

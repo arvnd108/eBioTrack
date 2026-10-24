@@ -75,7 +75,7 @@ Task IDs match [WORKFLOW.md](../WORKFLOW.md).
 9. **T48** Demo script and slides once database objects are verified (gate G5).
 10. **T50 – T52** End-to-end run and demo rehearsal; you run the rehearsal.
 
-Branches: `d/<task-id>-<short-name>` (for example `d/t03-field-migration`). One pull request per task, one reviewer (A reviews yours).
+Branches: `d/<task-id>-<short-name>` (for example `d/t03-field-migration`). One pull request per task; Arvind reviews and merges it (you cannot merge to `main` yourself).
 
 ## 5. Tasks you can start now
 
