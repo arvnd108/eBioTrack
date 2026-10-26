@@ -1,2 +1,2 @@
--- Owner: C (Testing & QA)
+-- Owner: A (Backend)
 -- Purpose: 1 stored procedure/function: Analysis, Taxonomy & Analytics

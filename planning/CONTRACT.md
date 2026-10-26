@@ -139,7 +139,7 @@ Approved results are never edited in place. A correction is a **new** analysis r
 
 `PK` = primary key (`BIGINT` identity, section D6). `FK` = foreign key. `NN` = NOT NULL. Cross-slice FKs are marked **(090)** and are *not* created in the slice migration.
 
-### 4.1 Access, Projects & Audit (owner A, migration `010`)
+### 4.1 Access, Projects & Audit (owner C, migration `010`)
 
 **`users`**
 
@@ -283,7 +283,7 @@ UNIQUE (`sample_id`, `attempt_number`) (re-extractions increment the attempt).
 
 `CHECK (sample_id IS NOT NULL OR analysis_id IS NOT NULL)`.
 
-### 4.4 Analysis, Taxonomy & Analytics (owner C, migration `040`)
+### 4.4 Analysis, Taxonomy & Analytics (owner A, migration `040`)
 
 **`dna_markers`**: `marker_id` PK; `marker_name` text NN UNIQUE; `target_region` text.
 
@@ -334,7 +334,7 @@ All created in `database/migrations/090_cross_slice_constraints.sql`. Each membe
 
 | From | Column(s) | To | Added by |
 |---|---|---|---|
-| `project_sites` | `site_id` | `sampling_sites(site_id)` | A |
+| `project_sites` | `site_id` | `sampling_sites(site_id)` | C |
 | `sampling_sites` | `created_by` | `users(user_id)` | D |
 | `collection_events` | `project_id` | `projects(project_id)` | D |
 | `collection_events` | `collector_id` | `users(user_id)` | D |
@@ -345,11 +345,11 @@ All created in `database/migrations/090_cross_slice_constraints.sql`. Each membe
 | `quality_control_results` | `sample_id` | `samples(sample_id)` | B |
 | `quality_control_results` | `analysis_id` | `analysis_runs(analysis_id)` | B |
 | `quality_control_results` | `recorded_by` | `users(user_id)` | B |
-| `analysis_runs` | `run_id` | `sequencing_runs(run_id)` | C |
-| `analysis_runs` | `imported_by`, `approved_by` | `users(user_id)` | C |
-| `taxon_assignments` | `library_id` | `sequencing_libraries(library_id)` | C |
-| `data_exports` | `requested_by` | `users(user_id)` | C |
-| `data_exports` | `project_id` | `projects(project_id)` | C |
+| `analysis_runs` | `run_id` | `sequencing_runs(run_id)` | A |
+| `analysis_runs` | `imported_by`, `approved_by` | `users(user_id)` | A |
+| `taxon_assignments` | `library_id` | `sequencing_libraries(library_id)` | A |
+| `data_exports` | `requested_by` | `users(user_id)` | A |
+| `data_exports` | `project_id` | `projects(project_id)` | A |
 
 Because these are applied last, seeds load after `090` so every reference is checked.
 
@@ -408,25 +408,25 @@ SET LOCAL app.current_user_id = '<user_id>';
 
 The audit trigger function reads it with `current_setting('app.current_user_id', true)` and stores it in `audit_logs.actor_id`.
 
-**A: audit trigger function**
+**C: audit trigger function**
 
 ```sql
 CREATE FUNCTION audit_row_change() RETURNS trigger
 ```
 
-Attached as `AFTER INSERT OR UPDATE OR DELETE` row triggers. The primary key column name is passed as `TG_ARGV[0]` (for example `CREATE TRIGGER trg_samples_audit ... EXECUTE FUNCTION audit_row_change('sample_id')`). B, C, and D attach it to their tables after A merges it.
+Attached as `AFTER INSERT OR UPDATE OR DELETE` row triggers. The primary key column name is passed as `TG_ARGV[0]` (for example `CREATE TRIGGER trg_samples_audit ... EXECUTE FUNCTION audit_row_change('sample_id')`). A, B, and D attach it to their tables after C merges it.
 
 ### Procedures
 
 | Owner | Signature | Returns | What it does |
 |---|---|---|---|
-| A | `create_project_with_owner(p_title text, p_objectives text, p_start_date date, p_owner_id bigint)` | `project_id` bigint | Creates the project and the owner membership in one transaction |
+| C | `create_project_with_owner(p_title text, p_objectives text, p_start_date date, p_owner_id bigint)` | `project_id` bigint | Creates the project and the owner membership in one transaction |
 | D | `register_sample(p_event_id bigint, p_sample_type_id bigint, p_volume_ml numeric, p_depth_m numeric, p_storage_location text, p_actor_id bigint)` | `sample_id` bigint | Generates the sample code, inserts the sample as `collected`, writes the first history row |
 | B | `create_sequencing_run(p_lab_id bigint, p_platform text, p_run_date date, p_extraction_ids bigint[], p_actor_id bigint)` | `run_id` bigint | Creates a `planned` run and one library per extraction; locks extractions (`FOR UPDATE`); rejects extractions that did not pass QC or are already in another `planned`/`running` run |
 | B | `assign_extraction_to_run(p_run_id bigint, p_extraction_id bigint, p_actor_id bigint)` | `library_id` bigint | Adds one extraction to an existing `planned` run with the same checks |
-| C | `import_detections(p_analysis_id bigint, p_rows jsonb, p_actor_id bigint)` | inserted row count integer | Inserts all rows in one transaction; any invalid row raises an error and **nothing** is inserted; moves the analysis to `imported`. Row shape in section 12 |
-| C | `approve_analysis(p_analysis_id bigint, p_actor_id bigint)` | void | Locks the analysis (`FOR UPDATE`), requires status `imported`, requires `p_actor_id` ≠ importer (D17), sets `approved`, `approved_by`, `approved_at`, writes an audit entry |
-| C | `reject_analysis(p_analysis_id bigint, p_actor_id bigint, p_reason text)` | void | Moves a `draft` or `imported` analysis to `rejected` and records the reason in the audit entry |
+| A | `import_detections(p_analysis_id bigint, p_rows jsonb, p_actor_id bigint)` | inserted row count integer | Inserts all rows in one transaction; any invalid row raises an error and **nothing** is inserted; moves the analysis to `imported`. Row shape in section 12 |
+| A | `approve_analysis(p_analysis_id bigint, p_actor_id bigint)` | void | Locks the analysis (`FOR UPDATE`), requires status `imported`, requires `p_actor_id` ≠ importer (D17), sets `approved`, `approved_by`, `approved_at`, writes an audit entry |
+| A | `reject_analysis(p_analysis_id bigint, p_actor_id bigint, p_reason text)` | void | Moves a `draft` or `imported` analysis to `rejected` and records the reason in the audit entry |
 
 Status changes for samples, extractions, and runs that do not need a procedure are plain `UPDATE`s; the triggers enforce the allowed transitions.
 
@@ -451,10 +451,10 @@ Names fixed so the API and tests can rely on them. Column lists are decided by t
 
 | Owner | Views |
 |---|---|
-| A | `v_user_project_access`, `v_project_summary` |
+| C | `v_user_project_access`, `v_project_summary` |
 | D | `v_sample_registry`, `v_site_sample_summary` |
 | B | `v_lab_pipeline_status`, `v_failed_qc` |
-| C | `v_approved_detections`, `v_site_richness` |
+| A | `v_approved_detections`, `v_site_richness` |
 
 ---
 
@@ -740,7 +740,7 @@ The backend resolves `scientific_name` and `taxon_rank` to `taxon_id` before cal
 
 Gate **G0** passes when all four have reviewed sections 1–12 and ticked their box.
 
-- [ ] **A** — Dhruve (Backend): conventions, API, permissions, error mapping, `090` list
+- [ ] **A** — Arvind (Backend): conventions, API, permissions, error mapping, `090` list, analysis procedures
 - [ ] **B** — Bhumi (Frontend): endpoints, example payloads, enums, import format
-- [ ] **C** — Arvind (Testing): fixture world, enums, signatures, import format, error codes
+- [ ] **C** — Dhruve (Testing): fixture world, enums, signatures, import format, error codes, access and audit design
 - [ ] **D** — Krishna (Docs): all sections; ER diagram and `api.md` are drafted from this file

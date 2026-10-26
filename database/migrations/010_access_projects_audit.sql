@@ -1,2 +1,2 @@
--- Owner: A (Backend)
+-- Owner: C (Testing & QA)
 -- Purpose: Tables, keys, CHECK/UNIQUE constraints: Access, Projects & Audit

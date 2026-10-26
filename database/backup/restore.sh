@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
-# Owner: A (Backend)
+# Owner: C (Testing & QA)
 # Purpose: Restore script

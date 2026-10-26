@@ -1,2 +1,2 @@
--- Owner: A (Backend)
+-- Owner: C (Testing & QA)
 -- Purpose: Database roles and grants

@@ -1,2 +1,2 @@
--- Owner: C (Testing & QA)
+-- Owner: A (Backend)
 -- Purpose: 2 justified indexes: Analysis, Taxonomy & Analytics

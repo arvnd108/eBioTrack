@@ -1,6 +1,6 @@
 # analysis
 
-> **Owner:** C (Testing & QA)
+> **Owner:** A (Backend)
 >
 > Slice write-up and normalization notes: Analysis, Taxonomy & Analytics
 

@@ -77,7 +77,7 @@ You can also draft your slice's queries, views, and procedure from your table de
 | Your task | Needs | From | While you wait |
 |---|---|---|---|
 | T11 Load your seeds | T06 schema complete (G1) | A | Write the seed file from the agreed ID ranges |
-| T17 Attach audit trigger | T17-A generic audit function | A | Write your own trigger (block library from failed extraction) first |
+| T17 Attach audit trigger | T17-C generic audit function | C | Write your own trigger (block library from failed extraction) first |
 | T19 Indexes with `EXPLAIN` | T12 volume data | C | Write the index definitions; run the comparison once the data exists |
 | T24 Real login | T13 auth | A | Use the mock API client |
 | T25 Projects and Administration pages integration | T20 routes | A | Build against mock responses |

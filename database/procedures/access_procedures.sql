@@ -1,2 +1,2 @@
--- Owner: A (Backend)
+-- Owner: C (Testing & QA)
 -- Purpose: 1 stored procedure/function: Access, Projects & Audit

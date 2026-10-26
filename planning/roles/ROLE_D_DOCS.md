@@ -94,12 +94,12 @@ You can also outline `dbms-demonstration.md`, `user-guide.md`, and the demo scri
 |---|---|---|---|
 | T07 Final ER diagram | T06 cross-slice FKs | A | Draft from the contract |
 | T11 Load your seeds | T06 schema complete (G1) | A | Write the seed file from the agreed ID ranges |
-| T17 Attach audit trigger | T17-A generic audit function | A | Write your status-transition trigger first |
+| T17 Attach audit trigger | T17-C generic audit function | C | Write your status-transition trigger first |
 | T19 Indexes with `EXPLAIN` | T12 volume data | C | Write the index definitions; compare when data exists |
 | T41 Normalization report | T40 from all four members | A, B, C | Prepare the flat sample sheet example and your slice |
 | T42 Final `api.md` | T20 – T23 routes | A | Draft from the contract |
 | T43 DBMS demonstration | T14 – T18 from all slices | A, B, C | Prepare the concept-to-object table with empty cells |
-| T44 Backup and recovery doc | T37 scripts and T36 test | A, C | Outline the procedure |
+| T44 Backup and recovery doc | T37 scripts and T36 test | C | Outline the procedure |
 | T45 Query-plan report | T35 benchmark results | C | Prepare the report template |
 | T46 User guide | T25 – T29 pages | B | Outline sections; collect screenshots later |
 | T47 Data sources doc | T12 dataset and source notes | C | Gather license text for candidate sources |

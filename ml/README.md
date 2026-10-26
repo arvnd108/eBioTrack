@@ -1,6 +1,6 @@
 # README
 
-> **Owner:** C (Testing & QA)
+> **Owner:** A (Backend)
 >
 > Optional ML module scope and caveats
 

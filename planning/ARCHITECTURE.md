@@ -6,9 +6,9 @@ This document lives in `planning/` and describes how the repository is organized
 
 | Member | Discipline | Database slice |
 |---|---|---|
-| **A** — Dhruve | Backend (incl. platform/DevOps) | Access, Projects & Audit |
+| **A** — Arvind | Backend (incl. platform/DevOps, optional ML) | Analysis, Taxonomy & Analytics |
 | **B** — Bhumi | Frontend | Laboratory & Sequencing |
-| **C** — Arvind | Testing & QA | Analysis, Taxonomy & Analytics |
+| **C** — Dhruve | Testing & QA | Access, Projects & Audit |
 | **D** — Krishna | Docs & Demo | Field & Samples |
 
 See [TEAM_ROLES.md](TEAM_ROLES.md) for the full responsibilities of each role.
@@ -21,7 +21,7 @@ flowchart LR
     FE -->|REST /api| API[Express API<br/>A]
     API -->|parameterized SQL| DB[(PostgreSQL<br/>slices: A, B, C, D)]
     DB --> OBJ[Views, procedures, triggers,<br/>transactions, indexes]
-    ML[Python ML, optional<br/>C] -->|reads approved data| DB
+    ML[Python ML, optional<br/>A] -->|reads approved data| DB
     T[Tests and CI<br/>C] -.-> API
     T -.-> DB
 ```
@@ -44,7 +44,7 @@ ebiotrack/
 │   ├── queries/ indexes/ transactions/ seeds/
 │   └── roles/ backup/                 # A
 ├── tests/          # C  - integrity, transactions, concurrency, auth, queries, performance, recovery
-├── ml/             # C  - optional
+├── ml/             # A  - optional
 ├── datasets/       # C (data), D (README)
 ├── docs/           # D  - plus slice write-ups from A, B, C, D
 ├── planning/       # D  - architecture, team roles, workflow, contract, original spec
@@ -57,7 +57,7 @@ ebiotrack/
 | `frontend/` | B | All UI code |
 | `database/` | Split by slice (A, B, C, D) | File name prefix shows the slice |
 | `tests/` | C | Covers all slices |
-| `ml/` | C | Optional |
+| `ml/` | A | Optional |
 | `datasets/` | C / D | C data files, D documentation |
 | `docs/` | D | Slice write-ups by slice owners |
 | `planning/` | D | Project planning documents (this file, team roles, workflow, contract, original spec) |
@@ -67,20 +67,20 @@ ebiotrack/
 
 | Slice | Owner | Migration | Tables |
 |---|---|---|---|
-| Access, Projects & Audit | A | `010_access_projects_audit.sql` | `users`, `roles`, `user_roles`, `projects`, `project_members`, `project_sites`, `audit_logs` |
+| Access, Projects & Audit | C | `010_access_projects_audit.sql` | `users`, `roles`, `user_roles`, `projects`, `project_members`, `project_sites`, `audit_logs` |
 | Field & Samples | D | `020_field_samples.sql` | `regions`, `sampling_sites`, `collection_events`, `sample_types`, `samples`, `environmental_measurements`, `sample_status_history` |
 | Laboratory & Sequencing | B | `030_lab_sequencing.sql` | `laboratories`, `extraction_batches`, `dna_extractions`, `sequencing_runs`, `sequencing_libraries`, `quality_control_results` |
-| Analysis, Taxonomy & Analytics | C | `040_analysis_taxonomy.sql` | `dna_markers`, `analysis_runs`, `taxa`, `taxon_assignments`, `data_exports` |
+| Analysis, Taxonomy & Analytics | A | `040_analysis_taxonomy.sql` | `dna_markers`, `analysis_runs`, `taxa`, `taxon_assignments`, `data_exports` |
 
 Migrations run in numeric order. Slices reference earlier slices' tables only through `090_cross_slice_constraints.sql`, so each slice can be developed independently.
 
 ## Where each person works
 
-**A — Backend + Access slice:** `backend/**`, `database/*/access_*`, `database/migrations/001_*`, `database/migrations/090_*`, `database/roles/`, `database/backup/`, root config files, `docs/slices/access.md`
+**A — Backend + Analysis slice + optional ML:** `backend/**`, `ml/**`, `database/migrations/001_*`, `database/migrations/090_*`, `database/*/analysis_*` and `040_*` files, root config files, `docs/slices/analysis.md`
 
 **B — Frontend + Lab slice:** `frontend/**`, `database/*/lab_*` and `030_*` files, `docs/slices/lab.md`
 
-**C — Testing + Analysis slice:** `tests/**`, `ml/**`, `datasets/sample_detections.csv`, `.github/`, `database/*/analysis_*` and `040_*` files, `docs/slices/analysis.md`
+**C — Testing + Access slice:** `tests/**`, `datasets/sample_detections.csv`, `.github/`, `database/*/access_*` and `010_*` files, `database/roles/`, `database/backup/`, `docs/slices/access.md`
 
 **D — Docs + Field slice:** `docs/**` (except slice write-ups), `README.md`, `datasets/README.md`, `database/*/field_*` and `020_*` files, `docs/slices/field.md`
 
@@ -216,21 +216,21 @@ All SQL. Files are split **by slice**, and each slice owner writes their own mig
 | File | Owner | Purpose |
 |---|---|---|
 | `database/migrations/001_extensions_and_enums.sql` | A | Extensions and shared enum types (agreed by all) |
-| `database/migrations/010_access_projects_audit.sql` | A | Tables, keys, CHECK/UNIQUE constraints: Access, Projects & Audit |
+| `database/migrations/010_access_projects_audit.sql` | C | Tables, keys, CHECK/UNIQUE constraints: Access, Projects & Audit |
 | `database/migrations/020_field_samples.sql` | D | Tables, keys, CHECK/UNIQUE constraints: Field & Samples |
 | `database/migrations/030_lab_sequencing.sql` | B | Tables, keys, CHECK/UNIQUE constraints: Laboratory & Sequencing |
-| `database/migrations/040_analysis_taxonomy.sql` | C | Tables, keys, CHECK/UNIQUE constraints: Analysis, Taxonomy & Analytics |
+| `database/migrations/040_analysis_taxonomy.sql` | A | Tables, keys, CHECK/UNIQUE constraints: Analysis, Taxonomy & Analytics |
 | `database/migrations/090_cross_slice_constraints.sql` | A | Foreign keys across slices, applied last; reviewed by all |
-| `database/seeds/010_seed_access.sql` | A | Seed rows: Access, Projects & Audit |
+| `database/seeds/010_seed_access.sql` | C | Seed rows: Access, Projects & Audit |
 | `database/seeds/020_seed_field.sql` | D | Seed rows: Field & Samples |
 | `database/seeds/030_seed_lab.sql` | B | Seed rows: Laboratory & Sequencing |
-| `database/seeds/040_seed_analysis.sql` | C | Seed rows: Analysis, Taxonomy & Analytics |
-| `database/views/access_views.sql` | A | 2 views: Access, Projects & Audit |
-| `database/procedures/access_procedures.sql` | A | 1 stored procedure/function: Access, Projects & Audit |
-| `database/triggers/access_triggers.sql` | A | 1 trigger: Access, Projects & Audit |
-| `database/queries/access_queries.sql` | A | 3 complex queries: Access, Projects & Audit |
-| `database/indexes/access_indexes.sql` | A | 2 justified indexes: Access, Projects & Audit |
-| `database/transactions/access_transaction.sql` | A | 1 transaction scenario with rollback case: Access, Projects & Audit |
+| `database/seeds/040_seed_analysis.sql` | A | Seed rows: Analysis, Taxonomy & Analytics |
+| `database/views/access_views.sql` | C | 2 views: Access, Projects & Audit |
+| `database/procedures/access_procedures.sql` | C | 1 stored procedure/function: Access, Projects & Audit |
+| `database/triggers/access_triggers.sql` | C | 1 trigger: Access, Projects & Audit |
+| `database/queries/access_queries.sql` | C | 3 complex queries: Access, Projects & Audit |
+| `database/indexes/access_indexes.sql` | C | 2 justified indexes: Access, Projects & Audit |
+| `database/transactions/access_transaction.sql` | C | 1 transaction scenario with rollback case: Access, Projects & Audit |
 | `database/views/field_views.sql` | D | 2 views: Field & Samples |
 | `database/procedures/field_procedures.sql` | D | 1 stored procedure/function: Field & Samples |
 | `database/triggers/field_triggers.sql` | D | 1 trigger: Field & Samples |
@@ -243,15 +243,15 @@ All SQL. Files are split **by slice**, and each slice owner writes their own mig
 | `database/queries/lab_queries.sql` | B | 3 complex queries: Laboratory & Sequencing |
 | `database/indexes/lab_indexes.sql` | B | 2 justified indexes: Laboratory & Sequencing |
 | `database/transactions/lab_transaction.sql` | B | 1 transaction scenario with rollback case: Laboratory & Sequencing |
-| `database/views/analysis_views.sql` | C | 2 views: Analysis, Taxonomy & Analytics |
-| `database/procedures/analysis_procedures.sql` | C | 1 stored procedure/function: Analysis, Taxonomy & Analytics |
-| `database/triggers/analysis_triggers.sql` | C | 1 trigger: Analysis, Taxonomy & Analytics |
-| `database/queries/analysis_queries.sql` | C | 3 complex queries: Analysis, Taxonomy & Analytics |
-| `database/indexes/analysis_indexes.sql` | C | 2 justified indexes: Analysis, Taxonomy & Analytics |
-| `database/transactions/analysis_transaction.sql` | C | 1 transaction scenario with rollback case: Analysis, Taxonomy & Analytics |
-| `database/roles/grants.sql` | A | Database roles and grants |
-| `database/backup/backup.sh` | A | pg_dump backup script |
-| `database/backup/restore.sh` | A | Restore script |
+| `database/views/analysis_views.sql` | A | 2 views: Analysis, Taxonomy & Analytics |
+| `database/procedures/analysis_procedures.sql` | A | 1 stored procedure/function: Analysis, Taxonomy & Analytics |
+| `database/triggers/analysis_triggers.sql` | A | 1 trigger: Analysis, Taxonomy & Analytics |
+| `database/queries/analysis_queries.sql` | A | 3 complex queries: Analysis, Taxonomy & Analytics |
+| `database/indexes/analysis_indexes.sql` | A | 2 justified indexes: Analysis, Taxonomy & Analytics |
+| `database/transactions/analysis_transaction.sql` | A | 1 transaction scenario with rollback case: Analysis, Taxonomy & Analytics |
+| `database/roles/grants.sql` | C | Database roles and grants |
+| `database/backup/backup.sh` | C | pg_dump backup script |
+| `database/backup/restore.sh` | C | Restore script |
 
 ### tests
 
@@ -285,9 +285,9 @@ Optional ML module and starter datasets.
 
 | File | Owner | Purpose |
 |---|---|---|
-| `ml/README.md` | C | Optional ML module scope and caveats |
-| `ml/requirements.txt` | C | Python dependencies |
-| `ml/anomaly_detection.py` | C | Optional anomaly detection on approved richness data |
+| `ml/README.md` | A | Optional ML module scope and caveats |
+| `ml/requirements.txt` | A | Python dependencies |
+| `ml/anomaly_detection.py` | A | Optional anomaly detection on approved richness data |
 | `datasets/README.md` | D | Dataset sources, licenses, real vs synthetic notes |
 | `datasets/sample_detections.csv` | C | Curated starter dataset for import |
 
@@ -306,10 +306,10 @@ Project documentation. **D** owns and compiles it; slice owners write the `docs/
 | `docs/query-plan-report.md` | D | Benchmark report compiled from the tests |
 | `docs/data-sources.md` | D | Data sourcing, attribution, and licenses |
 | `docs/demo-script.md` | D | Final demo script and presenters |
-| `docs/slices/access.md` | A | Slice write-up and normalization notes: Access, Projects & Audit |
+| `docs/slices/access.md` | C | Slice write-up and normalization notes: Access, Projects & Audit |
 | `docs/slices/field.md` | D | Slice write-up and normalization notes: Field & Samples |
 | `docs/slices/lab.md` | B | Slice write-up and normalization notes: Laboratory & Sequencing |
-| `docs/slices/analysis.md` | C | Slice write-up and normalization notes: Analysis, Taxonomy & Analytics |
+| `docs/slices/analysis.md` | A | Slice write-up and normalization notes: Analysis, Taxonomy & Analytics |
 
 ### Planning
 

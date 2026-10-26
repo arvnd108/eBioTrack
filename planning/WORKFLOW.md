@@ -6,9 +6,9 @@ Member key (see [TEAM_ROLES.md](TEAM_ROLES.md)):
 
 | Member | Discipline | Database slice |
 |---|---|---|
-| **A** — Dhruve | Backend (incl. platform/DevOps) | Access, Projects & Audit |
+| **A** — Arvind | Backend (incl. platform/DevOps, optional ML) | Analysis, Taxonomy & Analytics |
 | **B** — Bhumi | Frontend | Laboratory & Sequencing |
-| **C** — Arvind | Testing & QA | Analysis, Taxonomy & Analytics |
+| **C** — Dhruve | Testing & QA | Access, Projects & Audit |
 | **D** — Krishna | Docs & Demo | Field & Samples |
 
 Ownership of each file is in [ARCHITECTURE.md](ARCHITECTURE.md).
@@ -48,10 +48,10 @@ Each member's database items are listed once per member (rows marked "each") but
 | ID | Task | Owner | Needs |
 |---|---|---|---|
 | T01 | Repo setup: `.env`, docker-compose, DB pool, query helpers, migration runner | A | — |
-| T02 | Access migration (`010`) and DB roles/grants | A | T00 |
+| T02 | Access migration (`010`) and DB roles/grants | C | T00 |
 | T03 | Field migration (`020`) | D | T00 |
 | T04 | Lab migration (`030`) | B | T00 |
-| T05 | Analysis migration (`040`) | C | T00 |
+| T05 | Analysis migration (`040`) | A | T00 |
 | T06 | Cross-slice FK constraints (`090`) | A | T02, T03, T04, T05 |
 | T07 | ER diagram draft (final version after T06) | D | T00 |
 | T08 | Frontend scaffold: app shell, routing, API client with mock mode | B | T00 |
@@ -67,24 +67,24 @@ Every member works on their own slice through this order: **seed → queries →
 |---|---|---|---|
 | T11 | Seed rows for own slice (each, using agreed ID ranges) | A, B, C, D | Own migration (T02–T05); load after G1 |
 | T12 | CSV import fixtures, starter dataset, volume-data generator | C | T00; sample and library codes from T11 (B, D) |
-| T13 | Auth: sessions, password hashing, authorize middleware | A | T02, T01, T10 |
-| T14 | 3 complex queries (each, own slice) | A, B, C, D | Own seed (T11). **C's queries join across all slices, so they also need G2** |
-| T15 | 2 views (each, own slice) | A, B, C, D | T14 (own). C also needs G2 |
-| T16 | Stored procedure (each, own slice) | A, B, C, D | Own migration. C's `approve_analysis()` also needs T06 and the audit function (T17-A) |
-| T17 | Trigger (each, own slice). **A's audit trigger function comes first**; B, C, D attach it to their tables | A, B, C, D | Own migration; B, C, D attach after T17-A |
+| T13 | Auth: sessions, password hashing, authorize middleware | A | T02 (C), T01, T10 |
+| T14 | 3 complex queries (each, own slice) | A, B, C, D | Own seed (T11). **A's queries join across all slices, so they also need G2** |
+| T15 | 2 views (each, own slice) | A, B, C, D | T14 (own). A also needs G2 |
+| T16 | Stored procedure (each, own slice) | A, B, C, D | Own migration. A's `approve_analysis()` also needs T06 and the audit function (T17-C) |
+| T17 | Trigger (each, own slice). **C's audit trigger function comes first**; A, B, D attach it to their tables | A, B, C, D | Own migration; A, B, D attach after T17-C |
 | T18 | Transaction scenario with rollback case (each, own slice) | A, B, C, D | T16 (own) |
 | T19 | 2 indexes with `EXPLAIN` before/after (each, own slice) | A, B, C, D | T14 (own) and volume data (T12) |
-| T37 | Backup and restore scripts | A | T06, T11 |
+| T37 | Backup and restore scripts | C | T06, T11 |
 | **G2** | Seeded database | — | T11 (all four) |
 
 ### Phase 3 — API and UI
 
 | ID | Task | Owner | Needs |
 |---|---|---|---|
-| T20 | Projects and audit routes | A | T13, T16-A |
+| T20 | Projects and audit routes | A | T13, T16-C |
 | T21 | Sites, events, samples routes | A | T13, T16-D |
 | T22 | Extractions and sequencing routes | A | T13, T16-B |
-| T23 | Analyses import/approve, taxa, analytics, export routes | A | T13, T16-C, T12 (fixtures for CSV validation) |
+| T23 | Analyses import/approve, taxa, analytics, export routes | A | T13, T16-A, T12 (fixtures for CSV validation) |
 | T24 | Shared components, auth context, login page | B | T08; real login after T13 |
 | T25 | Projects and Administration pages | B | T24; integrate after T20 |
 | T26 | Sampling map, Events, Samples pages | B | T24; integrate after T21 |
@@ -104,10 +104,10 @@ C can write tests from the specification before the code exists (test-first), th
 | T31 | Query-correctness tests against fixtures | C | T14 (per slice), G2 |
 | T32 | Transaction tests (import rollback, project creation) | C | T18 |
 | T33 | Authorization tests | C | T13, T20 |
-| T34 | Concurrency tests (double approval, run assignment) | C | T16-B, T16-C, T18 |
+| T34 | Concurrency tests (double approval, run assignment) | C | T16-B, T16-A, T18 |
 | T35 | Performance benchmarks (indexed vs. not) | C | T19 (all), T12 volume data |
 | T36 | Recovery test (restore and verify) | C | T37 |
-| T38 | Optional: anomaly-detection experiment | C | Approved detections (G2 plus T23) |
+| T38 | Optional: anomaly-detection experiment | A | Approved detections (G2 plus T23) |
 | **G5** | Database objects verified | — | T14–T19 for all slices, T30–T36 |
 
 ### Phase 5 — Documentation (drafted continuously, finalized once the features land)
@@ -145,10 +145,10 @@ flowchart TD
 
     subgraph P1[Phase 1 - Foundations]
         T01[T01 Repo setup, A]
-        T02[T02 Access migration, A]
+        T02[T02 Access migration, C]
         T03[T03 Field migration, D]
         T04[T04 Lab migration, B]
-        T05[T05 Analysis migration, C]
+        T05[T05 Analysis migration, A]
         T06[T06 Cross-slice FKs, A]
         T08[T08 Frontend scaffold, B]
         T09[T09 Test harness and CI, C]
@@ -164,7 +164,7 @@ flowchart TD
         T17[T17 Triggers, each]
         T18[T18 Transactions, each]
         T19[T19 Indexes, each]
-        T37[T37 Backup scripts, A]
+        T37[T37 Backup scripts, C]
     end
 
     subgraph P3[Phase 3 - API and UI]
@@ -244,9 +244,9 @@ flowchart TD
     classDef C fill:#fef3c7,stroke:#b45309,color:#0f172a
     classDef D fill:#fae8ff,stroke:#a21caf,color:#0f172a
     classDef all fill:#e5e7eb,stroke:#374151,color:#0f172a
-    class T01,T02,T06,T10,T13,T20,T21,T22,T23,T37 A
+    class T01,T05,T06,T10,T13,T20,T21,T22,T23 A
     class T04,T08,T24,T25 B
-    class T05,T09,T12,T30,T31,T32,T33,T34,T35,T36 C
+    class T02,T09,T12,T30,T31,T32,T33,T34,T35,T36,T37 C
     class T03,T41,T43,T45,T46,T48 D
     class T00,T11,T14,T16,T17,T18,T19,T40,T50,T52 all
 ```
@@ -263,9 +263,9 @@ These do not depend on anything except the contract and can all proceed at the s
 
 | Person | Can start immediately |
 |---|---|
-| **A** | T01 repo setup; T02 Access migration; T10 API foundation (after T01 commits) |
+| **A** | T01 repo setup; T05 Analysis migration; T10 API foundation (after T01 commits) |
 | **B** | T04 Lab migration; T08 frontend scaffold with mock API |
-| **C** | T05 Analysis migration; T09 test harness and CI (draft) |
+| **C** | T02 Access migration (do this first, A's auth and the audit function depend on it); T09 test harness and CI (draft) |
 | **D** | T03 Field migration; T07 ER diagram; T40 slice write-up draft; T42 `api.md` draft from the contract |
 
 ### Independent across members (no waiting on each other)
@@ -282,9 +282,10 @@ These do not depend on anything except the contract and can all proceed at the s
 |---|---|---|
 | Everyone | A: T01 migration runner and DB setup | To run migrations locally |
 | B, C, D | A: T13 auth | Real login, authorization tests, authenticated API calls |
-| C | A: T17-A audit function | `approve_analysis()` writes an audit event |
-| C | B, D: lab and field seeds | C's queries trace detections back through libraries, extractions, samples, events, and sites |
-| A | D, B, C: stored procedures (T16) | Routes call them; A can start with agreed signatures and stub implementations |
+| A | C: T02 Access migration (users and roles tables) | Auth middleware reads them |
+| A | C: T17-C audit function | `approve_analysis()` writes an audit event |
+| A | B, D: lab and field seeds | A's queries trace detections back through libraries, extractions, samples, events, and sites |
+| A | C, D, B: stored procedures (T16) | Routes call them; A can start with agreed signatures and stub implementations |
 | B | A: routes | B can use mock responses until the real route exists, then integrates |
 | C | Everyone's objects | Tests need the thing they test; write from the spec first |
 | D | Everyone's finished work | Final docs reflect the finished system; draft early |
@@ -296,11 +297,11 @@ These do not depend on anything except the contract and can all proceed at the s
 
 The longest chain of dependent work. Delays here delay the demo:
 
-**T00 → T02–T05 → T06 → T11 (G2) → T14/T15 (C, needs all slices) → T16-C `approve_analysis` → T23 analysis API → T28 analysis pages → T50 end-to-end → T52 rehearsal**
+**T00 → T02–T05 → T06 → T11 (G2) → T14/T15 (A, needs all slices) → T16-A `approve_analysis` → T23 analysis API → T28 analysis pages → T50 end-to-end → T52 rehearsal**
 
 Second chain to watch: **T01 → T10 → T13 auth → T20–T23 → T25–T29 → T50**.
 
-Because C's analysis work sits at the end of the data chain, C's slice is intentionally the smallest in table count. If C falls behind, the others should help with seed data and fixtures first.
+Because A's analysis work sits at the end of the data chain, A's slice is intentionally the smallest in table count. C's Access migration (T02) and audit function (T17-C) sit at the start of the chain and block A's auth, so C does those first. If either falls behind, the others should help with seed data and fixtures first.
 
 ---
 
@@ -339,8 +340,8 @@ Steps overlap: anyone whose prerequisites are done keeps going, even if others a
 ## 8. How we work day to day
 
 - **Branches:** one branch per task, named `<member>/<task-id>-<short-name>` (for example `a/t13-auth`, `d/t03-field-migration`).
-- **Pull requests:** one PR per task, linking the task ID. Arvind (C, repo owner) reviews and merges every PR. PRs that touch another member's files also request that file's owner as a reviewer. Arvind's own PRs get a review from another member before he merges them.
-- **Merging:** only Arvind merges into `main` (enforced by a GitHub ruleset). He merges when CI passes and the review is done. Nobody pushes directly to `main`. Keep `main` runnable at all times.
+- **Pull requests:** one PR per task, linking the task ID. Arvind (A, repo owner) reviews and merges every PR. PRs that touch another member's files also request that file's owner as a reviewer. Arvind's own PRs get a review from another member before being merged.
+- **Merging:** only Arvind merges into `main` (enforced by a GitHub ruleset). Arvind merges when CI passes and the review is done. Nobody pushes directly to `main`. Keep `main` runnable at all times.
 - **Migrations:** numbered, never edited after merge. Add a new migration to fix an old one.
 - **Syncs:** hold a short sync whenever a gate is reached or someone is blocked: show what merged, check which tasks are now unblocked, and decide who picks them up. Post blockers in the group chat as soon as they appear, naming the task ID.
 - **Definition of done** for a task: code merged, tests added or updated, own-slice docs updated, task ID ticked in the tracker below.

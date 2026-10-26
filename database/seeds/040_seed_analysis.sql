@@ -1,2 +1,2 @@
--- Owner: C (Testing & QA)
+-- Owner: A (Backend)
 -- Purpose: Seed rows: Analysis, Taxonomy & Analytics

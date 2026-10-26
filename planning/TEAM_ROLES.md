@@ -7,12 +7,12 @@ Two dimensions keep the work equal:
 
 | Member | Discipline (whole project) | Database slice |
 |---|---|---|
-| **A** — Dhruve | **Backend** (including platform/DevOps) | Access, Projects & Audit |
+| **A** — Arvind | **Backend** (including platform/DevOps, and the optional ML module) | Analysis, Taxonomy & Analytics |
 | **B** — Bhumi | **Frontend** | Laboratory & Sequencing |
-| **C** — Arvind | **Testing & QA** | Analysis, Taxonomy & Analytics |
+| **C** — Dhruve | **Testing & QA** | Access, Projects & Audit |
 | **D** — Krishna | **Documentation & Demo** | Field & Samples |
 
-Database slices are chosen to fit each discipline: A's auth and audit slice pairs with the backend authorization work, and C's analysis slice (transactions, concurrency, query correctness) pairs with testing.
+Each person keeps their own database slice alongside their discipline. A has the smallest slice (5 tables) because the backend is the heaviest discipline and also owns the optional ML module; C has the largest (7 tables).
 
 ---
 
@@ -22,10 +22,10 @@ Database slices are chosen to fit each discipline: A's auth and audit slice pair
 
 | Slice | Owner | Tables | Count |
 |---|---|---|---|
-| Access, Projects & Audit | A | `users`, `roles`, `user_roles`, `projects`, `project_members`, `project_sites`, `audit_logs` | 7 |
+| Access, Projects & Audit | C | `users`, `roles`, `user_roles`, `projects`, `project_members`, `project_sites`, `audit_logs` | 7 |
 | Field & Samples | D | `regions`, `sampling_sites`, `collection_events`, `sample_types`, `samples`, `environmental_measurements`, `sample_status_history` | 7 |
 | Laboratory & Sequencing | B | `laboratories`, `extraction_batches`, `dna_extractions`, `sequencing_runs`, `sequencing_libraries`, `quality_control_results` | 6 |
-| Analysis, Taxonomy & Analytics | C | `dna_markers`, `analysis_runs`, `taxa`, `taxon_assignments`, `data_exports` | 5 |
+| Analysis, Taxonomy & Analytics | A | `dna_markers`, `analysis_runs`, `taxa`, `taxon_assignments`, `data_exports` | 5 |
 
 The Analysis slice has the fewest tables but the most join-heavy queries and the transactional import/approval workflow.
 
@@ -42,7 +42,7 @@ The Analysis slice has the fewest tables but the most join-heavy queries and the
 
 ### Slice details
 
-**A — Access, Projects & Audit** (authorization, constraints, audit, backup/recovery)
+**C — Access, Projects & Audit** (authorization, constraints, audit, backup/recovery)
 - Queries: projects a user can access via role and membership; members per project; audit trail of one entity over time.
 - Views: `v_user_project_access`, `v_project_summary`.
 - Procedure: `create_project_with_owner()`.
@@ -69,7 +69,7 @@ The Analysis slice has the fewest tables but the most join-heavy queries and the
 - Indexes: `dna_extractions(sample_id)`, `sequencing_libraries(run_id)`.
 - Also: CHECK constraints on concentrations and QC values.
 
-**C — Analysis, Taxonomy & Analytics** (complex SQL, views, transactional approval)
+**A — Analysis, Taxonomy & Analytics** (complex SQL, views, transactional approval)
 - Queries: taxa detected at a site; taxon richness by site and year; detection history for a taxon (recursive CTE over the taxonomy hierarchy).
 - Views: `v_approved_detections`, `v_site_richness`.
 - Procedure: `approve_analysis()` (`SELECT ... FOR UPDATE`, insert detections, mark approved, audit).
@@ -96,6 +96,9 @@ The Analysis slice has the fewest tables but the most join-heavy queries and the
 - `/api/analyses/import`, `/api/analyses/:id/approve`, `/api/taxa/:id/detections`, `/api/analytics/richness`
 - CSV import validation and report/CSV export endpoints
 
+**Optional ML module**
+- Anomaly-detection experiment (Python) on approved richness data, with model versions, input dataset versions, and evaluation metrics stored; output always labelled exploratory
+
 **Also:** wiring each member's stored procedures and transactions into endpoints; keeping `docs/api.md` source info up to date for D.
 
 ### B — Frontend
@@ -120,7 +123,6 @@ The Analysis slice has the fewest tables but the most join-heavy queries and the
 - Query correctness against fixtures
 - Performance: indexed vs. non-indexed `EXPLAIN ANALYZE` runs (using each member's indexes)
 - Recovery: restore a backup and verify key records
-- Optional stretch: anomaly-detection experiment (Python) on approved data
 
 ### D — Documentation & Demo
 
@@ -139,13 +141,13 @@ The Analysis slice has the fewest tables but the most join-heavy queries and the
 
 | | A (Backend) | B (Frontend) | C (Testing) | D (Docs & Demo) |
 |---|---|---|---|---|
-| Database slice | 7 tables | 6 tables | 5 tables, hardest SQL | 7 tables |
-| Discipline | All APIs and platform | All pages and UI | All tests, CI, fixtures | All docs and demo |
+| Database slice | 5 tables, hardest SQL | 6 tables | 7 tables | 7 tables |
+| Discipline | All APIs, platform, optional ML | All pages and UI | All tests, CI, fixtures | All docs and demo |
 
 ## 4. Working conventions
 
 - One branch per feature (`a/auth-api`, `b/sample-pages`, and so on); merge to `main` by pull request only.
-- Arvind (C) is the repository owner and **merges every pull request**. Nobody else merges or pushes directly to `main`. A pull request touching another member's files also asks that owner for a review before Arvind merges.
+- Arvind (A) is the repository owner and **merges every pull request**. Nobody else merges or pushes directly to `main`. A pull request touching another member's files also asks that owner for a review before Arvind merges.
 - Schema changes go through numbered migrations in `database/migrations/`. Tell the table owner before changing their tables.
 - Parameterized queries only; never commit secrets.
 - Agree cross-slice FK names early (for example `samples.event_id`, `taxon_assignments.library_id`) and keep them stable.
@@ -167,8 +169,8 @@ Work is organized by phase and dependency, not by dates. The full task list, pre
 | ER diagram and normalization | D |
 | Register site, event, sample through the UI | D (data) with B (UI) |
 | Extraction and sequencing metadata | B |
-| CSV import with rollback; trace a detection to its sample | C |
+| CSV import with rollback; trace a detection to its sample | A |
 | Multi-join SQL, views, stored procedures | each their own slice |
-| Trigger audit log and role restriction | A |
+| Trigger audit log and role restriction | C |
 | `EXPLAIN ANALYZE` before and after indexing | each their own slice |
-| Backup/restore | A |
+| Backup/restore | C |

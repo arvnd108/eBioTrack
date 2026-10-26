@@ -1,2 +1,2 @@
--- Owner: C (Testing & QA)
+-- Owner: A (Backend)
 -- Purpose: 3 complex queries: Analysis, Taxonomy & Analytics
