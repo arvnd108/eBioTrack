@@ -119,7 +119,7 @@ Enforced by triggers; any other transition is rejected (error `EB001`).
 | `failed` | `discarded` |
 | `discarded` | *(none)* |
 
-**`analysis_runs.status`** (owner: C)
+**`analysis_runs.status`** (owner: A)
 
 | From | Allowed next |
 |---|---|
