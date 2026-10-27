@@ -350,7 +350,7 @@ Steps overlap: anyone whose prerequisites are done keeps going, even if others a
 
 Copy this into your issue board or tick it here.
 
-- [ ] G0 Contracts agreed (T00)
+- [x] G0 Contracts agreed (T00)
 - [ ] G1 Schema complete (T01–T06)
 - [ ] G2 Seeded database (T11)
 - [ ] G3 Foundation ready (T10, T13, T24)
