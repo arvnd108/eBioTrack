@@ -49,3 +49,23 @@ _To be filled in T11/T31 once the seeds are merged. Do not invent numbers._
 | Samples                    | 17       | CONTRACT 6   |
 | Environmental measurements | 32       | CONTRACT 6   |
 | Everything else            | TBD      | T11/T31      |
+
+## Access slice seed (`database/seeds/010_seed_access.sql`)
+
+**Synthetic** data written for this project (no external source, no license issues). Known values:
+
+| Quantity                                   | Value                                                                                    |
+| ------------------------------------------ | ---------------------------------------------------------------------------------------- |
+| Roles (IDs 1-6)                            | administrator, principal_investigator, field_researcher, lab_technician, analyst, viewer |
+| Users (IDs 1-6)                            | user n has role n; email `<role_name>@ebiotrack.test`                                    |
+| Projects                                   | 1 Yamuna Biodiversity Survey (active), 2 Coastal Estuary Pilot (active)                  |
+| `project_members`                          | 7 rows; user 2 owns both projects                                                        |
+| Members of project 1 / 2                   | 5 / 2                                                                                    |
+| Projects of users 3 / 4, 5, 6              | 1 and 2 / 1 only                                                                         |
+| Projects user 1 (administrator) belongs to | none (access via global role)                                                            |
+| `project_sites`                            | 5 rows, inserted by `020_seed_field.sql`: project 1 -> sites 1-3, project 2 -> sites 4-5 |
+| `audit_logs`, `data_exports`               | 0 rows                                                                                   |
+
+### Dev-only credentials
+
+**Development and test fixtures only, never a real credential.** All six seeded users share one password: `ebiotrack-dev-2026` (stored only as a bcrypt cost-12 hash in the seed). `last_login_at` is NULL until someone signs in.
