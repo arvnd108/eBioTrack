@@ -98,6 +98,23 @@ function mapDatabaseError(err) {
   }
 }
 
+const BODY_PARSER_CODES = {
+  413: 'payload_too_large',
+  415: 'unsupported_media_type',
+};
+
+/** Errors raised by express.json() (http-errors with `type`), other than JSON syntax errors. */
+function isBodyParserError(err) {
+  const status = err?.status ?? err?.statusCode;
+  return (
+    typeof err?.type === 'string' &&
+    err.expose === true &&
+    Number.isInteger(status) &&
+    status >= 400 &&
+    status < 500
+  );
+}
+
 /**
  * Express error-handling middleware.
  * Formats all errors into { error: { code, message, details? } }
@@ -114,14 +131,20 @@ export function errorHandler(err, _req, res, _next) {
     code = 'bad_request';
     message = 'Malformed JSON payload in request body';
   }
-  // 2. Custom AppError instances
+  // 2. Other body-parser errors (too large, unsupported charset/encoding): client errors
+  else if (isBodyParserError(err)) {
+    statusCode = err.status ?? err.statusCode;
+    code = BODY_PARSER_CODES[statusCode] ?? 'bad_request';
+    message = err.message;
+  }
+  // 3. Custom AppError instances
   else if (err instanceof AppError) {
     statusCode = err.statusCode || 500;
     code = err.code || 'internal_error';
     message = err.message || 'An error occurred';
     details = err.details || [];
   }
-  // 3. PostgreSQL and custom contract SQLSTATE codes
+  // 4. PostgreSQL and custom contract SQLSTATE codes
   else if (err && err.code) {
     const dbMapped = mapDatabaseError(err);
     if (dbMapped) {
@@ -136,7 +159,7 @@ export function errorHandler(err, _req, res, _next) {
       }
     }
   }
-  // 4. Fallback for unhandled errors
+  // 5. Fallback for unhandled errors
   else {
     if (process.env.NODE_ENV !== 'test') {
       console.error('[error] Unhandled internal error:', err);

@@ -3,6 +3,28 @@
 
 import { AppError } from './errorHandler.js';
 
+/** Format a Zod issue path as `a.b[0].c`; an empty path is the whole payload. */
+function formatPath(path) {
+  if (path.length === 0) return 'root';
+  return path.reduce((out, segment) => {
+    if (typeof segment === 'number') return `${out}[${segment}]`;
+    return out === '' ? String(segment) : `${out}.${String(segment)}`;
+  }, '');
+}
+
+/**
+ * Replace a request property with parsed data. Express 5 defines `req.query` as a read-only
+ * getter, so plain assignment throws; defining an own property on the request works for all targets.
+ */
+function setRequestProperty(req, target, value) {
+  Object.defineProperty(req, target, {
+    value,
+    writable: true,
+    configurable: true,
+    enumerable: true,
+  });
+}
+
 /**
  * Creates a validation middleware using Zod schemas for body, query, and/or params.
  *
@@ -27,7 +49,7 @@ export function validate(schemas = {}) {
 
         if (!result.success) {
           for (const issue of result.error.issues) {
-            const field = issue.path.length > 0 ? issue.path.join('.') : target;
+            const field = formatPath(issue.path);
             details.push({
               field,
               message: issue.message,
@@ -35,7 +57,7 @@ export function validate(schemas = {}) {
           }
         } else {
           // Replace with parsed/stripped/transformed data
-          req[target] = result.data;
+          setRequestProperty(req, target, result.data);
         }
       }
 
