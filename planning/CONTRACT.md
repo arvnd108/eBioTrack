@@ -1,6 +1,6 @@
 # eBioTrack — Project Contract (T00)
 
-**Version:** 1.0 (approved, G0 passed)
+**Version:** 1.1 (approved, G0 passed; 1.1 adds the not-blank CHECKs to 4.3)
 
 This is the output of task **T00** in [WORKFLOW.md](WORKFLOW.md). It fixes the names, types, values, and shapes that all four members build against, so the database, API, frontend, tests, and docs line up without anyone guessing.
 
@@ -242,7 +242,7 @@ Also **(090)**: composite FK (`project_id`, `site_id`) → `project_sites` so an
 
 ### 4.3 Laboratory & Sequencing (owner B, migration `030`)
 
-**`laboratories`**: `lab_id` PK; `name` text NN UNIQUE; `location` text.
+**`laboratories`**: `lab_id` PK; `name` text NN UNIQUE, `CHECK (length(btrim(name)) > 0)` (`ck_laboratories_name_not_blank`); `location` text.
 
 **`extraction_batches`**: `batch_id` PK; `lab_id` FK→laboratories NN; `operator_id` NN **(090)** →users; `extraction_date` date NN; `kit_name` text; `notes` text; `created_at`.
 
@@ -261,9 +261,9 @@ Also **(090)**: composite FK (`project_id`, `site_id`) → `project_sites` so an
 
 UNIQUE (`sample_id`, `attempt_number`) (re-extractions increment the attempt).
 
-**`sequencing_runs`**: `run_id` PK; `run_code` text NN UNIQUE; `lab_id` FK→laboratories NN; `platform` text NN; `run_date` date; `status` run_status NN default `planned`; `created_at`.
+**`sequencing_runs`**: `run_id` PK; `run_code` text NN UNIQUE, `CHECK (length(btrim(run_code)) > 0)` (`ck_sequencing_runs_run_code_not_blank`); `lab_id` FK→laboratories NN; `platform` text NN, `CHECK (length(btrim(platform)) > 0)` (`ck_sequencing_runs_platform_not_blank`); `run_date` date; `status` run_status NN default `planned`; `created_at`.
 
-**`sequencing_libraries`**: `library_id` PK; `library_code` text NN UNIQUE; `extraction_id` FK→dna_extractions NN; `run_id` FK→sequencing_runs NN; `created_at`; UNIQUE (`extraction_id`, `run_id`).
+**`sequencing_libraries`**: `library_id` PK; `library_code` text NN UNIQUE, `CHECK (length(btrim(library_code)) > 0)` (`ck_sequencing_libraries_library_code_not_blank`); `extraction_id` FK→dna_extractions NN; `run_id` FK→sequencing_runs NN; `created_at`; UNIQUE (`extraction_id`, `run_id`).
 
 **Booking rule:** an extraction may be in many runs over time, but only **one run whose status is `planned` or `running`** at once. Enforced by `create_sequencing_run()` / `assign_extraction_to_run()` with a row lock on the extraction (and tested by C's concurrency test).
 
@@ -733,6 +733,7 @@ The backend resolves `scientific_name` and `taxon_rank` to `taxon_id` before cal
 | Version | Change | Approved by |
 |---|---|---|
 | 0.1 | First draft | — |
+| 1.1 | Section 4.3: document the four not-blank CHECKs added in `030` (`laboratories.name`, `sequencing_runs.run_code` / `platform`, `sequencing_libraries.library_code`). Affects T04, T07, T40-B. | Arvind |
 
 ---
 
