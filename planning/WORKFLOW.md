@@ -340,7 +340,7 @@ Steps overlap: anyone whose prerequisites are done keeps going, even if others a
 ## 8. How we work day to day
 
 - **Branches:** one branch per task, named `<member>/<task-id>-<short-name>` (for example `a/t13-auth`, `d/t03-field-migration`).
-- **Pull requests:** one PR per task, linking the task ID. Arvind (A, repo owner) reviews and merges every PR. PRs that touch another member's files also request that file's owner as a reviewer. Arvind's own PRs get a review from another member before being merged.
+- **Pull requests:** one PR per task, linking the task ID. Arvind (A, repo owner) is the only reviewer: Arvind reviews and merges every PR, and no other member's approval is needed or counted. If a PR touches another member's files, say so in the description. Arvind's own PRs are merged by Arvind once CI passes.
 - **Merging:** only Arvind merges into `main` (enforced by a GitHub ruleset). Arvind merges when CI passes and the review is done. Nobody pushes directly to `main`. Keep `main` runnable at all times.
 - **Migrations:** numbered, never edited after merge. Add a new migration to fix an old one.
 - **Syncs:** hold a short sync whenever a gate is reached or someone is blocked: show what merged, check which tasks are now unblocked, and decide who picks them up. Post blockers in the group chat as soon as they appear, naming the task ID.

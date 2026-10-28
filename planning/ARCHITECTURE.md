@@ -220,7 +220,7 @@ All SQL. Files are split **by slice**, and each slice owner writes their own mig
 | `database/migrations/020_field_samples.sql` | D | Tables, keys, CHECK/UNIQUE constraints: Field & Samples |
 | `database/migrations/030_lab_sequencing.sql` | B | Tables, keys, CHECK/UNIQUE constraints: Laboratory & Sequencing |
 | `database/migrations/040_analysis_taxonomy.sql` | A | Tables, keys, CHECK/UNIQUE constraints: Analysis, Taxonomy & Analytics |
-| `database/migrations/090_cross_slice_constraints.sql` | A | Foreign keys across slices, applied last; reviewed by all |
+| `database/migrations/090_cross_slice_constraints.sql` | A | Foreign keys across slices, applied last; reviewed by Arvind |
 | `database/seeds/010_seed_access.sql` | C | Seed rows: Access, Projects & Audit |
 | `database/seeds/020_seed_field.sql` | D | Seed rows: Field & Samples |
 | `database/seeds/030_seed_lab.sql` | B | Seed rows: Laboratory & Sequencing |
@@ -329,7 +329,7 @@ Project-planning documents, kept apart from the deliverable documentation in `do
 
 ## Rules for working in someone else's area
 
-- Do not edit a file owned by another member without telling them; open a pull request and request their review; Arvind merges it.
+- Do not edit a file owned by another member without telling them; open a pull request that says so in the description; Arvind is the only reviewer and merges it.
 - The `database/migrations/090_cross_slice_constraints.sql` file is the one shared exception: A maintains it, but every member adds their own cross-slice foreign keys through a pull request.
 - New files go in the folder that matches the layer (route, controller, service, page, etc.) and the author becomes the owner; add a row to the table above.
 - Slice owners provide the SQL (views, procedures, triggers); A calls them from services; C tests them; D documents them; B displays the results.

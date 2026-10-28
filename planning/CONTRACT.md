@@ -388,7 +388,7 @@ Everyone seeds the same small **fixture world** so cross-slice references line u
 | `taxon_assignments` | 1–99 | Detections for analyses 1, 2, and 3; some with `qc_flag` `warn`/`fail` so filters can be tested |
 | `audit_logs`, `data_exports` | — | Not seeded |
 
-**Expected values:** after the seeds are merged, C records the exact expected counts (richness per site and year, sample counts per site, and so on) in `tests/fixtures/README.md`. Each member reviews the numbers for their slice.
+**Expected values:** after the seeds are merged, C records the exact expected counts (richness per site and year, sample counts per site, and so on) in `tests/fixtures/README.md`. Each slice owner checks the numbers for their slice and Arvind reviews the PR.
 
 **Seed file order:** `010` access → `020` field → `030` lab → `040` analysis, loaded after `090`.
 
@@ -726,7 +726,7 @@ The backend resolves `scientific_name` and `taxon_rank` to `taxon_id` before cal
 ## 13. Changing this contract
 
 1. Open a pull request that edits this file. Say what changes and which tasks it affects (use task IDs from [WORKFLOW](WORKFLOW.md)).
-2. All four members approve. Anyone whose work is affected checks their files.
+2. Arvind reviews and approves the change (no other approval is required). Anyone whose work is affected is named in the PR and checks their files.
 3. Bump the version and add a row to the changelog below.
 4. Never change a name, type, enum value, signature, or response shape quietly in code.
 

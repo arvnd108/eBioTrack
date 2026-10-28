@@ -83,7 +83,7 @@ Follow this order. Task IDs match [WORKFLOW.md](../WORKFLOW.md).
 11. **T40** Write up your slice.
 12. **T50 – T52** End-to-end run and demo rehearsal with everyone.
 
-Branches: `a/<task-id>-<short-name>` (for example `a/t13-auth`). One pull request per task. You review and merge everyone's pull requests; ask another member to review yours before you merge it.
+Branches: `a/<task-id>-<short-name>` (for example `a/t13-auth`). One pull request per task. You are the only reviewer: you review and merge everyone's pull requests, and your own are merged by you once CI passes.
 
 ## 5. Tasks you can start now
 

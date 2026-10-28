@@ -147,7 +147,7 @@ The Analysis slice has the fewest tables but the most join-heavy queries and the
 ## 4. Working conventions
 
 - One branch per feature (`a/auth-api`, `b/sample-pages`, and so on); merge to `main` by pull request only.
-- Arvind (A) is the repository owner and **merges every pull request**. Nobody else merges or pushes directly to `main`. A pull request touching another member's files also asks that owner for a review before Arvind merges.
+- Arvind (A) is the repository owner and **merges every pull request**. Nobody else merges or pushes directly to `main`. Arvind is the only reviewer: every pull request is reviewed and approved by Arvind before it is merged. Nobody else's approval is required or counted. If a change touches another member's files, say so in the PR description so Arvind can check with them.
 - Schema changes go through numbered migrations in `database/migrations/`. Tell the table owner before changing their tables.
 - Parameterized queries only; never commit secrets.
 - Agree cross-slice FK names early (for example `samples.event_id`, `taxon_assignments.library_id`) and keep them stable.

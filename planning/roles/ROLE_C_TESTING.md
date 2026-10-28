@@ -78,7 +78,7 @@ Task IDs match [WORKFLOW.md](../WORKFLOW.md).
 10. **T40** Write up your slice.
 11. **T50 – T52** End-to-end run and demo rehearsal.
 
-Branches: `c/<task-id>-<short-name>` (for example `c/t02-access-migration`). One pull request per task. Arvind reviews and merges it (you cannot merge to `main` yourself).
+Branches: `c/<task-id>-<short-name>` (for example `c/t02-access-migration`). One pull request per task. Arvind is the only reviewer and merges it (you cannot merge to `main` yourself).
 
 ## 5. Tasks you can start now
 
