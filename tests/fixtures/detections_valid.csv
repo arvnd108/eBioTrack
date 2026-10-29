@@ -1,0 +1,15 @@
+library_code,scientific_name,taxon_rank,read_count,confidence,qc_flag
+LIB-0001,Labeo rohita,species,14250,0.9712,pass
+LIB-0001,Labeo calbasu,species,1450,0.9731,pass
+LIB-0002,Labeo rohita,species,12980,0.9654,pass
+LIB-0003,Labeo rohita,species,9840,0.9588,pass
+LIB-0003,Cirrhinus mrigala,species,5210,0.9120,pass
+LIB-0004,Cirrhinus mrigala,species,4390,0.8940,pass
+LIB-0005,Cyprinus carpio,species,3060,0.9015,pass
+LIB-0005,Labeo,genus,720,0.7410,warn
+LIB-0006,Gambusia affinis,species,0,0.0000,fail
+LIB-0007,Labeo rohita,species,20310,1.0000,pass
+LIB-0007,Cirrhinus mrigala,species,88,0.5120,warn
+LIB-0007,Cyprinus carpio,species,1975,0.8830,pass
+LIB-0008,Labeo calbasu,species,2210,0.9390,pass
+LIB-0008,Cirrhinus mrigala,species,35,0.4010,fail
