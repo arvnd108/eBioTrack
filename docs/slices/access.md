@@ -63,7 +63,7 @@ Top-level keys are column names, so the trail query's `changed_fields` is exactl
 
 ## Views (T15-C)
 
-Defined in `database/views/access_views.sql` (`CREATE OR REPLACE VIEW`, read-only, no `password_hash`). **Not applied by `migrate.js`**: until the runner is extended, apply with `psql -f database/views/access_views.sql`. Views have no order; consumers add `ORDER BY`. If a column list changes later, `DROP VIEW` first.
+Defined in `database/views/access_views.sql` (`CREATE OR REPLACE VIEW`, read-only, no `password_hash`). Installed by `migrate.js` (views and procedures after the migrations, triggers after the seeds, re-applied on every run); to apply by hand, `psql -f database/views/access_views.sql`. Views have no order; consumers add `ORDER BY`. If a column list changes later, `DROP VIEW` first.
 
 ### `v_user_project_access`
 
@@ -105,8 +105,6 @@ SELECT project_id, title, owner_name, member_count, sample_count
   FROM v_project_summary ORDER BY project_id;
 ```
 
-### Installation gap and grants
+### Installation and grants
 
-`migrate.js` reads only `database/migrations` and `database/seeds`, so on a freshly migrated database the views do not exist (the API cannot select from them, and the test database lacks them). Proposal for Arvind: after the migrations and before seeds, run `database/views/*.sql`, then `database/procedures/*.sql`, then `database/triggers/*.sql`, in alphabetical order, each file in one transaction and re-applied on every run (all files are idempotent; re-applying is simpler and safer than checksum tracking for `CREATE OR REPLACE` objects). `tests/setup/testDb.js` must call the same step.
-
-Grants: `ebiotrack_readonly` has SELECT on both views. `ebiotrack_app` has SELECT, but `grants.sql` also gives it table-level INSERT/UPDATE on views through `ON ALL TABLES`; writes still fail because neither view is automatically updatable ("Views containing WITH / not selecting from a single table"). Both views are owned by `ebiotrack`, the role named in the default privileges.
+`migrate.js` applies `database/views/*.sql` right after the migrations, so a freshly migrated database and the test database have the views. `ebiotrack_readonly` has SELECT on both views. `ebiotrack_app` has SELECT only: `grants.sql` revokes the INSERT/UPDATE/DELETE that table-level grants would give it, and neither view is automatically updatable anyway. Default privileges give new views write rights again, so re-run `database/roles/grants.sql` after views are created or re-created. Both views are owned by `ebiotrack`, the role named in the default privileges.
