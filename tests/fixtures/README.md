@@ -248,3 +248,15 @@ Statements in `database/queries/access_queries.sql`, run on the seeded database 
 | `access_project_members(NULL)`                        | project 1: 5 members (1 owner, 0 manager, 3 contributors, 1 viewer); project 2: 2 members (1 owner, 1 contributor); owner Pranav Investigator; 0 inactive                                               |
 | `access_project_members(1)`                           | one row                                                                                                                                                                                                 |
 | `access_entity_audit_trail('samples', 1, NULL, NULL)` | zero rows (no audit seed). With the scratch trail (audit ids 1-7, see the query file): audits 1, 2, 5, 6 at steps 1-4; audit 6 has NULL actor; with `from` 2026-01-11 audits 5 and 6 keep steps 3 and 4 |
+
+## Access views: expected results (T15-C, for T31/T33)
+
+Views in `database/views/access_views.sql` (apply with `psql -f` first; the runner does not install them yet).
+
+| Query                                                  | Expected                                                                                                                             |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `SELECT count(*) FROM v_user_project_access`           | 9                                                                                                                                    |
+| `v_user_project_access` for user 1 / 2 / 3 / 4 / 5 / 6 | 2 / 2 / 2 / 1 / 1 / 1 rows; user 1 `administrator` with NULL `project_role`; user 6 `viewer`; `can_edit` true only for users 1 and 2 |
+| `v_user_project_access` for user 999                   | zero rows                                                                                                                            |
+| `v_project_summary` project 1                          | owner 2, members 5 (0 manager, 3 contributor, 1 viewer), sites 3, events 6, samples 13                                               |
+| `v_project_summary` project 2                          | owner 2, members 2 (0, 1, 0), sites 2, events 2, samples 4                                                                           |

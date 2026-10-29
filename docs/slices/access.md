@@ -60,3 +60,53 @@ CONTRACT 4.1 only says `details` is a JSON object of changed columns with old an
 | `login`, `export`, `approve`, `reject` | `NULL` or a small object chosen by the caller                                |
 
 Top-level keys are column names, so the trail query's `changed_fields` is exactly the set of changed columns. The query reads no key itself, so a different shape would not break it, only make `changed_fields` less useful. This is a proposal, not part of the contract.
+
+## Views (T15-C)
+
+Defined in `database/views/access_views.sql` (`CREATE OR REPLACE VIEW`, read-only, no `password_hash`). **Not applied by `migrate.js`**: until the runner is extended, apply with `psql -f database/views/access_views.sql`. Views have no order; consumers add `ORDER BY`. If a column list changes later, `DROP VIEW` first.
+
+### `v_user_project_access`
+
+One row per (user, project) the user can access. `SELECT ... FROM v_user_project_access WHERE user_id = $1` returns the same rows as `access_user_projects($1, NULL)` (checked for users 1-6 and 999; Query 1 columns `title`/`status` are `project_title`/`project_status` here).
+
+| Column                            | Type                 | Meaning / source                                                             |
+| --------------------------------- | -------------------- | ---------------------------------------------------------------------------- |
+| `user_id`, `full_name`, `email`   | bigint, text, text   | `users`; active users only                                                   |
+| `project_id`                      | bigint               | `projects.project_id`                                                        |
+| `project_title`, `project_status` | text, project_status | `projects.title`, `projects.status`                                          |
+| `access_via`                      | text                 | `'administrator'` (global role) or `'membership'`                            |
+| `project_role`                    | project_role         | `project_members.project_role`; NULL for an administrator with no membership |
+| `can_edit`                        | boolean              | administrator, or project role owner/manager                                 |
+
+Rules: administrators see every project; others only their memberships; an administrator who is also a member appears once, as `administrator`; inactive users have no rows. **Contains emails**: keep behind `authorize` (administrator, or the caller's own `user_id`). Seed: 9 rows (user 1: projects 1, 2; users 2, 3: 1, 2; users 4, 5, 6: project 1).
+
+```sql
+SELECT project_id, project_title, access_via, project_role, can_edit
+  FROM v_user_project_access WHERE user_id = 3 ORDER BY project_id;
+```
+
+### `v_project_summary`
+
+One row per project, including projects with no members, sites or events (counts are 0, owner NULL). Each child table is aggregated separately, so counts are not multiplied.
+
+| Column                                                                  | Type         | Meaning / source                                                                              |
+| ----------------------------------------------------------------------- | ------------ | --------------------------------------------------------------------------------------------- |
+| `project_id`, `title`, `status`, `start_date`, `end_date`, `created_by` |              | `projects`                                                                                    |
+| `owner_id`, `owner_name`                                                | bigint, text | the member with role `owner`; NULL if none                                                    |
+| `member_count`, `manager_count`, `contributor_count`, `viewer_count`    | bigint       | `project_members` (owner counted in `member_count` only); agree with `access_project_members` |
+| `site_count`                                                            | bigint       | `project_sites`                                                                               |
+| `event_count`                                                           | bigint       | `collection_events.project_id`                                                                |
+| `sample_count`                                                          | bigint       | `samples` of those events                                                                     |
+
+Seed: project 1: 5 members (0 manager, 3 contributor, 1 viewer), 3 sites, 6 events, 13 samples; project 2: 2 members (0, 1, 0), 2 sites, 2 events, 4 samples (17 in total).
+
+```sql
+SELECT project_id, title, owner_name, member_count, sample_count
+  FROM v_project_summary ORDER BY project_id;
+```
+
+### Installation gap and grants
+
+`migrate.js` reads only `database/migrations` and `database/seeds`, so on a freshly migrated database the views do not exist (the API cannot select from them, and the test database lacks them). Proposal for Arvind: after the migrations and before seeds, run `database/views/*.sql`, then `database/procedures/*.sql`, then `database/triggers/*.sql`, in alphabetical order, each file in one transaction and re-applied on every run (all files are idempotent; re-applying is simpler and safer than checksum tracking for `CREATE OR REPLACE` objects). `tests/setup/testDb.js` must call the same step.
+
+Grants: `ebiotrack_readonly` has SELECT on both views. `ebiotrack_app` has SELECT, but `grants.sql` also gives it table-level INSERT/UPDATE on views through `ON ALL TABLES`; writes still fail because neither view is automatically updatable ("Views containing WITH / not selecting from a single table"). Both views are owned by `ebiotrack`, the role named in the default privileges.
