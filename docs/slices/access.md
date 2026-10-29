@@ -48,18 +48,18 @@ Until then the middleware is more permissive than the query; the query is the sa
 
 `access_entity_audit_trail` is unscoped. For a `principal_investigator` the caller must first check that the entity belongs to one of their projects (`accessibleProjectIds(user)` gives the project ids; map the entity to its project, for example `samples` via `collection_events.project_id`, `projects` directly) and return 404 otherwise. Administrators are unrestricted; other roles cannot read audit (CONTRACT 9).
 
-### 3. Proposed `audit_logs.details` shape (decision for T17-C)
+### 3. `audit_logs.details` shape (decided in T17-C)
 
-CONTRACT 4.1 only says `details` is a JSON object of changed columns with old and new values. Proposal for `audit_row_change()`, so that `changed_fields` in the trail query is meaningful:
+CONTRACT 4.1 only says `details` is a JSON object of changed columns with old and new values. Decision, implemented by `audit_row_change()`:
 
-| Action                                 | `details`                                                                    |
-| -------------------------------------- | ---------------------------------------------------------------------------- |
-| `insert`                               | `{ "<column>": { "new": v }, ... }` for the inserted columns                 |
-| `update`                               | `{ "<column>": { "old": v1, "new": v2 }, ... }` for **changed** columns only |
-| `delete`                               | `{ "<column>": { "old": v }, ... }`                                          |
-| `login`, `export`, `approve`, `reject` | `NULL` or a small object chosen by the caller                                |
+| Action                                 | `details`                                                                                              |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `insert`                               | `{ "<column>": { "new": v }, ... }` for the inserted columns                                           |
+| `update`                               | `{ "<column>": { "old": v1, "new": v2 }, ... }` for **changed** columns only                           |
+| `delete`                               | `{ "<column>": { "old": v }, ... }`                                                                    |
+| `login`, `export`, `approve`, `reject` | `NULL` or a small object chosen by the caller (written by procedures or the app, never by the trigger) |
 
-Top-level keys are column names, so the trail query's `changed_fields` is exactly the set of changed columns. The query reads no key itself, so a different shape would not break it, only make `changed_fields` less useful. This is a proposal, not part of the contract.
+Top-level keys are column names, so the trail query's `changed_fields` is exactly the set of changed columns. Rules: `password_hash` is never logged, and neither are columns passed as extra trigger arguments; an update that changes nothing (after those exclusions) writes no row; for composite-key link tables `entity_id` is the parent id and the whole row is in `details`.
 
 ## Views (T15-C)
 
@@ -133,3 +133,25 @@ SELECT create_project_with_owner('New survey', 'Objectives', DATE '2026-06-01', 
 ```
 
 From the backend: `callProcedure('create_project_with_owner', [title, objectives, startDate, req.user.user_id], client)` inside `withTransaction`.
+
+## Audit trigger (T17-C)
+
+`audit_row_change()` in `database/triggers/access_triggers.sql` is an `AFTER INSERT OR UPDATE OR DELETE ... FOR EACH ROW` trigger function (`SECURITY INVOKER`, no dynamic SQL). It writes one `audit_logs` row per changed row: `entity_type` = table name, `entity_id` = the key column named by `TG_ARGV[0]`, `action` = `insert`/`update`/`delete`, `actor_id` from `app.current_user_id`, `details` as decided above. Attached here to `users` (leaving out `last_login_at`), `user_roles`, `projects`, `project_members` and `project_sites`.
+
+**Attach it from your slice** (A, B, D), after the table's own status-transition trigger:
+
+```sql
+CREATE OR REPLACE TRIGGER trg_<table>_audit
+    AFTER INSERT OR UPDATE OR DELETE ON <table>
+    FOR EACH ROW EXECUTE FUNCTION audit_row_change('<pk_column>');
+```
+
+Optional extra arguments are columns to leave out of the log (a noisy timestamp). For a composite key pass the parent id column. Never attach it to `audit_logs`, `schema_migrations`, `schema_seeds` or `sessions`. `access_triggers.sql` must sort first (the runner applies triggers alphabetically); do not rename it.
+
+Behaviour and traps:
+
+- **Actor:** unset or empty `app.current_user_id` gives `actor_id` NULL (system action); digits give that user; anything else gives NULL plus a `WARNING`. A well-formed id that is not a user (for example `99999`) fails with `23503` and rolls back the business write, on purpose.
+- **Seeds:** triggers are installed after the seeds, so a fresh `db:reset --seed` leaves `audit_logs` empty. `reseed()` (tests) re-runs seeds with the triggers present, so it truncates `audit_logs` (restarting the identity) at the end.
+- **Append-only:** the trigger runs as the caller; `ebiotrack_app` can insert audit rows but `UPDATE`/`DELETE` on `audit_logs` fail with `42501`.
+- **Volume data:** `generate-volume-data.js` disables the audit triggers while loading and cleaning (and re-enables them), so synthetic rows are not audited. Performance runs (T35) should measure with the triggers present and absent.
+- **Misuse** (no key argument, key column missing, statement-level trigger) raises `22023` naming the table.
