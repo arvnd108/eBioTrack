@@ -6,9 +6,10 @@
 -- database/queries/access_queries.sql and must not disagree with them. Read-only: nothing writes
 -- through a view, no explicit ORDER BY (consumers sort), no password_hash or other secrets.
 --
--- NOT applied by backend/src/db/migrate.js (it only reads database/migrations and
--- database/seeds). Interim step, safe to repeat:
+-- Installed by backend/src/db/migrate.js (views run after the migrations, on every run). To apply
+-- by hand, safe to repeat:
 --   psql "$DATABASE_URL" -f database/views/access_views.sql
+-- Re-run database/roles/grants.sql afterwards so the app role keeps SELECT only on the views.
 -- CREATE OR REPLACE VIEW cannot drop or rename columns of an existing view; if the column lists
 -- change later, DROP VIEW first.
 
