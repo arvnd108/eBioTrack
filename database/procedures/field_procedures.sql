@@ -56,7 +56,7 @@ BEGIN
             USING ERRCODE = '23503';
     END IF;
 
-    -- Volume and depth are optional (CONTRACT 8: volume_ml?, depth_m?), but when given volume must be
+    -- Volume and depth are optional (CONTRACT 10: volume_ml?, depth_m?), but when given volume must be
     -- positive and depth cannot be negative.
     IF p_volume_ml IS NOT NULL AND p_volume_ml <= 0 THEN
         RAISE EXCEPTION 'Sample volume must be greater than zero'
