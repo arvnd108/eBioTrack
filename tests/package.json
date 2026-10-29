@@ -16,7 +16,9 @@
     "test:authorization": "vitest run --config vitest.config.js authorization/",
     "test:recovery": "vitest run --config vitest.config.js recovery/",
     "lint": "eslint .",
-    "format": "prettier --check ."
+    "format": "prettier --check .",
+    "volume:load": "node fixtures/generate-volume-data.js",
+    "volume:clean": "node fixtures/generate-volume-data.js --clean"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
