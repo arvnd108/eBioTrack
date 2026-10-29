@@ -63,6 +63,18 @@ BEGIN
 END
 $$;
 
+-- Views are read-only (T15-C): the table-level grants above also cover views, so take the write
+-- privileges back from the app role. Re-run this script after the views are (re)created.
+DO $$
+DECLARE
+    v text;
+BEGIN
+    FOR v IN SELECT viewname FROM pg_views WHERE schemaname = 'public' LOOP
+        EXECUTE format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON %I FROM ebiotrack_app', v);
+    END LOOP;
+END
+$$;
+
 -- Login roles are created per environment with a password supplied at run time, never committed:
 --   psql -v api_password="'...'" -c "CREATE ROLE ebiotrack_api LOGIN PASSWORD :api_password IN ROLE ebiotrack_app"
 -- Hardening idea (out of scope here): REVOKE ALL ON SCHEMA public FROM PUBLIC.
@@ -73,5 +85,6 @@ $$;
 --   SELECT has_table_privilege('ebiotrack_app', 'projects', 'DELETE');         -- f
 --   SELECT has_table_privilege('ebiotrack_app', 'project_members', 'DELETE');  -- t
 --   SELECT has_table_privilege('ebiotrack_readonly', 'users', 'INSERT');       -- f
+--   SELECT has_table_privilege('ebiotrack_app', 'v_project_summary', 'INSERT');  -- f (views are read-only)
 --   SELECT grantee, table_name, privilege_type FROM information_schema.role_table_grants
 --    WHERE grantee LIKE 'ebiotrack_%' ORDER BY 1, 2, 3;
