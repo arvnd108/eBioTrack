@@ -35,7 +35,7 @@ Seed rows: `database/seeds/030_seed_lab.sql` (2 labs, 3 batches, 17 extractions,
 
 ### `v_lab_pipeline_status`
 
-One row per sample (every sample, including ones not yet extracted). Collapses a sample's history to its latest extraction attempt and, for that extraction, the library on its most recent run. Used by the Lab processing page (T27), the lab routes (T22), and the dashboard.
+One row per sample (every sample, including ones not yet extracted). Collapses a sample's history to its latest extraction attempt and, for that extraction, the library on its most recent run (latest `run_date`, then newest `created_at`). Used by the Lab processing page (T27), the lab routes (T22), and the dashboard.
 
 | Column | Type | Meaning |
 | --- | --- | --- |
@@ -54,7 +54,7 @@ One row per sample (every sample, including ones not yet extracted). Collapses a
 | `latest_purity_a260_280` | numeric | A260/280 of the latest extraction |
 | `batch_id` | bigint | Batch of the latest extraction |
 | `lab_name` | text | Lab that ran that batch |
-| `library_id` | bigint | Library from the latest extraction on its most recent run, NULL if none |
+| `library_id` | bigint | Library from the latest extraction on its most recent run (by `run_date`), NULL if none |
 | `library_code` | text | `LIB-NNNN` |
 | `run_id` | bigint | That library's run |
 | `run_code` | text | `RUN-NNN` |
@@ -66,7 +66,7 @@ Seeded data: 17 rows; samples 1–16 `sequenced` (8 on `RUN-001`, 8 on `RUN-002`
 
 ### `v_failed_qc`
 
-One row per QC problem on a sample or extraction: extractions whose `qc_status` is `fail`, and `quality_control_results` rows with result `fail` or `warn` that name a sample. Analysis-only QC rows (no `sample_id`), passing QC, and pending extractions are left out. History is kept, so a failed attempt still appears after a later re-extraction passes. Used by the Lab processing page's QC list (T27) and QC reporting. For one row per sample, see Q3.
+One row per QC problem on a sample or extraction: extractions whose `qc_status` is `fail`, `quality_control_results` rows with result `fail` or `warn` that name a sample, and those recorded against an analysis only (no `sample_id`), which are applied to every sample whose library is in that analysis's run (the same rule as Q3). Passing QC and pending extractions are left out. History is kept, so a failed attempt still appears after a later re-extraction passes. Used by the Lab processing page's QC list (T27) and QC reporting. For one row per sample, see Q3.
 
 | Column | Type | Meaning |
 | --- | --- | --- |
@@ -75,7 +75,7 @@ One row per QC problem on a sample or extraction: extractions whose `qc_status` 
 | `project_id` | bigint | Project (for access filtering) |
 | `site_name` | text | Site name |
 | `extraction_id` | bigint | Failed extraction; NULL for rows from `quality_control_results` |
-| `source` | text | `extraction` or `qc_result` |
+| `source` | text | `extraction`, `qc_result`, or `analysis_qc` (analysis-only QC applied to the samples of its run) |
 | `qc_type` | qc_type | QC check type; NULL for `extraction` rows |
 | `severity` | text | `fail` or `warn` |
 | `metric_value` | numeric | Measured value (concentration for failed extractions), may be NULL |
@@ -83,4 +83,4 @@ One row per QC problem on a sample or extraction: extractions whose `qc_status` 
 | `recorded_by` | bigint | User who recorded it (batch operator for extractions) |
 | `recorded_at` | timestamptz | When it was recorded |
 
-Seeded data: 4 rows. Sample 17: failed extraction 17, `concentration` fail (0.35 ng/µL), `contamination_check` fail. Sample 12: `negative_control` warn.
+Seeded data: 4 rows (no analysis-only QC is seeded). Sample 17: failed extraction 17, `concentration` fail (0.35 ng/µL), `contamination_check` fail. Sample 12: `negative_control` warn.

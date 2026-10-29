@@ -20,7 +20,8 @@ DROP VIEW IF EXISTS v_failed_qc;
 -- Hides:   the one-to-many history behind each sample. A sample can have several extraction
 --          attempts, and an extraction can be sequenced on more than one run over time; the
 --          view keeps only the LATEST extraction attempt and, for that extraction, the library
---          on the LATEST run. Earlier attempts and runs stay in the base tables. It also hides
+--          on the LATEST run (latest run_date, then newest created_at). Earlier attempts and
+--          runs stay in the base tables. It also hides
 --          the six-table join and the rule that turns these facts into `pipeline_stage`.
 -- Every sample appears, including ones with no extraction yet (LEFT JOIN LATERAL).
 --
@@ -89,13 +90,14 @@ LEFT JOIN LATERAL (
 ) x ON true
 LEFT JOIN extraction_batches b ON b.batch_id = x.batch_id
 LEFT JOIN laboratories lab     ON lab.lab_id = b.lab_id
--- The library from that extraction on its most recent run
+-- The library from that extraction on its most recent run (by run_date, so a run created out
+-- of order still sorts by when it happened; runs with no date sort last)
 LEFT JOIN LATERAL (
     SELECT l.library_id, l.library_code, r.run_id, r.run_code, r.status AS run_status, r.run_date
     FROM sequencing_libraries l
     JOIN sequencing_runs r ON r.run_id = l.run_id
     WHERE l.extraction_id = x.extraction_id
-    ORDER BY r.created_at DESC, r.run_id DESC
+    ORDER BY r.run_date DESC NULLS LAST, r.created_at DESC, r.run_id DESC
     LIMIT 1
 ) lib ON true;
 
@@ -108,19 +110,24 @@ COMMENT ON VIEW v_lab_pipeline_status IS
 -- Used by: the Lab processing page's "QC problems" list (T27), QC reporting, and lab routes
 --          that need the reason before allowing a library (the T17 trigger blocks libraries
 --          from failed extractions; this view explains why to the user).
--- Hides:   that problems come from two tables with different shapes. An extraction whose
---          qc_status is 'fail' and a quality_control_results row with result 'fail' or 'warn'
---          become the same columns (UNION ALL), joined to the sample, project and site.
---          It does not hide anything sensitive.
--- Not included: QC rows linked only to an analysis run (sample_id NULL), because they are not
---          about one sample; passing QC; extractions still 'pending'.
+-- Hides:   that problems come from three sources with different shapes: an extraction whose
+--          qc_status is 'fail', a quality_control_results row with result 'fail' or 'warn' on a
+--          sample, and one recorded against an analysis only. They become the same columns
+--          (UNION ALL), joined to the sample, project and site. It does not hide anything
+--          sensitive.
+-- Analysis-only QC (analysis_id set, sample_id NULL) is not about one sample, so it is applied
+--          to every sample whose library is in that analysis's run (source 'analysis_qc', reason
+--          prefixed 'analysis N'). This is the same rule as Q3 in lab_queries.sql, so the view
+--          and the query agree. None is seeded.
+-- Not included: passing QC; extractions still 'pending'.
 -- History is kept: a failed attempt still appears after a later re-extraction passes; use
 -- v_lab_pipeline_status for the sample's current state.
 -- One sample can have several rows (one per problem). For one row per sample, group by
 -- sample_id (see Q3 in database/queries/lab_queries.sql).
 --
--- Seeded data: 4 rows. Sample 17: failed extraction 17, concentration 'fail' (0.35 ng/uL) and
--- contamination_check 'fail'. Sample 12: negative_control 'warn'.
+-- Seeded data: 4 rows (no analysis-only QC is seeded). Sample 17: failed extraction 17,
+-- concentration 'fail' (0.35 ng/uL) and contamination_check 'fail'. Sample 12: negative_control
+-- 'warn'.
 
 CREATE VIEW v_failed_qc AS
 SELECT
@@ -170,6 +177,27 @@ FROM (
     FROM quality_control_results q
     WHERE q.result IN ('fail', 'warn')
       AND q.sample_id IS NOT NULL
+
+    UNION ALL
+
+    -- QC results recorded against an analysis only: every sample sequenced in that run
+    SELECT
+        x.sample_id,
+        NULL::bigint                                            AS extraction_id,
+        'analysis_qc'::text                                     AS source,
+        q.qc_type,
+        q.result::text                                          AS severity,
+        q.metric_value,
+        'analysis ' || q.analysis_id || ' ' || q.qc_type || ' ' || q.result
+            || COALESCE(': ' || q.notes, '')                    AS reason,
+        q.recorded_by,
+        q.recorded_at
+    FROM quality_control_results q
+    JOIN analysis_runs a          ON a.analysis_id = q.analysis_id
+    JOIN sequencing_libraries lib ON lib.run_id = a.run_id
+    JOIN dna_extractions x        ON x.extraction_id = lib.extraction_id
+    WHERE q.result IN ('fail', 'warn')
+      AND q.sample_id IS NULL
 ) p
 JOIN samples s           ON s.sample_id = p.sample_id
 JOIN collection_events e ON e.event_id = s.event_id
