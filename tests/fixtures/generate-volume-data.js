@@ -551,10 +551,29 @@ const CLEAN_STEPS = [
  * scan its child table to check the foreign key, and without the VACUUM the child's dead rows make
  * that scan quadratic. Re-running after a failure is safe: it only ever removes volume rows.
  */
+/**
+ * Enable or disable the audit triggers (trg_<table>_audit) on the current connection's database.
+ * Volume rows are synthetic: auditing them would write one audit row per inserted or deleted row
+ * and collide with the generated audit_logs ids. Trigger and table names come from the catalog.
+ */
+async function setAuditTriggers(client, enabled) {
+  const { rows } = await client.query(
+    `SELECT tgrelid::regclass::text AS tbl, tgname
+       FROM pg_trigger
+      WHERE tgname LIKE 'trg\\_%\\_audit' AND NOT tgisinternal`,
+  );
+  for (const { tbl, tgname } of rows) {
+    await client.query(`ALTER TABLE ${tbl} ${enabled ? 'ENABLE' : 'DISABLE'} TRIGGER ${tgname}`);
+  }
+}
+
 export async function cleanVolumeData() {
   assertSafeTarget(getTestDatabaseUrl());
   const client = await getPool().connect();
+  let triggersOff = false;
   try {
+    await setAuditTriggers(client, false);
+    triggersOff = true;
     let total = 0;
     // Table and column names come from the fixed list above.
     for (const [table, column] of CLEAN_STEPS) {
@@ -564,6 +583,7 @@ export async function cleanVolumeData() {
     }
     return total;
   } finally {
+    if (triggersOff) await setAuditTriggers(client, true).catch(() => {});
     client.release();
   }
 }
@@ -588,6 +608,7 @@ export async function loadVolumeData({
       );
     }
     await client.query('BEGIN');
+    await setAuditTriggers(client, false); // re-enabled before COMMIT; a ROLLBACK restores them too
     const summary = [];
     for (const table of plan) {
       const t0 = performance.now();
@@ -597,6 +618,7 @@ export async function loadVolumeData({
         `  ${table.name.padEnd(24)} ${String(table.count).padStart(9)} rows  ${Math.round(performance.now() - t0)} ms`,
       );
     }
+    await setAuditTriggers(client, true);
     await client.query('COMMIT');
     log('Running ANALYZE so the planner has statistics');
     await client.query('ANALYZE');
