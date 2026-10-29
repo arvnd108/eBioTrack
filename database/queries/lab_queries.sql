@@ -109,8 +109,13 @@ EXECUTE q2_run_libraries_with_samples(NULL);
 --           reason) list, string_agg to collect every reason per sample, an aggregate that
 --           ranks severity (fail beats warn), and a correlated EXISTS subquery for "was a
 --           library ever built from this sample".
--- Note: QC rows linked only to an analysis (analysis_id set, sample_id NULL) are not
---       per-sample and are left out.
+-- Note: a QC row linked only to an analysis (analysis_id set, sample_id NULL) is not about one
+--       sample, so it is applied to every sample whose library is in that analysis's run (a
+--       bad read-quality result affects the whole run). None are seeded, so the expected
+--       results below do not change.
+--       The failed extraction and its own concentration/contamination QC rows are separate
+--       sources, so a failed sample can show problems = 3 for one underlying failure; the
+--       reasons column lists each one.
 --
 -- Expected (all projects): 2 rows, failures first.
 --   sample_id | sample_code          | sample_status | site_name         | severity | problems | reasons                                                                                            | sequenced
@@ -140,6 +145,22 @@ WITH problems AS (
     FROM quality_control_results q
     WHERE q.result IN ('fail', 'warn')
       AND q.sample_id IS NOT NULL
+
+    UNION ALL
+
+    -- QC results recorded against an analysis only: every sample sequenced in that run
+    SELECT
+        x.sample_id,
+        q.result::text                                                   AS severity,
+        'analysis ' || q.analysis_id || ' ' || q.qc_type || ' ' || q.result
+            || COALESCE(' (' || q.metric_value || ')', '')
+            || COALESCE(': ' || q.notes, '')                             AS reason
+    FROM quality_control_results q
+    JOIN analysis_runs a          ON a.analysis_id = q.analysis_id
+    JOIN sequencing_libraries lib ON lib.run_id = a.run_id
+    JOIN dna_extractions x        ON x.extraction_id = lib.extraction_id
+    WHERE q.result IN ('fail', 'warn')
+      AND q.sample_id IS NULL
 )
 SELECT
     s.sample_id,
