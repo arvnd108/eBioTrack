@@ -88,3 +88,29 @@ COMMENT ON FUNCTION enforce_sample_status_transition() IS
     'Rejects sample status changes not permitted by CONTRACT 3 using SQLSTATE EB001.';
 COMMENT ON FUNCTION record_sample_status_history() IS
     'Writes one history row after each successful sample status change, using app.current_user_id as changed_by.';
+
+-- Audit triggers: T17-C owns audit_row_change(). This conditional block keeps a fresh
+-- install working before T17-C is merged; re-running this file after T17-C lands
+-- attaches the audit triggers automatically (same pattern as the lab trigger slice).
+DO $$
+BEGIN
+    IF to_regprocedure('audit_row_change()') IS NULL THEN
+        RAISE NOTICE 'audit_row_change() is not installed yet; skipping Field & Samples audit triggers';
+    ELSE
+        EXECUTE 'DROP TRIGGER IF EXISTS trg_samples_audit ON samples';
+        EXECUTE 'CREATE TRIGGER trg_samples_audit
+                 AFTER INSERT OR UPDATE OR DELETE ON samples
+                 FOR EACH ROW EXECUTE FUNCTION audit_row_change(''sample_id'')';
+
+        EXECUTE 'DROP TRIGGER IF EXISTS trg_collection_events_audit ON collection_events';
+        EXECUTE 'CREATE TRIGGER trg_collection_events_audit
+                 AFTER INSERT OR UPDATE OR DELETE ON collection_events
+                 FOR EACH ROW EXECUTE FUNCTION audit_row_change(''event_id'')';
+
+        EXECUTE 'DROP TRIGGER IF EXISTS trg_sampling_sites_audit ON sampling_sites';
+        EXECUTE 'CREATE TRIGGER trg_sampling_sites_audit
+                 AFTER INSERT OR UPDATE OR DELETE ON sampling_sites
+                 FOR EACH ROW EXECUTE FUNCTION audit_row_change(''site_id'')';
+    END IF;
+END;
+$$;
