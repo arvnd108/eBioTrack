@@ -43,16 +43,16 @@ INSERT INTO analysis_runs (analysis_id, run_id, marker_id, pipeline_name, pipeli
                            reference_db_version, parameters, status, imported_by, approved_by, approved_at, created_at) VALUES
     (1, 1, 1, 'OBITools3', '3.0.1', 'MitoFish', '2025-06',
         '{"min_length": 100, "min_quality": 30, "identity_cutoff": 0.97}',
-        'approved', 5, 2, '2026-03-20 10:00:00+00', '2026-03-18 09:00:00+00'),
+        'approved', 5, 2, '2026-04-02 11:30:00+00', '2026-03-30 09:00:00+00'),
     (2, 2, 1, 'OBITools3', '3.0.1', 'MitoFish', '2026-01',
         '{"min_length": 100, "min_quality": 30, "identity_cutoff": 0.97}',
-        'approved', 5, 2, '2026-03-27 10:00:00+00', '2026-03-25 09:00:00+00'),
+        'approved', 5, 2, '2026-04-25 14:00:00+00', '2026-04-22 09:00:00+00'),
     (3, 2, 2, 'OBITools3', '3.1.0', 'BOLD Systems', '2026-01',
         '{"min_length": 250, "min_quality": 28, "identity_cutoff": 0.95}',
-        'imported', 5, NULL, NULL, '2026-04-02 09:00:00+00'),
+        'imported', 5, NULL, NULL, '2026-04-27 09:00:00+00'),
     (4, 1, 2, 'OBITools3', '3.1.0', 'BOLD Systems', '2026-01',
         '{"min_length": 250, "min_quality": 28, "identity_cutoff": 0.95}',
-        'draft', NULL, NULL, NULL, '2026-04-02 09:30:00+00');
+        'draft', NULL, NULL, NULL, '2026-04-27 09:30:00+00');
 
 -- Detections. assignment_id, analysis_id, library_id, taxon_id, read_count, confidence, qc_flag.
 -- created_at follows the analysis run so the rows are deterministic.
