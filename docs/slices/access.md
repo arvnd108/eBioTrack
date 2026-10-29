@@ -108,3 +108,28 @@ SELECT project_id, title, owner_name, member_count, sample_count
 ### Installation and grants
 
 `migrate.js` applies `database/views/*.sql` right after the migrations, so a freshly migrated database and the test database have the views. `ebiotrack_readonly` has SELECT on both views. `ebiotrack_app` has SELECT only: `grants.sql` revokes the INSERT/UPDATE/DELETE that table-level grants would give it, and neither view is automatically updatable anyway. Default privileges give new views write rights again, so re-run `database/roles/grants.sql` after views are created or re-created. Both views are owned by `ebiotrack`, the role named in the default privileges.
+
+## Procedure (T16-C)
+
+`create_project_with_owner(p_title text, p_objectives text, p_start_date date, p_owner_id bigint) RETURNS bigint` in `database/procedures/access_procedures.sql` (installed by `migrate.js`, `SECURITY INVOKER`, no dynamic SQL). It inserts a `planned` project (`created_by` = owner) and the `owner` membership, and returns the new `project_id` (ids start at 1000 and can have gaps). Every project must be created through it: `uq_project_members_owner` only guarantees at most one owner, this function guarantees at least one.
+
+Checks run in this order and stop at the first problem:
+
+| Problem                                                          | SQLSTATE | API mapping             |
+| ---------------------------------------------------------------- | -------- | ----------------------- |
+| Title `NULL` or blank                                            | `23514`  | 422 `validation_error`  |
+| Title already used (also a concurrent duplicate)                 | `23505`  | 409 `duplicate`         |
+| `p_owner_id` `NULL`                                              | `EB002`  | 422 `rule_violation`    |
+| Owner does not exist                                             | `23503`  | 422 `invalid_reference` |
+| Owner deactivated (`users.active = false`)                       | `EB002`  | 422 `rule_violation`    |
+| Owner holds neither `administrator` nor `principal_investigator` | `EB002`  | 422 `rule_violation`    |
+
+**Role check is an interpretation** (CONTRACT 9 says who may create projects; the signature has one `p_owner_id`, which is both creator and owner). `authorize('create_project')` must stay on the route. To drop the check, delete the "Allowed to create projects" block in the function.
+
+All or nothing holds as long as the caller's transaction ends in `COMMIT` or `ROLLBACK` (a failed membership insert aborts the transaction; no `EXCEPTION` block swallows errors). Concurrent calls with the same title: the second blocks on `uq_projects_title`, then fails with `23505` if the first committed, or succeeds if it rolled back. The owner row is locked `FOR SHARE` so the checks and the insert see the same user. If `app.current_user_id` is not set, the owner is recorded as the actor.
+
+```sql
+SELECT create_project_with_owner('New survey', 'Objectives', DATE '2026-06-01', 2);  -- new project_id
+```
+
+From the backend: `callProcedure('create_project_with_owner', [title, objectives, startDate, req.user.user_id], client)` inside `withTransaction`.
