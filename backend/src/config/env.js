@@ -35,7 +35,14 @@ const schema = z.object({
   TEST_DATABASE_URL: databaseUrl.optional(),
   SESSION_SECRET: z.string().min(1),
   DB_POOL_MAX: z.coerce.number().int().min(1).max(100).optional(),
+  SESSION_MAX_AGE_HOURS: z.coerce.number().positive().max(720).default(8),
+  // "true" or "false"; unset means secure cookies in production only.
+  COOKIE_SECURE: z.enum(['true', 'false']).optional(),
+  // Comma-separated browser origins allowed to make state-changing requests (CSRF origin check).
+  ALLOWED_ORIGINS: z.string().optional(),
 });
+
+const DEV_FRONTEND_ORIGIN = 'http://localhost:5173';
 
 /**
  * Replace the password in a connection URL so it is safe to log.
@@ -57,7 +64,7 @@ export function maskDatabaseUrl(url) {
  * Pure (does not read process.env), so it can be unit tested.
  * In NODE_ENV=test the database URL is always TEST_DATABASE_URL, never DATABASE_URL.
  * @param {Record<string, string | undefined>} source
- * @returns {Readonly<{nodeEnv: string, port: number, databaseUrl: string, testDatabaseUrl: string | null, sessionSecret: string, dbPoolMax: number | null, isProduction: boolean, isTest: boolean}>}
+ * @returns {Readonly<{nodeEnv: string, port: number, databaseUrl: string, testDatabaseUrl: string | null, sessionSecret: string, dbPoolMax: number | null, sessionMaxAgeHours: number, cookieSecure: boolean, allowedOrigins: string[], isProduction: boolean, isTest: boolean}>}
  */
 export function loadConfig(source) {
   // Treat empty strings (e.g. `PORT=` in .env) as unset.
@@ -101,6 +108,15 @@ export function loadConfig(source) {
     testDatabaseUrl: env.TEST_DATABASE_URL ?? null,
     sessionSecret: env.SESSION_SECRET,
     dbPoolMax: env.DB_POOL_MAX ?? null,
+    sessionMaxAgeHours: env.SESSION_MAX_AGE_HOURS,
+    cookieSecure: env.COOKIE_SECURE ? env.COOKIE_SECURE === 'true' : env.NODE_ENV === 'production',
+    // Outside production the Vite dev server origin is allowed by default.
+    allowedOrigins: (
+      env.ALLOWED_ORIGINS ?? (env.NODE_ENV === 'production' ? '' : DEV_FRONTEND_ORIGIN)
+    )
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean),
     isProduction: env.NODE_ENV === 'production',
     isTest,
   });
