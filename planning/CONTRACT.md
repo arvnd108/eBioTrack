@@ -1,6 +1,6 @@
 # eBioTrack — Project Contract (T00)
 
-**Version:** 1.1 (approved, G0 passed; 1.1 adds the not-blank CHECKs to 4.3)
+**Version:** 1.2 (approved, G0 passed; 1.1 adds the not-blank CHECKs to 4.3; 1.2 names two response fields in section 10)
 
 This is the output of task **T00** in [WORKFLOW.md](WORKFLOW.md). It fixes the names, types, values, and shapes that all four members build against, so the database, API, frontend, tests, and docs line up without anyone guessing.
 
@@ -589,7 +589,7 @@ Project role `viewer` is read-only regardless of global role; project role `owne
 |---|---|---|---|---|
 | GET | `/api/analyses` | any | `?run_id&status&marker_id` | analysis runs |
 | POST | `/api/analyses` | analyst | `{ run_id, marker_id, pipeline_name, pipeline_version, reference_db, reference_db_version?, parameters? }` | analysis (status `draft`) |
-| GET | `/api/analyses/:id` | any | — | analysis with assignment counts by `qc_flag` |
+| GET | `/api/analyses/:id` | any | — | the analysis row plus `assignment_counts: { pass, warn, fail }` (integer detection counts by `qc_flag`; all three keys always present, `0` when none) |
 | POST | `/api/analyses/import` | analyst | multipart: `analysis_id`, `file` (CSV, section 12); query `?dry_run=true` validates only | dry run: `{ valid_rows, errors: [{ row, field, message }] }`; real import: `{ inserted }` |
 | POST | `/api/analyses/:id/approve` | principal_investigator | — | analysis (status `approved`) |
 | POST | `/api/analyses/:id/reject` | principal_investigator | `{ reason }` | analysis (status `rejected`) |
@@ -608,7 +608,7 @@ Project role `viewer` is read-only regardless of global role; project role `owne
 |---|---|---|---|---|
 | GET | `/api/analytics/richness` | any | `?project_id&site_id&group_by=year\|month\|site&from&to` | rows `{ group, site_id?, observed_taxa, sample_count }` |
 | GET | `/api/analytics/detection-frequency` | any | `?taxon_id&project_id` | rows `{ site_id, detections, samples_total }` |
-| GET | `/api/dashboard/summary` | any | `?project_id` | `{ projects, sites, samples, approved_detections, recent_activity[] }` |
+| GET | `/api/dashboard/summary` | any | `?project_id` | `{ projects, sites, samples, approved_detections, recent_activity[] }`; `recent_activity` holds up to 5 audit entries, newest first (an empty array for roles that cannot read the audit log), each `{ audit_id, actor_id, entity_type, entity_id, action, details, created_at }` (the `audit_logs` columns, same shape as `GET /api/audit`) |
 | POST | `/api/exports` | any | `{ export_type, project_id, filters? }` | `{ export_id, row_count }` |
 | GET | `/api/exports/:id/download` | requester | — | CSV file |
 | GET | `/api/audit` | administrator / principal_investigator | `?entity_type&entity_id&actor_id&from&to` | audit entries |
@@ -734,6 +734,7 @@ The backend resolves `scientific_name` and `taxon_rank` to `taxon_id` before cal
 |---|---|---|
 | 0.1 | First draft | — |
 | 1.1 | Section 4.3: document the four not-blank CHECKs added in `030` (`laboratories.name`, `sequencing_runs.run_code` / `platform`, `sequencing_libraries.library_code`). Affects T04, T07, T40-B. | Arvind |
+| 1.2 | Section 10: name the response fields the frontend already types. `GET /api/analyses/:id` returns `assignment_counts: { pass, warn, fail }`; `GET /api/dashboard/summary` `recent_activity[]` entries are `audit_logs` rows (up to 5, newest first, empty for roles that cannot read the audit log, same shape as `GET /api/audit`). Affects T20 and T23 (the audit, analysis and dashboard routes) and T24 to T29 (frontend types). | Arvind |
 
 ---
 
