@@ -14,12 +14,20 @@
 -- Errors (CONTRACT 7). Messages are short sentences; extra detail is in DETAIL. No other code is
 -- raised on purpose. Every function checks in this order: analysis exists (lock), actor, status.
 --   EB001  illegal status transition (CONTRACT 3): import needs draft (rejected/superseded);
---          approve needs imported (draft/rejected/superseded); reject needs draft or imported
---          (approved/superseded)
+--          approve needs imported (draft/rejected/superseded) and, for a correction, an old run
+--          that is still approved; reject needs draft or imported (approved/superseded)
 --   EB002  business rule: analysis does not exist (chosen code, see below); actor unknown,
 --          inactive or without the role; invalid import rows; importer approving their own
 --          analysis; approving an analysis with no detections; blank reject reason
 --   EB003  already processed: import on imported/approved, approve on approved, reject on rejected
+--
+-- Supersession (CONTRACT 1.3). A correction is a new run whose supersedes_analysis_id names the
+-- approved run it replaces. approve_analysis() on the correction, in the same transaction and after
+-- locking BOTH rows (the correction first, then the old run), updates the correction to 'approved'
+-- FIRST and only then moves the old run to 'superseded', because the T17-A status trigger allows
+-- approved -> superseded only when an approved correction already exists. If the old run is no
+-- longer approved the whole call raises EB001 and nothing changes. Approving an ordinary run
+-- (supersedes_analysis_id NULL) is unchanged. UNIQUE on the column means one correction per run.
 --
 -- Missing analysis: EB002 "Analysis N does not exist" in all three functions (a business-rule
 -- failure the API maps to 422, as the task specifies). A 23503 would also be defensible because
@@ -52,7 +60,10 @@
 -- 'update' row with the column diff for the same statement. The two do not duplicate: the
 -- explicit entry carries the business action and its context (reason, counts, importer), the
 -- trigger entry carries the raw column diff. The functions work whether or not it exists.
---   approve details: {"from_status","to_status","detection_count","importer_id"}
+--   approve details: {"from_status","to_status","detection_count","importer_id"}, plus
+--                    "supersedes_analysis_id" when the run is a correction
+--   a correction also writes one entry on the old run: action 'update', entity_id = old run,
+--                    {"from_status":"approved","to_status":"superseded","superseded_by"}
 --   reject details:  {"from_status","to_status","reason"}
 --
 -- Import validation (see CONTRACT 12). Row numbers in messages are 1-based POSITIONS in the
@@ -341,6 +352,7 @@ CREATE OR REPLACE FUNCTION approve_analysis(
 LANGUAGE plpgsql AS $$
 DECLARE
     v_analysis analysis_runs;
+    v_old      analysis_runs;
     v_count    integer;
 BEGIN
     -- 1. Lock first, then decide on the status we read AFTER the lock.
@@ -380,6 +392,19 @@ BEGIN
             USING ERRCODE = 'EB002';
     END IF;
 
+    -- 5b. A correction: lock the approved run it replaces (after our own row, always in this order)
+    --     and require it to be approved right now.
+    IF v_analysis.supersedes_analysis_id IS NOT NULL THEN
+        v_old := fn_analysis_lock(v_analysis.supersedes_analysis_id);
+        IF v_old.status <> 'approved' THEN
+            RAISE EXCEPTION 'Analysis % cannot be superseded: it is %, not approved',
+                    v_old.analysis_id, v_old.status
+                USING ERRCODE = 'EB001',
+                      DETAIL = format('Analysis %s is a correction of analysis %s, which must still be approved.',
+                                      p_analysis_id, v_old.analysis_id);
+        END IF;
+    END IF;
+
     -- 6. Approve. Satisfies ck_analysis_runs_approved_fields.
     PERFORM fn_analysis_set_actor(p_actor_id);
 
@@ -395,12 +420,27 @@ BEGIN
             jsonb_build_object('from_status', 'imported',
                                'to_status', 'approved',
                                'detection_count', v_count,
-                               'importer_id', v_analysis.imported_by));
+                               'importer_id', v_analysis.imported_by)
+                || CASE WHEN v_analysis.supersedes_analysis_id IS NULL THEN '{}'::jsonb
+                        ELSE jsonb_build_object('supersedes_analysis_id', v_analysis.supersedes_analysis_id) END);
+
+    -- 8. Correction: the old run becomes superseded AFTER the correction is approved (see header).
+    IF v_old.analysis_id IS NOT NULL THEN
+        UPDATE analysis_runs
+        SET status = 'superseded'
+        WHERE analysis_id = v_old.analysis_id;
+
+        INSERT INTO audit_logs (actor_id, entity_type, entity_id, action, details)
+        VALUES (p_actor_id, 'analysis_runs', v_old.analysis_id, 'update',
+                jsonb_build_object('from_status', 'approved',
+                                   'to_status', 'superseded',
+                                   'superseded_by', p_analysis_id));
+    END IF;
 END;
 $$;
 
 COMMENT ON FUNCTION approve_analysis(bigint, bigint) IS
-    'Approves an imported analysis once (row lock, status re-read after the lock): approver must be administrator/principal_investigator and not the importer, analysis must have detections; writes an audit entry. EB001 wrong status, EB002 rule violated, EB003 already approved.';
+    'Approves an imported analysis once (row lock, status re-read after the lock): approver must be administrator/principal_investigator and not the importer, analysis must have detections; writes an audit entry. A correction (supersedes_analysis_id set) also moves the approved run it replaces to superseded in the same transaction. EB001 wrong status, EB002 rule violated, EB003 already approved.';
 
 -- --------------------------------------------------------------------------------------------
 -- reject_analysis: draft or imported -> rejected; detections are kept (D19)
