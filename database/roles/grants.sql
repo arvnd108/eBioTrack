@@ -75,6 +75,29 @@ BEGIN
 END
 $$;
 
+-- Functions are executable by PUBLIC by default, which would let ebiotrack_readonly call the write
+-- procedures (they would fail on table privileges, but the door should be shut). Take EXECUTE away
+-- from PUBLIC on our own functions (not on extension functions) and give it back to the app and
+-- admin roles; new functions follow the default privileges below. Re-run after adding functions.
+DO $$
+DECLARE
+    f oid;
+BEGIN
+    FOR f IN
+        SELECT p.oid
+        FROM pg_proc p
+        WHERE p.pronamespace = 'public'::regnamespace
+          AND p.prokind IN ('f', 'p')
+          AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.objid = p.oid AND d.deptype = 'e')
+    LOOP
+        EXECUTE format('REVOKE EXECUTE ON FUNCTION %s FROM PUBLIC, ebiotrack_readonly', f::regprocedure);
+        EXECUTE format('GRANT EXECUTE ON FUNCTION %s TO ebiotrack_app, ebiotrack_admin', f::regprocedure);
+    END LOOP;
+END
+$$;
+-- Global (no IN SCHEMA): a schema-level entry cannot remove the built-in PUBLIC default.
+ALTER DEFAULT PRIVILEGES FOR ROLE ebiotrack REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+
 -- Login roles are created per environment with a password supplied at run time, never committed:
 --   psql -v api_password="'...'" -c "CREATE ROLE ebiotrack_api LOGIN PASSWORD :api_password IN ROLE ebiotrack_app"
 -- Hardening idea (out of scope here): REVOKE ALL ON SCHEMA public FROM PUBLIC.
@@ -85,6 +108,7 @@ $$;
 --   SELECT has_table_privilege('ebiotrack_app', 'projects', 'DELETE');         -- f
 --   SELECT has_table_privilege('ebiotrack_app', 'project_members', 'DELETE');  -- t
 --   SELECT has_table_privilege('ebiotrack_readonly', 'users', 'INSERT');       -- f
+--   SELECT has_function_privilege('ebiotrack_readonly', 'create_sequencing_run(bigint,text,date,bigint[],bigint)', 'EXECUTE');  -- f
 --   SELECT has_table_privilege('ebiotrack_app', 'v_project_summary', 'INSERT');  -- f (views are read-only)
 --   SELECT grantee, table_name, privilege_type FROM information_schema.role_table_grants
 --    WHERE grantee LIKE 'ebiotrack_%' ORDER BY 1, 2, 3;
