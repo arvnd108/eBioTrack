@@ -14,9 +14,9 @@
 -- v_sample_registry: one row per sample, with the main collection details already joined
 -- ============================================================================================
 -- Used by: sample registry/list pages, sample API routes and CSV/reporting code.
--- Hides:   the joins from samples to sample_types, collection_events, sampling_sites, regions
---          and projects. Consumers do not need to repeat those joins to show the sample type,
---          collection time, site/region and project alongside the sample's own fields.
+-- Hides:   the joins from samples to sample_types, collection_events, sampling_sites and
+--          projects. Consumers do not need to repeat those joins to show the sample type,
+--          collection time, site and project alongside the sample's own fields.
 -- Grain:   exactly one row per samples.sample_id. Every join below follows a many-to-one
 --          foreign-key relationship, so these joins do not multiply sample rows.
 -- Includes failed/discarded samples too; status is shown, not used to filter the registry.
