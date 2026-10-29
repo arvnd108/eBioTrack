@@ -95,7 +95,8 @@ BEGIN
     END LOOP;
 END
 $$;
-ALTER DEFAULT PRIVILEGES FOR ROLE ebiotrack IN SCHEMA public REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
+-- Global (no IN SCHEMA): a schema-level entry cannot remove the built-in PUBLIC default.
+ALTER DEFAULT PRIVILEGES FOR ROLE ebiotrack REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 
 -- Login roles are created per environment with a password supplied at run time, never committed:
 --   psql -v api_password="'...'" -c "CREATE ROLE ebiotrack_api LOGIN PASSWORD :api_password IN ROLE ebiotrack_app"
