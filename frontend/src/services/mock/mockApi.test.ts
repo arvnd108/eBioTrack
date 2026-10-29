@@ -97,6 +97,44 @@ describe('section 11 example shapes', () => {
     expect(site1In2025!.observed_taxa).toBeGreaterThan(0);
   });
 
+  it('richness answers match the 040 seed (approved analyses, qc pass only)', async () => {
+    await signIn('administrator');
+    const res = await api.get<RichnessRow[], CaveatMeta>('/analytics/richness', {
+      group_by: 'year',
+    });
+    const byKey = Object.fromEntries(
+      res.data.map((r) => [`${r.site_id}/${r.group}`, r.observed_taxa]),
+    );
+    expect(byKey).toMatchObject({
+      '1/2025': 2,
+      '1/2026': 2,
+      '2/2025': 2,
+      '2/2026': 1,
+      '3/2025': 2,
+      '3/2026': 2,
+      '4/2026': 2,
+      '5/2026': 1,
+    });
+  });
+
+  it('lab and analysis rows match seeds 030 and 040', async () => {
+    await signIn('administrator');
+    const runs = await api.get<{ run_code: string; run_date: string }[]>('/sequencing-runs');
+    expect(runs.data.map((r) => [r.run_code, r.run_date])).toEqual([
+      ['RUN-001', '2026-03-25'],
+      ['RUN-002', '2026-04-18'],
+    ]);
+    const qc = await api.get<unknown[], PageMeta>('/qc-results', { limit: 100 });
+    expect(qc.meta?.total).toBe(23);
+    const analyses =
+      await api.get<{ analysis_id: number; approved_at: string | null }[]>('/analyses');
+    expect(analyses.data.find((a) => a.analysis_id === 1)?.approved_at).toBe(
+      '2026-04-02T11:30:00Z',
+    );
+    const detail = await api.get<{ assignment_counts: Record<string, number> }>('/analyses/3');
+    expect(detail.data.assignment_counts).toEqual({ pass: 12, warn: 1, fail: 2 });
+  });
+
   it('taxon detections only include approved analyses with qc_flag pass', async () => {
     await signIn('analyst');
     const res = await api.get<TaxonDetection[], PageMeta>('/taxa/8/detections');
