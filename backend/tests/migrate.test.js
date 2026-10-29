@@ -19,7 +19,8 @@ describe.skipIf(!available)('migrate', () => {
   let client;
 
   const write = (sub, name, sql) => writeFile(path.join(sub, name), sql);
-  const run = (options = {}) => migrate({ migrationsDir, seedsDir, log: quiet, ...options });
+  const run = (options = {}) =>
+    migrate({ migrationsDir, seedsDir, objectsDir: dir, log: quiet, ...options });
   const tableExists = async (name) =>
     (await client.query('SELECT to_regclass($1) AS oid', [`public.${name}`])).rows[0].oid !== null;
 
@@ -34,11 +35,17 @@ describe.skipIf(!available)('migrate', () => {
     seedsDir = path.join(dir, 'seeds');
     await mkdir(migrationsDir);
     await mkdir(seedsDir);
-    await migrate({ reset: true, migrationsDir, seedsDir, log: quiet });
+    await migrate({ reset: true, migrationsDir, seedsDir, objectsDir: dir, log: quiet });
   });
 
   afterAll(async () => {
-    await migrate({ reset: true, migrationsDir: dir, seedsDir: dir, log: quiet }).catch(() => {});
+    await migrate({
+      reset: true,
+      migrationsDir: dir,
+      seedsDir: dir,
+      objectsDir: dir,
+      log: quiet,
+    }).catch(() => {});
     await client?.end();
     if (dir) await rm(dir, { recursive: true, force: true });
   });
@@ -105,6 +112,50 @@ describe.skipIf(!available)('migrate', () => {
     expect(withSeed.appliedSeeds).toEqual(['010_seed.sql']);
     expect((await client.query('SELECT count(*)::int AS n FROM t')).rows[0].n).toBe(1);
     expect((await run({ seed: true })).appliedSeeds).toEqual([]);
+  });
+
+  it('applies views and procedures after migrations and triggers after seeds, every run', async () => {
+    for (const sub of ['views', 'procedures', 'triggers']) await mkdir(path.join(dir, sub));
+    await write(migrationsDir, '001_t.sql', 'CREATE TABLE t (x int);');
+    await write(seedsDir, '010_seed.sql', 'INSERT INTO t VALUES (1);');
+    await write(
+      path.join(dir, 'views'),
+      'b_v.sql',
+      'CREATE OR REPLACE VIEW v_t AS SELECT x FROM t;',
+    );
+    await write(
+      path.join(dir, 'procedures'),
+      'p.sql',
+      'CREATE OR REPLACE FUNCTION fn_one() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$;',
+    );
+    // The trigger records whether the seed row was already there when it was created.
+    await write(
+      path.join(dir, 'triggers'),
+      't.sql',
+      `CREATE TABLE IF NOT EXISTS trigger_saw (n int);
+       INSERT INTO trigger_saw SELECT count(*) FROM t;`,
+    );
+    const first = await run({ seed: true });
+    expect(first.appliedObjects).toEqual(['views/b_v.sql', 'procedures/p.sql', 'triggers/t.sql']);
+    expect((await client.query('SELECT x FROM v_t')).rows).toEqual([{ x: 1 }]);
+    expect((await client.query('SELECT fn_one() AS n')).rows[0].n).toBe(1);
+    expect((await client.query('SELECT n::int FROM trigger_saw')).rows).toEqual([{ n: 1 }]);
+    const second = await run({ seed: true });
+    expect(second.appliedObjects).toHaveLength(3);
+  });
+
+  it('rolls back a failing SQL object file and names it', async () => {
+    await mkdir(path.join(dir, 'views'));
+    await write(migrationsDir, '001_t.sql', 'CREATE TABLE t (x int);');
+    await write(path.join(dir, 'views'), 'bad.sql', 'CREATE VIEW v_bad AS SELECT nope FROM t;');
+    await expect(run()).rejects.toThrow(/views\/bad\.sql/);
+  });
+
+  it('--status does not apply SQL objects', async () => {
+    await mkdir(path.join(dir, 'views'));
+    await write(path.join(dir, 'views'), 'v.sql', 'CREATE VIEW v_x AS SELECT 1 AS a;');
+    const status = await run({ status: true });
+    expect(status.appliedObjects).toEqual([]);
   });
 
   it('--status reports pending files and changes nothing', async () => {
