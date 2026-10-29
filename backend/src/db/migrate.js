@@ -10,6 +10,11 @@
 // Tracking: migrations are recorded in `schema_migrations`, seeds in `schema_seeds`
 // (same columns: filename, checksum, applied_at). Each file runs in one transaction with its
 // tracking insert. Do not put BEGIN/COMMIT inside migration files.
+//
+// SQL objects (database/views, database/procedures, database/triggers) are not tracked: every
+// file is idempotent (CREATE OR REPLACE ...) and is re-applied on every run, alphabetically, one
+// transaction per file. Order: migrations, views, procedures, seeds, triggers. Triggers go last
+// so seed rows do not fire audit triggers. Not run with --status.
 import { createHash } from 'node:crypto';
 import { readdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -33,6 +38,11 @@ export class MigrationError extends Error {
     this.name = 'MigrationError';
   }
 }
+
+const SQL_OBJECT_STAGES = {
+  afterMigrations: ['views', 'procedures'],
+  afterSeeds: ['triggers'],
+};
 
 const sha256 = (text) => createHash('sha256').update(text).digest('hex');
 
@@ -66,6 +76,49 @@ async function discover(dir) {
       return { filename: f.filename, sql, checksum: sha256(sql) };
     }),
   );
+}
+
+/** Find every `*.sql` file in a directory, alphabetically (no numeric prefix needed). */
+async function discoverObjects(dir) {
+  let names;
+  try {
+    names = await readdir(dir);
+  } catch (err) {
+    if (err.code === 'ENOENT') return [];
+    throw err;
+  }
+  return Promise.all(
+    names
+      .filter((name) => name.endsWith('.sql'))
+      .sort()
+      .map(async (filename) => ({
+        filename,
+        sql: await readFile(path.join(dir, filename), 'utf8'),
+      })),
+  );
+}
+
+/** Apply untracked, idempotent SQL object files; each file in its own transaction. */
+async function applyObjects(client, objectsDir, kinds, log) {
+  const applied = [];
+  for (const kindDir of kinds) {
+    for (const file of await discoverObjects(path.join(objectsDir, kindDir))) {
+      const named = { filename: `${kindDir}/${file.filename}`, sql: file.sql };
+      try {
+        await client.query('BEGIN');
+        await client.query(file.sql);
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw new MigrationError(`Failed to apply SQL object ${describeSqlError(err, named)}`, {
+          cause: err,
+        });
+      }
+      log(`  applied ${named.filename}`);
+      applied.push(named.filename);
+    }
+  }
+  return applied;
 }
 
 async function trackingTableExists(client, table) {
@@ -142,6 +195,7 @@ async function applyFile(client, kind, file, log) {
  * @param {string} [options.nodeEnv] defaults to config.nodeEnv; gates --reset
  * @param {string} [options.migrationsDir] defaults to database/migrations
  * @param {string} [options.seedsDir] defaults to database/seeds
+ * @param {string} [options.objectsDir] holds views/, procedures/, triggers/; defaults to database
  * @param {(message: string) => void} [options.log] defaults to console.log
  * @returns {Promise<{appliedMigrations: string[], appliedSeeds: string[], pendingMigrations: string[], pendingSeeds: string[]}>}
  */
@@ -153,6 +207,7 @@ export async function migrate({
   nodeEnv = config.nodeEnv,
   migrationsDir = path.join(repoRoot, 'database/migrations'),
   seedsDir = path.join(repoRoot, 'database/seeds'),
+  objectsDir = path.join(repoRoot, 'database'),
   log = console.log,
 } = {}) {
   if (reset && !status && !['development', 'test'].includes(nodeEnv)) {
@@ -166,6 +221,7 @@ export async function migrate({
   const result = {
     appliedMigrations: [],
     appliedSeeds: [],
+    appliedObjects: [],
     pendingMigrations: [],
     pendingSeeds: [],
   };
@@ -215,6 +271,11 @@ export async function migrate({
         }
         if (!run) {
           result[pendingKey] = pending.map((f) => f.filename);
+          if (kind === KINDS.seeds) {
+            result.appliedObjects.push(
+              ...(await applyObjects(client, objectsDir, SQL_OBJECT_STAGES.afterSeeds, log)),
+            );
+          }
           continue;
         }
 
@@ -228,6 +289,12 @@ export async function migrate({
             file.filename,
           );
         }
+        // Views and procedures need the tables; triggers wait until the seeds are in.
+        const stage =
+          kind === KINDS.migrations
+            ? SQL_OBJECT_STAGES.afterMigrations
+            : SQL_OBJECT_STAGES.afterSeeds;
+        result.appliedObjects.push(...(await applyObjects(client, objectsDir, stage, log)));
       }
     } finally {
       await client.query('SELECT pg_advisory_unlock($1)', [ADVISORY_LOCK_KEY]).catch(() => {});
