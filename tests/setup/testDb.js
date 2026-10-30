@@ -147,7 +147,17 @@ export async function reseed() {
   if (rows[0].tables) await db.query(`TRUNCATE ${rows[0].tables} RESTART IDENTITY CASCADE`);
   await db.query(`DELETE FROM schema_seeds`);
   const migrate = await loadMigrate();
-  const result = await migrate({ seed: true, databaseUrl, nodeEnv: 'test', ...silent });
+  // The analysis seeds insert detections into runs that are already approved, which the T17-A
+  // immutability triggers refuse. Fixture loading is not an application write, so switch the
+  // analysis tables' triggers off for the re-run only.
+  const guarded = ['analysis_runs', 'taxon_assignments'];
+  for (const t of guarded) await db.query(`ALTER TABLE ${t} DISABLE TRIGGER USER`);
+  let result;
+  try {
+    result = await migrate({ seed: true, databaseUrl, nodeEnv: 'test', ...silent });
+  } finally {
+    for (const t of guarded) await db.query(`ALTER TABLE ${t} ENABLE TRIGGER USER`);
+  }
   // The audit triggers exist while the seeds re-run (a fresh db:reset installs them afterwards),
   // so every seeded row was audited. The fixture world has an empty audit log: restore that.
   await db.query('TRUNCATE audit_logs RESTART IDENTITY');
