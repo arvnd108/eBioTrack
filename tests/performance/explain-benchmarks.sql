@@ -69,3 +69,87 @@ EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM audit_logs WHERE entity_type = 'project
 EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM audit_logs WHERE actor_id = :hot_user ORDER BY created_at DESC, audit_id DESC LIMIT 50;
 \echo BQ6 (dashboard, newest 5, not indexed)
 EXPLAIN (ANALYZE, BUFFERS) SELECT audit_id, entity_type, entity_id, action, created_at FROM audit_logs ORDER BY created_at DESC LIMIT 5;
+
+-- ============================================================================================
+-- T19-D: Field & Samples (results: database/indexes/field_indexes.sql)
+-- ============================================================================================
+-- Same volume load as above. The volume generator creates no environmental_measurements, so
+-- the T14 time-series query would have nothing to read: this section first adds 4 deterministic
+-- readings (temperature_c, ph, dissolved_oxygen_mg_l, turbidity_ntu) to every volume event, once.
+-- Their measurement_id is event_id * 4 + k (4 000 000 and up). `npm run volume:clean` does not
+-- know these rows and would stop on the foreign key, so remove them FIRST:
+--   DELETE FROM environmental_measurements WHERE measurement_id >= 1000000;
+-- Order: take the "before" plans FIRST, then apply database/indexes/field_indexes.sql, run
+-- VACUUM (ANALYZE) collection_events (outside a transaction) and run this section again for the
+-- "after" plans. For a figure, repeat each statement: one warm-up and the median of 5. The
+-- experimental indexes (text_pattern_ops, samples(event_id), sample_status_history(sample_id))
+-- are listed in field_indexes.sql; create and drop them by hand around the FQ2 and FQ5 plans.
+
+SELECT (SELECT count(*) FROM environmental_measurements) < 10000
+   AND EXISTS (SELECT 1 FROM collection_events WHERE event_id >= 1000000) AS need_measurements \gset
+\if :need_measurements
+    INSERT INTO environmental_measurements (measurement_id, event_id, parameter, value, unit)
+    SELECT ce.event_id * 4 + p.k, ce.event_id, p.parameter,
+           round((p.base + ((ce.event_id * 7919 + p.k * 104729) % 1000) / 1000.0 * p.span)::numeric, 3), p.unit
+    FROM collection_events AS ce
+    CROSS JOIN (VALUES (0, 'temperature_c', 'degC', 5.0, 25.0),
+                       (1, 'ph', 'pH', 6.5, 2.5),
+                       (2, 'dissolved_oxygen_mg_l', 'mg/L', 3.0, 8.0),
+                       (3, 'turbidity_ntu', 'NTU', 2.0, 40.0)) AS p(k, parameter, unit, base, span)
+    WHERE ce.event_id >= 1000000;
+    VACUUM (ANALYZE) environmental_measurements;
+\endif
+
+-- Looked-up parameters (hot = the most rows).
+SELECT site_id AS hot_site FROM collection_events WHERE event_id >= 1000000
+GROUP BY site_id ORDER BY count(*) DESC, site_id LIMIT 1 \gset
+SELECT event_id AS hot_event FROM samples WHERE event_id >= 1000000
+GROUP BY event_id ORDER BY count(*) DESC, event_id LIMIT 1 \gset
+SELECT sample_code AS some_code FROM samples WHERE sample_id >= 1000000 ORDER BY sample_id OFFSET 50000 LIMIT 1 \gset
+SELECT date_trunc('year', min(collected_at)) AS y0,
+       date_trunc('year', min(collected_at)) + interval '1 year' AS y1,
+       date_trunc('month', min(collected_at) + interval '1 month') AS m0,
+       date_trunc('month', min(collected_at) + interval '2 months') AS m1
+FROM collection_events WHERE site_id = :hot_site \gset
+\echo hot site :hot_site, hot event :hot_event, code :some_code, year :y0 to :y1, month :m0 to :m1
+
+-- Queries 1 to 3 of database/queries/field_queries.sql (PREPARE; their example EXECUTE output is
+-- discarded).
+\o /dev/null
+\i ../database/queries/field_queries.sql
+\o
+
+\echo FQ1 (exact code, unique index samples_sample_code_key)
+EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM samples WHERE sample_code = :'some_code';
+\echo FQ2a (prefix, 10 rows)
+EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM samples WHERE sample_code LIKE 'EB-2026%';
+\echo FQ2b (prefix, 12.4% of the table)
+EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM samples WHERE sample_code LIKE 'EB-2020%';
+\echo FQ2c (prefix, 87.6% of the table)
+EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM samples WHERE sample_code LIKE 'EB-2019%';
+\echo FQ2d (prefix, the samples of one event)
+EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM samples WHERE sample_code LIKE 'EB-20190101-1000000%';
+\echo FQ3a (site and one year)
+EXPLAIN (ANALYZE, BUFFERS) SELECT event_id, site_id, collected_at FROM collection_events
+WHERE site_id = :hot_site AND collected_at >= :'y0' AND collected_at < :'y1' ORDER BY collected_at;
+\echo FQ3b (site and one month)
+EXPLAIN (ANALYZE, BUFFERS) SELECT event_id, site_id, collected_at FROM collection_events
+WHERE site_id = :hot_site AND collected_at >= :'m0' AND collected_at < :'m1' ORDER BY collected_at;
+\echo FQ3c (site, no date range)
+EXPLAIN (ANALYZE, BUFFERS) SELECT event_id, site_id, collected_at FROM collection_events
+WHERE site_id = :hot_site ORDER BY collected_at;
+\echo FQ3d (one month, all sites: the composite index cannot be used)
+EXPLAIN (ANALYZE, BUFFERS) SELECT event_id, site_id, collected_at FROM collection_events
+WHERE collected_at >= :'m0' AND collected_at < :'m1' ORDER BY collected_at;
+\echo FQ4a (T14 Q3, one site)
+EXPLAIN (ANALYZE, BUFFERS) EXECUTE field_readings_moving_average('temperature_c', :hot_site, NULL);
+\echo FQ4b (T14 Q3, all sites)
+EXPLAIN (ANALYZE, BUFFERS) EXECUTE field_readings_moving_average('temperature_c', NULL, NULL);
+\echo FQ5a (Q2, one event; not indexed)
+EXPLAIN (ANALYZE, BUFFERS) EXECUTE field_event_samples_latest_status(:hot_event);
+\echo FQ5b (samples of one event; not indexed)
+EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM samples WHERE event_id = :hot_event;
+\echo FQ5c (Q1, all sites)
+EXPLAIN (ANALYZE, BUFFERS) EXECUTE field_site_sample_counts(NULL);
+\echo FQ5d (v_site_sample_summary, one site; not indexed)
+EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM v_site_sample_summary WHERE site_id = :hot_site;
