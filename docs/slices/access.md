@@ -155,3 +155,53 @@ Behaviour and traps:
 - **Append-only:** the trigger runs as the caller; `ebiotrack_app` can insert audit rows but `UPDATE`/`DELETE` on `audit_logs` fail with `42501`.
 - **Volume data:** `generate-volume-data.js` disables the audit triggers while loading and cleaning (and re-enables them), so synthetic rows are not audited. Performance runs (T35) should measure with the triggers present and absent.
 - **Misuse** (no key argument, key column missing, statement-level trigger) raises `22023` naming the table.
+
+## Transaction scenario (T18-C)
+
+`database/transactions/access_transaction.sql` is a demonstration script (not a migration, not a test; the runner never executes it). Scenario: **project onboarding**. User 2 creates a project with its owner (`create_project_with_owner()`), adds users 3 and 4 as contributors and user 6 as viewer, and links sites 1 and 4, in one transaction that either commits completely or leaves no trace, audit rows included.
+
+Run it by hand (`ON_ERROR_STOP` stays off because the script fails on purpose):
+
+```bash
+docker compose exec -T db psql -U ebiotrack -d ebiotrack -f - < database/transactions/access_transaction.sql
+psql "$DATABASE_URL" -f database/transactions/access_transaction.sql
+psql "$TEST_DATABASE_URL" -v keep=1 -f database/transactions/access_transaction.sql   # test database only
+```
+
+Every transaction ends in `ROLLBACK`, so the default run leaves the database unchanged and can be repeated (generated ids move on, which is normal). With `-v keep=1` the Part 1 transaction ends in `COMMIT` to show durability; a second `keep=1` run stops in Part 0 because the project exists. Remove it by resetting the test database; never use `keep=1` on the development database. Isolation is the default `READ COMMITTED`, like the backend; each transaction starts with `SET LOCAL app.current_user_id = '2'`, like `withTransaction`.
+
+| Part | What it shows |
+|---|---|
+| 0 | Preflight (objects, fixtures, no leftover demo project) and the baseline counts, including the highest `audit_id` |
+| 1 | Commit path: project, 4 members (one owner), 2 sites, **7 audit rows** all with actor 2 and the project id as `entity_id`; `ROLLBACK` by default, `COMMIT` with `keep=1` |
+| 2 | Rollback A: after project, members and a site succeeded, a second owner fails with `23505` on `uq_project_members_owner`; the next statement fails with `25P02`; after `ROLLBACK` nothing remains, not even audit rows |
+| 3 | Rollback B (five transactions): viewer as owner `EB002`, seeded title `23505`, blank title `23514`, unknown site `23503` on `fk_project_sites_site_id` (the project created one statement earlier disappears too), and B5: unknown member 999 without a savepoint, `23503` on `fk_project_members_user_id`, no project or members remain |
+| 4 | `SAVEPOINT`: unknown member 999 fails (`23503`), `ROLLBACK TO SAVEPOINT`, user 3 is added; the failed insert left no audit row |
+| 5 | Two-session protocol in comments: duplicate title blocks on `uq_projects_title`, uncommitted work is invisible, `FOR SHARE` on the owner blocks `UPDATE users SET active = false` |
+
+| Property | Where shown |
+|---|---|
+| Atomicity | Part 1 (7 audit rows with 1 project), Parts 2 and 3 (nothing remains after the failure) |
+| Consistency | Part 3 (constraints and procedure rules, CONTRACT 7 codes) |
+| Isolation | Part 5 (blocking on the unique index, invisibility of uncommitted work, `FOR SHARE` on the owner) |
+| Durability | Part 1 with `keep=1` (committed project survives the session; reset removes it) |
+
+Excerpt of a default run (26 checks, 0 failed):
+
+```
+PASS: 7 audit rows (1 project, 4 members, 2 sites), all actor 2, all entity_id = the project
+ROLLBACK
+PASS: projects, members, sites and audit rows are back at the baseline
+Caught SQLSTATE 23505 duplicate key value violates unique constraint "uq_project_members_owner"
+PASS: the aborted transaction refused the next statement with 25P02
+PASS: B4 raised 23503 on fk_project_sites_site_id
+PASS: the project created before the failing statement is gone
+Summary: 26 checks passed, 0 checks failed.
+```
+
+Notes:
+
+- Part 2 adds user 5 as a second owner, not user 3 again: re-adding an existing member fails first on the primary key `pk_project_members`, so only a non-member reaches `uq_project_members_owner`.
+- B2 checks the SQLSTATE; the constraint name `uq_projects_title` is printed by the verbose error (the procedure raises it with that constraint field), not by `LAST_ERROR_MESSAGE`.
+- With `keep=1`, Parts 2 to 4 use the title `T18 onboarding demo project (after commit)` because the first title is taken by then.
+- T32 (`tests/transactions/project-create.test.js`) automates the Part 2 and 3 assertions; the Part 5 duplicate-title race becomes the project-creation case of T34.
