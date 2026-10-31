@@ -1,10 +1,12 @@
 // Owner: B (Frontend)
 // Purpose: top navigation
 
+import { useState } from 'react';
 import { useAuth } from '../../hooks/useAuth';
 import { isMockMode } from '../../services/apiClient';
 
 interface NavbarProps {
+  sidebarOpen: boolean;
   onToggleSidebar: () => void;
 }
 
@@ -12,12 +14,18 @@ function formatRole(role: string): string {
   return role.replace(/_/g, ' ');
 }
 
-export function Navbar({ onToggleSidebar }: NavbarProps) {
+export function Navbar({ sidebarOpen, onToggleSidebar }: NavbarProps) {
   const { user, logout } = useAuth();
+  const [signingOut, setSigningOut] = useState(false);
 
   // ProtectedRoute sends the user to /login once the session is cleared.
   async function handleSignOut() {
-    await logout();
+    setSigningOut(true);
+    try {
+      await logout();
+    } finally {
+      setSigningOut(false);
+    }
   }
 
   return (
@@ -27,6 +35,8 @@ export function Navbar({ onToggleSidebar }: NavbarProps) {
         onClick={onToggleSidebar}
         className="rounded-md p-2 text-slate-600 hover:bg-slate-100 md:hidden"
         aria-label="Toggle navigation"
+        aria-expanded={sidebarOpen}
+        aria-controls="main-navigation"
       >
         ☰
       </button>
@@ -51,9 +61,10 @@ export function Navbar({ onToggleSidebar }: NavbarProps) {
         <button
           type="button"
           onClick={handleSignOut}
-          className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100"
+          disabled={signingOut}
+          className="rounded-md border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100 disabled:opacity-60"
         >
-          Sign out
+          {signingOut ? 'Signing out…' : 'Sign out'}
         </button>
       </div>
     </header>

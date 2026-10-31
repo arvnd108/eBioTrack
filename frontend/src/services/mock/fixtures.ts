@@ -56,6 +56,13 @@ const userRow = (id: number, full_name: string): User => {
   return { user_id: id, full_name, email: `${role}@ebiotrack.test`, roles: [role], active: true };
 };
 
+/**
+ * The one development password every seeded user shares (tests/fixtures/README.md). Mock mode
+ * checks it exactly like the real API, so a wrong password gives the same 401 in both modes.
+ * Development and test only, never a real credential.
+ */
+export const DEV_PASSWORD = 'ebiotrack-dev-2026';
+
 /** Users 1–6, one per role, in role order. */
 export const mockUsers: User[] = [
   userRow(1, 'Asha Admin'),

@@ -2,8 +2,9 @@
 // Purpose: Mock API covers every CONTRACT section 10 GET endpoint with section 11 shapes
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { api, setMockMode } from '../apiClient';
+import { api, setMockMode, type ApiError } from '../apiClient';
 import { resetMockState, setMockDelay } from './mockApi';
+import { DEV_PASSWORD } from './fixtures';
 import {
   EDNA_CAVEAT,
   type CaveatMeta,
@@ -18,7 +19,7 @@ import {
 } from '../../types';
 
 async function signIn(role: string) {
-  await api.post('/auth/login', { email: `${role}@ebiotrack.test`, password: 'x' });
+  await api.post('/auth/login', { email: `${role}@ebiotrack.test`, password: DEV_PASSWORD });
 }
 
 beforeEach(() => {
@@ -224,5 +225,86 @@ describe('access rules', () => {
     await signIn('field_researcher');
     const err = await api.post('/events', { project_id: 1 }).catch((e: unknown) => e);
     expect(err).toMatchObject({ status: 422, code: 'validation_error' });
+  });
+});
+
+describe('auth answers match the real API (backend auth.routes.js and auth.controller.js)', () => {
+  const login = (email: string, password: unknown) => api.post('/auth/login', { email, password });
+
+  it('rejects a wrong password with the same 401 as an unknown email', async () => {
+    const wrong = await login('viewer@ebiotrack.test', 'not-the-password').catch((e: unknown) => e);
+    const unknown = await login('nobody@ebiotrack.test', DEV_PASSWORD).catch((e: unknown) => e);
+    for (const err of [wrong, unknown]) {
+      expect(err).toMatchObject({
+        status: 401,
+        code: 'invalid_credentials',
+        message: 'Invalid email or password',
+      });
+    }
+  });
+
+  it('validates with the same field names and messages as the zod schema', async () => {
+    const empty = (await login('', '').catch((e: unknown) => e)) as ApiError;
+    expect(empty).toMatchObject({ status: 422, code: 'validation_error' });
+    expect(empty.details).toEqual([
+      { field: 'email', message: 'Invalid email address' },
+      { field: 'password', message: 'Too small: expected string to have >=1 characters' },
+    ]);
+
+    const missing = (await api.post('/auth/login', {}).catch((e: unknown) => e)) as ApiError;
+    expect(missing.fieldMessage('email')).toBe(
+      'Invalid input: expected string, received undefined',
+    );
+
+    const long = (await login('viewer@ebiotrack.test', 'x'.repeat(73)).catch(
+      (e: unknown) => e,
+    )) as ApiError;
+    expect(long.details).toEqual([{ field: 'password', message: 'must be at most 72 bytes' }]);
+  });
+
+  it('accepts the email with spaces and capitals, as the API trims and lowercases it', async () => {
+    const res = await login('  Viewer@EBioTrack.test ', DEV_PASSWORD);
+    expect(res.data).toMatchObject({ user_id: 6 });
+  });
+
+  it('locks an email out after 5 failures with 429 and Retry-After, until the window ends', async () => {
+    for (let i = 0; i < 5; i += 1) {
+      await expect(login('analyst@ebiotrack.test', 'wrong')).rejects.toMatchObject({ status: 401 });
+    }
+    const locked = (await login('analyst@ebiotrack.test', DEV_PASSWORD).catch(
+      (e: unknown) => e,
+    )) as ApiError;
+    expect(locked).toMatchObject({
+      status: 429,
+      code: 'too_many_attempts',
+      message: 'Too many failed sign-in attempts. Try again later.',
+    });
+    expect(locked.retryAfter).toBeGreaterThan(14 * 60);
+    // Other emails are not affected.
+    await expect(login('viewer@ebiotrack.test', DEV_PASSWORD)).resolves.toBeDefined();
+  });
+
+  it('clears the failure count after a successful sign-in', async () => {
+    for (let i = 0; i < 4; i += 1) {
+      await expect(login('analyst@ebiotrack.test', 'wrong')).rejects.toMatchObject({ status: 401 });
+    }
+    await login('analyst@ebiotrack.test', DEV_PASSWORD);
+    await api.post('/auth/logout');
+    await expect(login('analyst@ebiotrack.test', 'wrong')).rejects.toMatchObject({ status: 401 });
+    await expect(login('analyst@ebiotrack.test', DEV_PASSWORD)).resolves.toBeDefined();
+  });
+
+  it('answers 401 unauthenticated and 403 forbidden with the API messages', async () => {
+    await expect(api.get('/auth/me')).rejects.toMatchObject({
+      status: 401,
+      code: 'unauthenticated',
+      message: 'Authentication required',
+    });
+    await signIn('viewer');
+    await expect(api.get('/users')).rejects.toMatchObject({
+      status: 403,
+      code: 'forbidden',
+      message: 'You do not have permission to do this',
+    });
   });
 });
