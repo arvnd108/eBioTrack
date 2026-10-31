@@ -1,2 +1,37 @@
 -- Owner: C (Testing & QA)
 -- Purpose: EXPLAIN (ANALYZE, BUFFERS) before and after indexes
+
+-- ============================================================================================
+-- T19-C: Access, Projects & Audit (see database/indexes/access_indexes.sql for results)
+-- ============================================================================================
+-- Run on ebiotrack_test after `npm run volume:load -- --scale medium` (from tests/). Session
+-- settings used for every figure; the ids below are the ones looked up on that data set
+-- (hot user = most memberships, hot sample / project = most audit rows, cold sample = 3 rows).
+-- Take the "before" plans first, apply database/indexes/access_indexes.sql, run
+-- VACUUM (ANALYZE) on project_members and audit_logs, then take the "after" plans. One warm-up
+-- run, then the median of 5.
+--
+--   SET max_parallel_workers_per_gather = 0;
+--   SET jit = off;
+--   SET plan_cache_mode = force_custom_plan;
+--   -- then run the two PREPARE statements access_user_projects and access_entity_audit_trail
+--   -- from database/queries/access_queries.sql
+--
+-- BQ1
+-- EXPLAIN (ANALYZE, BUFFERS) SELECT project_id FROM project_members WHERE user_id = 1000199;
+-- BQ2
+-- EXPLAIN (ANALYZE, BUFFERS) EXECUTE access_user_projects(1000199, NULL);
+-- BQ3a
+-- EXPLAIN (ANALYZE, BUFFERS) EXECUTE access_entity_audit_trail('samples', 1000000, NULL, NULL);
+-- BQ3b
+-- EXPLAIN (ANALYZE, BUFFERS) EXECUTE access_entity_audit_trail('samples', 1000664, NULL, NULL);
+-- BQ3c
+-- EXPLAIN (ANALYZE, BUFFERS) EXECUTE access_entity_audit_trail('samples', 1000000, '2019-06-01 00:00:00+00', '2019-07-01 00:00:00+00');
+-- BQ4a
+-- EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM audit_logs WHERE entity_type = 'projects' AND entity_id = 1000000 ORDER BY created_at, audit_id;
+-- BQ4b
+-- EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM audit_logs WHERE entity_type = 'projects' AND entity_id = 1000098 ORDER BY created_at, audit_id;
+-- BQ5 (not indexed, see "Deliberately NOT indexed")
+-- EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM audit_logs WHERE actor_id = 1000199 ORDER BY created_at DESC, audit_id DESC LIMIT 50;
+-- BQ6 (not indexed)
+-- EXPLAIN (ANALYZE, BUFFERS) SELECT audit_id, entity_type, entity_id, action, created_at FROM audit_logs ORDER BY created_at DESC LIMIT 5;
