@@ -11,11 +11,13 @@ interface SidebarProps {
 }
 
 export function Sidebar({ open, onNavigate }: SidebarProps) {
-  const { hasRole } = useAuth();
-  const items = navItems.filter((item) => !item.roles || hasRole(...item.roles));
+  const { canAny } = useAuth();
+  // Hide pages the user's role cannot use (same rule as ProtectedRoute in routes.tsx).
+  const items = navItems.filter((item) => !item.anyOf || canAny(item.anyOf));
 
   return (
     <nav
+      id="main-navigation"
       aria-label="Main"
       className={`${open ? 'block' : 'hidden'} w-full border-b border-slate-200 bg-white md:block md:w-60 md:shrink-0 md:border-b-0 md:border-r`}
     >

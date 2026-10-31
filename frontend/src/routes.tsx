@@ -2,12 +2,13 @@
 // Purpose: Route table with protected routes
 //
 // Everything except /login sits behind <ProtectedRoute> and inside the <App> layout.
-// Sidebar links live in navigation.ts; keep the two in step when adding a page.
+// Sidebar links live in navigation.ts; keep the two in step when adding a page (a route with
+// `anyOf` here should have the same `anyOf` there).
 
-import { createBrowserRouter, Link } from 'react-router-dom';
+import { createBrowserRouter, Link, type RouteObject } from 'react-router-dom';
 import App from './App';
 import { ProtectedRoute } from './components/layout/ProtectedRoute';
-import { ADMIN_ROLES } from './navigation';
+import { ADMIN_ACTIONS, IMPORT_ACTIONS } from './navigation';
 import AdministrationPage from './pages/AdministrationPage';
 import AnalysisImportPage from './pages/AnalysisImportPage';
 import BiodiversityAnalyticsPage from './pages/BiodiversityAnalyticsPage';
@@ -35,7 +36,8 @@ function NotFound() {
   );
 }
 
-export const router = createBrowserRouter([
+/** The route table; exported so tests can mount it in a memory router. */
+export const routes: RouteObject[] = [
   { path: '/login', element: <LoginPage /> },
   {
     element: <ProtectedRoute />,
@@ -50,12 +52,15 @@ export const router = createBrowserRouter([
           { path: 'samples', element: <SamplesPage /> },
           { path: 'samples/:sampleId', element: <SampleDetailPage /> },
           { path: 'lab', element: <LabProcessingPage /> },
-          { path: 'analyses/import', element: <AnalysisImportPage /> },
+          {
+            element: <ProtectedRoute anyOf={IMPORT_ACTIONS} />,
+            children: [{ path: 'analyses/import', element: <AnalysisImportPage /> }],
+          },
           { path: 'species', element: <SpeciesExplorerPage /> },
           { path: 'analytics', element: <BiodiversityAnalyticsPage /> },
           { path: 'ml', element: <MlInsightsPage /> },
           {
-            element: <ProtectedRoute roles={ADMIN_ROLES} />,
+            element: <ProtectedRoute anyOf={ADMIN_ACTIONS} />,
             children: [{ path: 'admin', element: <AdministrationPage /> }],
           },
           { path: '*', element: <NotFound /> },
@@ -63,4 +68,6 @@ export const router = createBrowserRouter([
       },
     ],
   },
-]);
+];
+
+export const router = createBrowserRouter(routes);
