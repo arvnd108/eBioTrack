@@ -121,3 +121,67 @@ A single script cannot run two sessions, so Part 5 is a copy-paste protocol in t
 ### Attempt numbers
 
 No database object assigns `dna_extractions.attempt_number`; the table only has `uq_dna_extractions_sample_attempt`. The scenario computes `max(attempt_number) + 1` per sample inside the transaction after locking the sample rows `FOR UPDATE` in ascending id order. Without the lock, two technicians re-extracting the same sample would get `23505` on the unique constraint (safe, but a noisy failure). The backend service should follow the same pattern.
+
+## Indexes (T19-B)
+
+`database/indexes/lab_indexes.sql` (issue #38). Applied by hand with `psql -f` (the migration runner does not run `database/indexes/`, so the unindexed baseline stays available for benchmarks) and safe to run twice. Exactly two indexes, each chosen from measured `EXPLAIN (ANALYZE, BUFFERS)` plans on volume data.
+
+| Index | Serves | Before | After | Size |
+| --- | --- | --- | --- | --- |
+| `idx_sequencing_libraries_run_id` on `sequencing_libraries (run_id)` | Q2, `GET /api/sequencing-runs/:id`, `RESTRICT` check on runs | Seq Scan, 2138 buffers, 3.273 ms | Index Scan, 1207 buffers, 0.300 ms (about 11x) | 688 kB |
+| `idx_dna_extractions_batch_id` on `dna_extractions (batch_id)` | `GET /api/extractions?batch_id=`, one batch in Q1, FK check | Seq Scan, 1032 buffers, 2.407 ms | Index Scan, 3 buffers, 0.007 ms (about 340x) | 712 kB |
+
+### Measurement
+
+Test database `ebiotrack_test` loaded with `npm run volume:load -- --scale medium`: 100 017 extractions, 100 016 libraries, 1 002 runs, 2 003 batches (about 100 libraries per run, 50 extractions per batch). `ANALYZE` after loading and after creating the indexes. One session with `max_parallel_workers_per_gather = 0`, `jit = off` and `plan_cache_mode = force_custom_plan` (a prepared statement with `($1 IS NULL OR col = $1)` gets a generic plan that cannot use an index, so it was planned for its actual parameter, like the backend's literal-sized lookups); one warm-up, then the median of 5 runs; no `enable_*` setting changed. All pages were in shared buffers, so `Buffers: shared hit` is the fairer comparison than time. Benchmark queries, with ids looked up from the data:
+
+- BQ1: `EXECUTE q2_run_libraries_with_samples(1000500)`
+- BQ2a: `SELECT * FROM dna_extractions WHERE batch_id = 1000700`
+- BQ2b: `EXECUTE q1_extraction_qc_by_batch(1)`
+- BQ3a: `SELECT * FROM dna_extractions WHERE sample_id = 1040000`
+- BQ3b: `SELECT * FROM v_lab_pipeline_status WHERE sample_id = 1040000`
+
+| Query | Before: node, buffers, ms | After: node, buffers, ms | Factor |
+| --- | --- | --- | --- |
+| BQ1 | Seq Scan on `sequencing_libraries`, 2138, 3.273 | Index Scan using `idx_sequencing_libraries_run_id`, 1207, 0.300 | 10.9x |
+| BQ2a | Seq Scan on `dna_extractions`, 1032, 2.407 | Index Scan using `idx_dna_extractions_batch_id`, 3, 0.007 | about 340x |
+| BQ2b | Seq Scan + Hash Right Join, 1050, 16.099 | unchanged plan, 1050, 16.344 | none |
+| BQ3a | Index Scan using `uq_dna_extractions_sample_attempt`, 3, 0.004 | unchanged, 3, 0.004 | none |
+| BQ3b | Index (Only) Scans on `uq_dna_extractions_sample_attempt`, 27, 0.029 | unchanged, 27, 0.035 | none (noise) |
+
+Abridged plans (BQ1 libraries scan and BQ2a):
+
+```
+before  Seq Scan on sequencing_libraries lib (actual time=1.496..2.942 rows=100)
+          Rows Removed by Filter: 99916   Buffers: shared hit=935
+after   Index Scan using idx_sequencing_libraries_run_id on sequencing_libraries lib (actual rows=100)
+          Buffers: shared hit=4
+
+before  Seq Scan on dna_extractions (rows=50)  Rows Removed by Filter: 99967
+          Buffers: shared hit=1032   Execution Time: 2.407 ms
+after   Index Scan using idx_dna_extractions_batch_id (rows=50)
+          Buffers: shared hit=3      Execution Time: 0.007 ms
+```
+
+The results do not change: `Q1` for lab 1 (1 002 rows), `Q2` for run 1000500 (100 rows) and for all runs (100 016 rows), and `BQ2a` (50 rows) have identical row counts and `md5` checksums with and without the indexes.
+
+### Already indexed by a constraint
+
+PostgreSQL creates an index for every `PRIMARY KEY` and `UNIQUE` constraint, but not for foreign keys.
+
+| Existing index | Leading column | Already serves |
+| --- | --- | --- |
+| `uq_dna_extractions_sample_attempt (sample_id, attempt_number)` | `sample_id` | `sample_id` lookups and `ORDER BY attempt_number DESC LIMIT 1` (the lateral in `v_lab_pipeline_status`) |
+| `uq_sequencing_libraries_extraction_run (extraction_id, run_id)` | `extraction_id` | `extraction_id` lookups (booking check); **not** `run_id` alone |
+| primary keys, `uq_sequencing_libraries_library_code`, `uq_sequencing_runs_run_code`, `uq_laboratories_name` | their own columns | their own lookups |
+
+### Not indexed, and why
+
+- **`dna_extractions (sample_id)` (named in the role document): redundant.** It is the leading column of `uq_dna_extractions_sample_attempt`, and BQ3a and BQ3b above show the planner already using that index, so a second index would add only write cost. `dna_extractions (batch_id)` replaces it as the second index.
+- `sequencing_libraries (extraction_id)`: leading column of `uq_sequencing_libraries_extraction_run`.
+- `extraction_batches (lab_id)`, `sequencing_runs (lab_id)`: 2 003 and 1 002 rows, and one lab owns about half of them. A sequential scan (17 and 12 buffers, about 0.4 ms) is the right plan.
+- `quality_control_results (sample_id)`: the volume generator creates no QC rows, so there was nothing honest to measure.
+
+### Trade-offs
+
+Each index takes about 0.7 MB at this scale. Inserting about 100 000 rows into a temporary copy of the table (primary and unique indexes only, rolled back) took 181 ms without and 206 ms with `idx_sequencing_libraries_run_id` (+14%), and 97 ms without and 120 ms with `idx_dna_extractions_batch_id` (+24%). Real writes are a few rows at a time (booking a run, entering a batch), so the cost is small against the read gain. An index does not always win: Q1 as written reads every extraction to build the per-batch counts, so a sequential scan stays correct for it (BQ2b), and the same holds for any query that returns a large share of a table.
