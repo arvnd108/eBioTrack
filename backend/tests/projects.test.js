@@ -112,6 +112,18 @@ describe.skipIf(!available)('projects', () => {
         ].sort(),
       );
       expect(typeof sites[0].latitude).toBe('number');
+      // from v_project_summary
+      expect(project).toMatchObject({
+        owner_id: 2,
+        member_count: 5,
+        manager_count: 0,
+        contributor_count: 3,
+        viewer_count: 1,
+        site_count: 3,
+        event_count: 6,
+        sample_count: 13,
+      });
+      expect(typeof project.owner_name).toBe('string');
     });
     it('gives non-members and unknown ids the identical 404, and the admin sees any project', async () => {
       const nonMember = await as.analyst.get('/api/projects/2');

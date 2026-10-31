@@ -24,6 +24,7 @@ describe.skipIf(!available)('audit', () => {
   const as = {};
   let projectA; // created by the seeded PI (user 2)
   let projectB; // created by a second PI who owns nothing else
+  let chain; // ids of lab/analysis rows reached from project 1
 
   beforeAll(async () => {
     await resetAndSeedDatabase();
@@ -50,6 +51,24 @@ describe.skipIf(!available)('audit', () => {
          (3, 'sampling_sites', 1, 'update', now())`,
     );
     expect(user.status).toBe(201);
+    // Lab and analysis entities reached through project 1's samples (found through the chain).
+    const [{ x, l, r, a, q }] = await query(
+      `SELECT (SELECT min(extraction_id) FROM dna_extractions WHERE sample_id IN
+                 (SELECT sample_id FROM samples WHERE event_id IN
+                    (SELECT event_id FROM collection_events WHERE project_id = 1))) AS x,
+              (SELECT min(library_id) FROM sequencing_libraries) AS l,
+              (SELECT min(run_id) FROM sequencing_runs) AS r,
+              (SELECT min(analysis_id) FROM analysis_runs) AS a,
+              (SELECT min(qc_id) FROM quality_control_results WHERE sample_id = 1) AS q`,
+    );
+    chain = { x, l, r, a, q };
+    await query(
+      `INSERT INTO audit_logs (actor_id, entity_type, entity_id, action) VALUES
+         (4, 'dna_extractions', $1, 'update'), (4, 'sequencing_libraries', $2, 'update'),
+         (4, 'sequencing_runs', $3, 'update'), (5, 'analysis_runs', $4, 'update'),
+         (4, 'quality_control_results', $5, 'insert'), (4, 'data_exports', 999999, 'export')`,
+      [x, l, r, a, q],
+    );
   });
   afterAll(async () => {
     loginAttempts.clear();
@@ -143,6 +162,29 @@ describe.skipIf(!available)('audit', () => {
       expect(users.body.meta.total).toBe(0);
       const all = await as.principal_investigator.get('/api/audit?limit=100');
       expect(all.body.meta.total).toBe(all.body.data.length);
+    });
+    it('sees lab and analysis entries that belong to their projects, not unrelated ones', async () => {
+      const res = await as.principal_investigator.get('/api/audit?limit=100');
+      const seen = new Set(res.body.data.map((e) => `${e.entity_type}:${e.entity_id}`));
+      for (const [type, id] of [
+        ['dna_extractions', chain.x],
+        ['sequencing_libraries', chain.l],
+        ['sequencing_runs', chain.r],
+        ['analysis_runs', chain.a],
+        ['quality_control_results', chain.q],
+      ]) {
+        expect(seen, `${type}:${id}`).toContain(`${type}:${id}`);
+      }
+      expect(seen).not.toContain('data_exports:999999');
+      const second = await as.second.get('/api/audit?limit=100');
+      const secondTypes = new Set(second.body.data.map((e) => e.entity_type));
+      for (const t of [
+        'dna_extractions',
+        'sequencing_libraries',
+        'sequencing_runs',
+        'analysis_runs',
+      ])
+        expect(secondTypes.has(t), t).toBe(false);
     });
     it('the second investigator sees only their own project', async () => {
       const res = await as.second.get('/api/audit?limit=100');

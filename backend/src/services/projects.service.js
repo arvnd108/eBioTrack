@@ -100,6 +100,13 @@ export async function createProject({ title, objectives, start_date: startDate }
 export async function getProject(projectId, user) {
   const project = await readProject(projectId, user.user_id);
   if (!project) throw projectNotFound();
+  // Owner and counts come from v_project_summary (T17-C), which is documented for this endpoint.
+  const summary = await queryOne(
+    `SELECT owner_id, owner_name, member_count, manager_count, contributor_count, viewer_count,
+            site_count, event_count, sample_count
+       FROM v_project_summary WHERE project_id = $1`,
+    [projectId],
+  );
   const members = await query(
     `${MEMBER_SELECT} WHERE pm.project_id = $1
       ORDER BY CASE pm.project_role WHEN 'owner' THEN 1 WHEN 'manager' THEN 2
@@ -113,7 +120,7 @@ export async function getProject(projectId, user) {
       WHERE ps.project_id = $1 ORDER BY s.site_id`,
     [projectId],
   );
-  return { ...project, members, sites };
+  return { ...project, ...summary, members, sites };
 }
 
 export async function updateProject(projectId, body, user) {

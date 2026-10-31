@@ -5,14 +5,17 @@
 //  - administrator: every entry.
 //  - principal_investigator: audit_logs has no project column, so the project of an entry is
 //    derived from the entity it is about. The PI sees entries whose entity belongs to a project the
-//    PI is a member of, resolved for these entity types:
-//      projects, project_members, project_sites  entity_id = the project
-//      collection_events                         via collection_events.project_id
-//      samples                                   via the sample's event
+//    PI is a member of:
+//      projects, project_members, project_sites, data_exports   the project itself / project_id
+//      collection_events                                        via project_id
+//      samples, dna_extractions, quality_control_results        via the sample's event
+//      sequencing_libraries                                     via extraction -> sample -> event
+//      sequencing_runs, analysis_runs                           when a library of the run belongs to
+//                                                               one of the PI's projects (a run can
+//                                                               span projects; it is then visible to
+//                                                               each of those PIs)
 //    Everything else is administrator-only: entities that belong to no project (users, user_roles,
-//    roles, sampling_sites, taxa, ...) and the lab/analysis entities, which would need a longer
-//    chain (library -> extraction -> sample -> event -> project) and are NOT covered in this
-//    version. Decision for review.
+//    roles, sampling_sites, taxa, dna_markers, ...).
 //  - every other role: no access (the route gate answers 403; recentActivity returns []).
 // The scope is one fixed parameterized CTE joined to audit_logs on (entity_type, entity_id), so the
 // existing index idx_audit_logs_entity_type_entity_id_created_at serves the join. No dynamic SQL.
@@ -25,16 +28,29 @@ const AUDIT_COLUMNS =
 // $1 = the PI's user_id. Rows are (entity_type, entity_id) pairs the PI may see.
 const PI_SCOPE = `
   my_projects AS (SELECT project_id FROM project_members WHERE user_id = $1),
+  my_events AS (
+    SELECT e.event_id, e.project_id FROM collection_events e JOIN my_projects mp ON mp.project_id = e.project_id
+  ),
+  my_samples AS (SELECT s.sample_id FROM samples s JOIN my_events me ON me.event_id = s.event_id),
+  my_extractions AS (SELECT x.extraction_id FROM dna_extractions x JOIN my_samples ms ON ms.sample_id = x.sample_id),
+  my_libraries AS (
+    SELECT l.library_id, l.run_id FROM sequencing_libraries l JOIN my_extractions mx ON mx.extraction_id = l.extraction_id
+  ),
+  my_runs AS (SELECT DISTINCT run_id FROM my_libraries),
+  my_analyses AS (SELECT a.analysis_id FROM analysis_runs a JOIN my_runs r ON r.run_id = a.run_id),
   scope AS (
     SELECT t.entity_type, mp.project_id AS entity_id
       FROM my_projects mp CROSS JOIN (VALUES ('projects'), ('project_members'), ('project_sites')) AS t(entity_type)
-    UNION
-    SELECT 'collection_events', e.event_id
-      FROM collection_events e JOIN my_projects mp ON mp.project_id = e.project_id
-    UNION
-    SELECT 'samples', s.sample_id
-      FROM samples s JOIN collection_events e ON e.event_id = s.event_id
-      JOIN my_projects mp ON mp.project_id = e.project_id
+    UNION SELECT 'collection_events', event_id FROM my_events
+    UNION SELECT 'samples', sample_id FROM my_samples
+    UNION SELECT 'dna_extractions', extraction_id FROM my_extractions
+    UNION SELECT 'sequencing_libraries', library_id FROM my_libraries
+    UNION SELECT 'sequencing_runs', run_id FROM my_runs
+    UNION SELECT 'analysis_runs', analysis_id FROM my_analyses
+    UNION SELECT 'quality_control_results', q.qc_id FROM quality_control_results q
+      WHERE q.sample_id IN (SELECT sample_id FROM my_samples)
+         OR q.analysis_id IN (SELECT analysis_id FROM my_analyses)
+    UNION SELECT 'data_exports', d.export_id FROM data_exports d JOIN my_projects mp ON mp.project_id = d.project_id
   )`;
 
 const isAdmin = (user) => user.roles.includes(ROLES.ADMINISTRATOR);
