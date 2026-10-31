@@ -175,7 +175,7 @@ Every transaction ends in `ROLLBACK`, so the default run leaves the database unc
 | 0 | Preflight (objects, fixtures, no leftover demo project) and the baseline counts, including the highest `audit_id` |
 | 1 | Commit path: project, 4 members (one owner), 2 sites, **7 audit rows** all with actor 2 and the project id as `entity_id`; `ROLLBACK` by default, `COMMIT` with `keep=1` |
 | 2 | Rollback A: after project, members and a site succeeded, a second owner fails with `23505` on `uq_project_members_owner`; the next statement fails with `25P02`; after `ROLLBACK` nothing remains, not even audit rows |
-| 3 | Rollback B (four transactions): viewer as owner `EB002`, seeded title `23505`, blank title `23514`, unknown site `23503` on `fk_project_sites_site_id` (the project created one statement earlier disappears too) |
+| 3 | Rollback B (five transactions): viewer as owner `EB002`, seeded title `23505`, blank title `23514`, unknown site `23503` on `fk_project_sites_site_id` (the project created one statement earlier disappears too), and B5: unknown member 999 without a savepoint, `23503` on `fk_project_members_user_id`, no project or members remain |
 | 4 | `SAVEPOINT`: unknown member 999 fails (`23503`), `ROLLBACK TO SAVEPOINT`, user 3 is added; the failed insert left no audit row |
 | 5 | Two-session protocol in comments: duplicate title blocks on `uq_projects_title`, uncommitted work is invisible, `FOR SHARE` on the owner blocks `UPDATE users SET active = false` |
 
@@ -186,7 +186,7 @@ Every transaction ends in `ROLLBACK`, so the default run leaves the database unc
 | Isolation | Part 5 (blocking on the unique index, invisibility of uncommitted work, `FOR SHARE` on the owner) |
 | Durability | Part 1 with `keep=1` (committed project survives the session; reset removes it) |
 
-Excerpt of a default run (23 checks, 0 failed):
+Excerpt of a default run (26 checks, 0 failed):
 
 ```
 PASS: 7 audit rows (1 project, 4 members, 2 sites), all actor 2, all entity_id = the project
@@ -196,7 +196,7 @@ Caught SQLSTATE 23505 duplicate key value violates unique constraint "uq_project
 PASS: the aborted transaction refused the next statement with 25P02
 PASS: B4 raised 23503 on fk_project_sites_site_id
 PASS: the project created before the failing statement is gone
-Summary: 23 checks passed, 0 checks failed.
+Summary: 26 checks passed, 0 checks failed.
 ```
 
 Notes:

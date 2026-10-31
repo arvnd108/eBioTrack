@@ -36,8 +36,8 @@
 --      project, members, site and their audit rows are undone too. The failed transaction
 --      refuses further statements (25P02): no code after the error can save half the work.
 --   3  Rollback B: consistency rules, each in its own transaction: the procedure's CONTRACT 7
---      errors (EB002, 23505, 23514) and a foreign key violation that also undoes the project
---      created one statement earlier (23503).
+--      errors (EB002, 23505, 23514) and foreign key violations (unknown site, unknown member) that
+--      also undo the project created earlier (23503).
 --   4  SAVEPOINT variant: recover from one bad member without redoing the whole onboarding.
 --   5  Locking: the two-session protocol (comments, copy-paste) for the duplicate-title race,
 --      the invisibility of uncommitted work and the FOR SHARE lock on the owner. Isolation
@@ -446,6 +446,53 @@ SELECT NOT EXISTS (SELECT 1 FROM projects WHERE project_id = :new_project_id) AS
     :tally_pass \gset
 \else
     \echo FAIL: the project survived the rollback
+    :tally_fail \gset
+\endif
+\set result 'FAIL: baseline not evaluated'
+:assert_baseline \gset
+\echo :result
+\set ok false
+SELECT :'result' LIKE 'PASS%' AS ok \gset
+\if :ok
+    :tally_pass \gset
+\else
+    :tally_fail \gset
+\endif
+
+-- B5: the issue's scenario 2 - a member id that does not exist, without a savepoint.
+\echo
+\echo B5: create the project, add user 3, then add the unknown user 999. Expected 23503 on
+\echo fk_project_members_user_id; no savepoint, so the whole onboarding is rolled back.
+BEGIN;
+SET LOCAL app.current_user_id = '2';
+SELECT create_project_with_owner(:'demo_title', NULL, NULL, 2) AS new_project_id \gset
+INSERT INTO project_members (project_id, user_id, project_role) VALUES (:new_project_id, 3, 'contributor');
+\echo Evidence: the work done so far (counts before the failing step)
+SELECT (SELECT count(*) FROM projects) - :base_projects AS projects_added,
+       (SELECT count(*) FROM project_members) - :base_members AS members_added,
+       (SELECT count(*) FROM audit_logs WHERE audit_id > :base_audit_max) AS audit_rows;
+INSERT INTO project_members (project_id, user_id, project_role) VALUES (:new_project_id, 999, 'contributor');
+\set caught :LAST_ERROR_SQLSTATE
+\set caught_msg :LAST_ERROR_MESSAGE
+\echo Caught SQLSTATE :caught :caught_msg
+ROLLBACK;
+\set ok false
+SELECT :'caught' = '23503' AND position('fk_project_members_user_id' IN :'caught_msg') > 0 AS ok \gset
+\if :ok
+    \echo PASS: B5 raised 23503 on fk_project_members_user_id
+    :tally_pass \gset
+\else
+    \echo FAIL: B5 did not raise 23503 on fk_project_members_user_id
+    :tally_fail \gset
+\endif
+\set ok false
+SELECT NOT EXISTS (SELECT 1 FROM projects WHERE project_id = :new_project_id)
+   AND NOT EXISTS (SELECT 1 FROM project_members WHERE project_id = :new_project_id) AS ok \gset
+\if :ok
+    \echo PASS: no project and no members remain after the unknown member
+    :tally_pass \gset
+\else
+    \echo FAIL: the project or its members survived the rollback
     :tally_fail \gset
 \endif
 \set result 'FAIL: baseline not evaluated'
