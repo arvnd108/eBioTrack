@@ -205,3 +205,21 @@ Notes:
 - B2 checks the SQLSTATE; the constraint name `uq_projects_title` is printed by the verbose error (the procedure raises it with that constraint field), not by `LAST_ERROR_MESSAGE`.
 - With `keep=1`, Parts 2 to 4 use the title `T18 onboarding demo project (after commit)` because the first title is taken by then.
 - T32 (`tests/transactions/project-create.test.js`) automates the Part 2 and 3 assertions; the Part 5 duplicate-title race becomes the project-creation case of T34.
+
+## Indexes (T19-C)
+
+`database/indexes/access_indexes.sql` (applied by hand, safe to run twice) creates two indexes. The full `EXPLAIN (ANALYZE, BUFFERS)` evidence, the variants tried and the write cost are in the comment block above each `CREATE INDEX`; the exact statements are labelled `BQ1` to `BQ6` in `tests/performance/explain-benchmarks.sql`. All figures: `ebiotrack_test`, `npm run volume:load -- --scale medium` (20 007 memberships, 500 000 audit rows), median of 5 runs after one warm-up, baseline taken before the indexes.
+
+| Index | Table | Serves | Size | Before -> after |
+|---|---|---|---|---|
+| `idx_project_members_user_id_project_id` (user_id, project_id) | `project_members` | `authorize.js` membership lookup (BQ1), Query 1 for one user (BQ2) | 632 kB | BQ1 0.429 ms (Seq Scan, 148 buffers) -> 0.006 ms (Index Only Scan, 3 buffers); BQ2 1.198 -> 0.707 ms |
+| `idx_audit_logs_entity_type_entity_id_created_at` (entity_type, entity_id, created_at) | `audit_logs` | Query 3 and `GET /api/audit?entity_type&entity_id` (BQ3, BQ4) | 24 MB | cold entity 16.216 -> 0.019 ms; hot entity 19.439 -> 3.789 ms; one month of the hot entity 17.132 -> 1.582 ms; largest trail (21 551 rows) 19.123 -> 6.704 ms |
+
+Write cost (bulk insert into a temporary copy, median of 5): `project_members` 2.274 -> 8.697 ms for 20 007 rows (+282%, about 0.3 microseconds a row); `audit_logs` 18.425 -> 93.980 ms for 100 000 rows (+410%, about 0.76 microseconds a row). `audit_logs` receives one row per audited write, so this is the cost that matters; T35 should repeat it with the triggers enabled.
+
+Findings:
+
+- **Query 1 is helped, but only a little.** The primary key `(project_id, user_id)` cannot serve a lookup by `user_id`, and the per-project subqueries (owner, member count, site count) dominate the plan, so the new index only turns the one `project_members` scan into a bitmap scan (35 buffers instead of 148). The index is justified by the `authorize.js` lookup (BQ1), which becomes index-only (`Heap Fetches: 0` after `VACUUM`).
+- **The extra `audit_id` column did not pay off.** The four-column variant (28 MB) removed the Sort node only for tiny trails and gave the same times for every other query; leading with `entity_id` also changed nothing. For large trails the planner prefers a bitmap scan plus a Sort whichever column list is used, because the rows of one entity are scattered over the whole table.
+- **Not indexed, with numbers:** `audit_logs (actor_id)` (the `actor_id` filter: 11.272 ms, 0.168 ms with a test index) and `audit_logs (created_at)`. The second one matters: the dashboard's "newest 5 audit rows" (BQ6) scans all 500 000 rows in 65.066 ms and would take 0.004 ms with an 11 MB index on `created_at`. It is reported as the recommended third index for the dashboard owner rather than added here, because T19 asks for two.
+- Results are unchanged by the indexes: the row sets of Queries 1 and 3 and the audit lookups hashed identically with and without them.

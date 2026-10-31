@@ -1,2 +1,157 @@
 -- Owner: C (Testing & QA)
 -- Purpose: 2 justified indexes: Access, Projects & Audit
+--
+-- Issue #39 / T19-C. Applied by hand (the migration runner does not run database/indexes/) and
+-- safe to run more than once (CREATE INDEX IF NOT EXISTS; the second run only prints NOTICEs):
+--
+--   psql "$DATABASE_URL" -f database/indexes/access_indexes.sql
+--
+-- When benchmarking, the UNINDEXED BASELINE MUST EXIST first: take the "before" plans, then
+-- apply this file, run ANALYZE on the two tables, and take the "after" plans.
+--
+-- Evidence. Test database ebiotrack_test only, `npm run volume:load -- --scale medium` (from
+-- tests/): project_members 20 007 rows, audit_logs 500 000 (the generated rows only: the volume
+-- load disables the audit triggers, which were all re-enabled afterwards), users 2 006,
+-- projects 102. Before the baseline and again before the "after" plans: VACUUM (ANALYZE) on
+-- project_members, audit_logs and users (so the visibility map is set and statistics are fresh).
+-- Every figure below is EXPLAIN (ANALYZE, BUFFERS) output from a single session with
+-- max_parallel_workers_per_gather = 0, jit = off and plan_cache_mode = force_custom_plan (so a
+-- prepared statement is planned for its actual parameter, as the literal would be); one warm-up
+-- run, then the MEDIAN of 5 runs. No enable_* setting was changed. All data was in shared
+-- buffers ("shared hit"), so the Buffers line is the fairer comparison of work done. "total"
+-- buffers is the whole statement, "scan" only the node named. Ids were looked up from the data:
+--   hot user 1000199 (34 memberships, the maximum), hot sample 1000000 (2 154 audit rows, the
+--   most of any sample), cold sample 1000664 (3 rows), hot project 1000000 (21 551 rows, the
+--   most of any entity), smallest project trail 1000098 (310 rows).
+--   BQ1  SELECT project_id FROM project_members WHERE user_id = 1000199        (authorize.js)
+--   BQ2  EXECUTE access_user_projects(1000199, NULL)           (Q1, database/queries/access_queries.sql)
+--   BQ3a EXECUTE access_entity_audit_trail('samples', 1000000, NULL, NULL)     (Q3, hot entity)
+--   BQ3b EXECUTE access_entity_audit_trail('samples', 1000664, NULL, NULL)     (Q3, cold entity)
+--   BQ3c EXECUTE access_entity_audit_trail('samples', 1000000, '2019-06-01 00:00:00+00', '2019-07-01 00:00:00+00')
+--   BQ4a SELECT * FROM audit_logs WHERE entity_type = 'projects' AND entity_id = 1000000
+--        ORDER BY created_at, audit_id                                        (GET /api/audit, hot)
+--   BQ4b the same for entity_id = 1000098                                      (GET /api/audit, small)
+--   BQ5  SELECT * FROM audit_logs WHERE actor_id = 1000199 ORDER BY created_at DESC, audit_id DESC LIMIT 50
+--   BQ6  SELECT audit_id, entity_type, entity_id, action, created_at FROM audit_logs
+--        ORDER BY created_at DESC LIMIT 5                                      (dashboard, recent activity)
+-- The exact statements are in tests/performance/explain-benchmarks.sql (labelled BQ1 ... BQ6).
+--
+-- Indexes that already exist because of constraints (010_access_projects_audit.sql):
+--   pk_project_members (project_id, user_id)   -> project_id lookups; a user_id-only lookup
+--       cannot use it (leading-column rule)
+--   uq_project_members_owner (project_id) WHERE project_role = 'owner'
+--   pk_project_sites (project_id, site_id), idx_project_sites_site_id, idx_user_roles_role_id,
+--   idx_projects_created_by, uq_projects_title, uq_users_email, the primary keys.
+--   audit_logs has only pk_audit_logs (audit_id): an entity or actor lookup had no index.
+
+-- --------------------------------------------------------------------------------------------
+-- 1. idx_project_members_user_id_project_id
+-- --------------------------------------------------------------------------------------------
+-- Serves: "which projects is this user in". backend/src/middleware/authorize.js (accessibleProjectIds,
+--   run on authenticated list requests) issues exactly BQ1; Query 1 (access_user_projects) filters
+--   the memberships of one user in the same way; also the RESTRICT check of fk_project_members_user_id
+--   when a user row changes.
+-- BQ1, 34 of 20 007 memberships belong to the user:
+--   before: Seq Scan on project_members (rows=34)
+--           Buffers: shared hit=148                                  Execution Time: 0.429 ms
+--   after:  Index Only Scan using idx_project_members_user_id_project_id (rows=34, Heap Fetches: 0)
+--           Buffers: shared hit=3                                    Execution Time: 0.006 ms
+--   about 71x faster, 49x fewer buffers. Heap Fetches: 0 because VACUUM had set the visibility
+--   map (run before the "after" plan); the table pages are not read at all.
+-- BQ2 (Query 1 as written) IS helped, but modestly: for one user the planner now reaches the
+--   user's memberships through a Bitmap Index Scan on this index instead of a Seq Scan on
+--   project_members.
+--   before: Seq Scan on project_members pm, scan buffers 148, total 488        1.198 ms
+--   after:  Bitmap Heap Scan on pm (Bitmap Index Scan on the new index, 2 buffers), scan 35,
+--           total 375                                                         0.707 ms
+--   1.7x. It is a bitmap heap scan, not index-only, because Query 1 also reads project_role.
+--   The rest of the plan (owner, member_count, site_count subqueries per project) is unchanged
+--   and dominates: pk_project_members cannot serve this lookup, as it leads with project_id.
+-- Variants tried (BQ1 / BQ2):
+--   (user_id)              Bitmap Heap Scan, 35 buffers, 0.017 ms / 0.692 ms; 200 kB
+--   (user_id, project_id)  Index Only Scan, 3 buffers, 0.008 ms / 0.675 ms; 632 kB  <- kept
+--   The second column makes BQ1 index-only (2x faster than the bitmap scan of the one-column
+--   index and no heap access) for 432 kB more. BQ2 is the same within noise.
+-- Trade-off: 632 kB (the table is 1 184 kB, pk_project_members 640 kB). A bulk INSERT of all
+--   20 007 rows into a temporary copy of the table took 2.274 ms without the index and 8.697 ms
+--   with it (+282%, median of 5). Memberships are written a handful at a time when a project is
+--   set up, so the absolute cost (about 0.3 microseconds per row) is negligible next to a lookup
+--   that runs on every authenticated request.
+CREATE INDEX IF NOT EXISTS idx_project_members_user_id_project_id ON project_members (user_id, project_id);
+
+-- --------------------------------------------------------------------------------------------
+-- 2. idx_audit_logs_entity_type_entity_id_created_at
+-- --------------------------------------------------------------------------------------------
+-- Serves: Query 3 (access_entity_audit_trail) and GET /api/audit?entity_type=&entity_id= (the
+--   audit trail of one entity, newest or oldest first). The equality columns come first
+--   (entity_type has only five values here, so it is leading for the lookup shape, not for
+--   selectivity), created_at is the range / ordering column.
+-- BQ3b (cold entity, 3 rows):
+--   before: Seq Scan on audit_logs, scan buffers 6 668, total 6 677              16.216 ms
+--   after:  Index Scan using idx_audit_logs_entity_type_entity_id_created_at (rows=3) then an
+--           Incremental Sort on audit_id only, scan buffers 6, total 15           0.019 ms
+--   about 853x faster, 445x fewer buffers.
+-- BQ4b (small trail, 310 rows):
+--   before: Seq Scan + Sort, 6 668 buffers                                        18.173 ms
+--   after:  Bitmap Heap Scan (Bitmap Index Scan), 312 buffers                      0.125 ms
+--   about 145x faster.
+-- BQ3a (hot entity, 2 154 of 500 000 rows):
+--   before: Seq Scan on audit_logs, scan buffers 6 668, total 10 094              19.439 ms
+--   after:  Bitmap Heap Scan (Bitmap Index Scan: 14 buffers), scan 1 853, total 5 279   3.789 ms
+--   about 5.1x faster. Most of the remaining buffers are the 1 142 actor lookups in users.
+-- BQ3c (the same entity with a one-month range): 17.132 ms -> 1.582 ms (10.8x), total buffers
+--   6 698 -> 1 883. The range is applied after the window functions, which need the entity's
+--   whole history, so the index narrows by entity, not by date, and the date column is not
+--   what makes it fast here.
+-- BQ4a (the largest trail, 21 551 rows, 4% of the table): 19.123 ms -> 6.704 ms (2.9x). Buffers
+--   barely change (6 668 -> 6 652 plus 133 for the index) because the rows of one entity are
+--   spread over almost every heap page (the volume data is not clustered by entity); the gain is
+--   the avoided filter over 500 000 rows. For an entity this large a Sort of 21 551 rows remains.
+-- Variants tried (BQ3a / BQ3b / BQ3c / BQ4a / BQ4b, ms):
+--   (entity_type, entity_id, created_at)            3.845 / 0.022 / 1.599 / 6.948 / 0.128; 24 MB  <- kept
+--   (entity_type, entity_id, created_at, audit_id)  4.022 / 0.019 / 1.603 / 6.989 / 0.135; 28 MB
+--   (entity_id, entity_type, created_at)            3.830 / 0.022 / 1.602 / 6.935 / 0.130; 24 MB
+--   All three give the same plan shapes for the large trails (Bitmap Heap Scan, then a Sort): the
+--   planner chooses the bitmap scan whenever it expects thousands of rows, so the extra audit_id
+--   column does not remove the Sort there. It only removes the Incremental Sort for tiny trails
+--   (BQ3b: a plain Index Scan under the WindowAgg, 0.019 ms against 0.022 ms, noise) for 4 MB
+--   (17%) more index. Leading with entity_id instead of entity_type changed nothing measurable
+--   (the cold entity used a Bitmap Heap Scan instead of an Index Scan, same time). The role
+--   document's three columns are kept.
+-- Trade-off: 24 MB (audit_logs is 52 MB, pk_audit_logs 11 MB). audit_logs is the hottest
+--   insert target of the system (every audited write adds a row), so the write cost is stated
+--   plainly: a bulk INSERT of 100 000 rows into a temporary copy took 18.425 ms without the
+--   index and 93.980 ms with it (+410%, median of 5; about 0.76 microseconds more per row, in an
+--   INSERT ... SELECT without triggers or per-row commits). A real audited write adds one such
+--   index entry on top of its own transaction, whose cost is dominated by WAL flush and the
+--   business write, so the per-write overhead is small in absolute terms; the read benefit
+--   (the audit trail screen and Query 3 go from a 16 to 19 ms scan of the whole table to
+--   0.02 to 4 ms) clearly outweighs it. T35 should re-measure with the triggers enabled.
+CREATE INDEX IF NOT EXISTS idx_audit_logs_entity_type_entity_id_created_at ON audit_logs (entity_type, entity_id, created_at);
+
+-- --------------------------------------------------------------------------------------------
+-- Deliberately NOT indexed (two indexes were the decision; these are the measured reasons)
+-- --------------------------------------------------------------------------------------------
+-- audit_logs (actor_id): GET /api/audit?actor_id= (BQ5, 384 rows of 500 000 for the hot user).
+--   Without an index, and also with the two indexes above: Seq Scan, top-N heapsort,
+--   6 668 buffers, 11.272 ms (11.442 ms after). A test index on (actor_id) (3 472 kB, dropped
+--   again) gives a Bitmap Heap Scan, 376 buffers, 0.168 ms (about 67x). The filter is an
+--   administrator's investigation, not a path run on every request, so 11 ms is acceptable and
+--   the index is not created; it is the first candidate if that screen becomes hot.
+-- audit_logs (created_at): the dashboard's recent activity (BQ6, newest 5 rows). Without an
+--   index, and with the two above: Seq Scan over 500 000 rows + top-N heapsort, 6 668 buffers,
+--   65.066 ms (64.362 ms after). A test index on (created_at) (11 MB, dropped again) gives an
+--   Index Scan Backward, 4 buffers, 0.004 ms. This one is NOT negligible: 65 ms on every
+--   dashboard load at 500 000 rows, and the cost grows with the table. The two-index decision of T19 kept the role document's indexes; this is reported as
+--   the recommended third index (CREATE INDEX idx_audit_logs_created_at ON audit_logs (created_at))
+--   for whoever owns the dashboard route (T20/T29).
+-- project_members (project_id): redundant, leading column of pk_project_members (BQ2 uses
+--   Index Only Scan using pk_project_members for the member counts, 90 buffers for 34 projects).
+-- project_sites (project_id): leading column of pk_project_sites (BQ2: Index Only Scan, 69 buffers).
+-- users, projects, user_roles, roles: small tables (2 006, 102, 6 and 6 rows). In BQ2 the
+--   planner scans projects (2 buffers), user_roles and roles (1 buffer each) sequentially, which
+--   is the right plan; users is reached through pk_users (3 buffers).
+
+-- Rollback (benchmark reset; do not run in normal use):
+--   DROP INDEX IF EXISTS idx_project_members_user_id_project_id;
+--   DROP INDEX IF EXISTS idx_audit_logs_entity_type_entity_id_created_at;
