@@ -84,3 +84,40 @@ One row per QC problem on a sample or extraction: extractions whose `qc_status` 
 | `recorded_at` | timestamptz | When it was recorded |
 
 Seeded data: 4 rows (no analysis-only QC is seeded). Sample 17: failed extraction 17, `concentration` fail (0.35 ng/µL), `contamination_check` fail. Sample 12: `negative_control` warn.
+
+## Transaction (T18-B)
+
+`database/transactions/lab_transaction.sql` (issue #34). Scenario: **batch extraction entry, with row locking so two users cannot assign the same extraction to a run.** It is a standalone demonstration run by hand with `psql`; `database/transactions/` is not run by the migration runner. It creates and deletes nothing: every transaction ends in `ROLLBACK`, so it can be run repeatedly and leaves the database unchanged (it asserts this itself, `audit_logs` included). Generated ids move on, since PostgreSQL never reuses a consumed identity value.
+
+```bash
+docker compose exec -T db psql -U ebiotrack -d ebiotrack -f - < database/transactions/lab_transaction.sql
+psql "$TEST_DATABASE_URL" -v keep=1 -f database/transactions/lab_transaction.sql   # COMMIT Parts 1 and 4; test database only, reset afterwards
+```
+
+The scenario re-extracts samples 6, 12 and 17 (all seeded samples already have an extraction, so batch entry is modelled as attempt 2 or later). Every transaction starts with `SET LOCAL app.current_user_id = '4'` (lab technician), as the backend does, and runs at the default READ COMMITTED level. Part 0 stops with a message if the fixture world is missing.
+
+| Case | What it does | Expected SQLSTATE | What is undone |
+| --- | --- | --- | --- |
+| Part 1, commit path | Lock samples, insert batch, 3 extractions, 3 QC rows, set verdicts, `create_sequencing_run` for the 2 passing extractions | none | Default `ROLLBACK`: everything, including the audit rows. With `keep=1` it is committed and visible from another connection |
+| Part 2, rollback A | Third extraction has a negative concentration | `23514` (`ck_dna_extractions_concentration`), then `25P02` for later statements | Batch and the two good extractions, with their audit rows |
+| Part 3 B1 | Book a list that includes a failed extraction | `EB002` (has not passed QC) | Batch, extractions, QC rows and verdicts entered earlier in the same transaction |
+| Part 3 B2 | Book an extraction on a second new run | `EB002` (already booked on run RUN-n) | The second run is refused; the whole transaction, including the first run and its libraries, is rolled back |
+| Guard rail 1 | Call the procedure under `REPEATABLE READ` | `EB002` | Nothing was written |
+| Guard rail 2 | Plain `INSERT INTO sequencing_libraries` for failed extraction 17 | `EB002` (`trg_sequencing_libraries_qc_pass`) | Nothing was written |
+| Part 4, savepoint | Bad purity row, `ROLLBACK TO SAVEPOINT`, corrected row | `23514` | Only the bad row and its audit row; the batch and the good row survive |
+| Part 5, locking | Two sessions book the same extraction (protocol in the script comments) | `EB002` for the second session after the first commits | The second session's attempt; one active run holds the extraction |
+
+### Two-session protocol
+
+A single script cannot run two sessions, so Part 5 is a copy-paste protocol in the script (S1, S2 and an observer S3): S1 `BEGIN` + `create_sequencing_run` for extraction X and keeps the transaction open; S2 books X and **blocks** on the procedure's `SELECT ... FOR UPDATE` (`pg_stat_activity` shows `wait_event_type = Lock`, `wait_event = transactionid`; `pg_locks` shows an ungranted `ShareLock`); S1 `COMMIT` makes S2 fail with `EB002` because, under READ COMMITTED, S2 then sees S1's library; exactly one planned/running run contains X. If S1 rolls back instead, S2 succeeds. Two sessions booking `[a, b]` and `[b, a]` do not deadlock, because the procedures lock in ascending id order; locking in the caller's order would end with `40P01`. Committed runs from this protocol are removed by `npm run db:reset` (no `DELETE`, D19). The automated version is `tests/concurrency/run-assignment.test.js` (T34).
+
+### What each part demonstrates
+
+- **Atomicity:** one transaction writes five tables (and the audit log); an error anywhere undoes all of it (Parts 2, 3), a savepoint undoes only part of it (Part 4).
+- **Consistency:** check constraints (`23514`), the QC trigger and the procedures' booking rules (`EB002`) hold even when the batch is half entered.
+- **Isolation:** row locks serialise two writers of the same extraction; at READ COMMITTED the second writer re-reads after the first commits (Part 5). `REPEATABLE READ` is refused (`EB002`).
+- **Durability:** after `COMMIT` (`keep=1`) the rows are visible to a second connection and survive the session; they also survive a server restart because of the write-ahead log.
+
+### Attempt numbers
+
+No database object assigns `dna_extractions.attempt_number`; the table only has `uq_dna_extractions_sample_attempt`. The scenario computes `max(attempt_number) + 1` per sample inside the transaction after locking the sample rows `FOR UPDATE` in ascending id order. Without the lock, two technicians re-extracting the same sample would get `23505` on the unique constraint (safe, but a noisy failure). The backend service should follow the same pattern.
