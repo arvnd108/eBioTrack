@@ -1,2 +1,92 @@
 -- Owner: B (Frontend)
 -- Purpose: 2 justified indexes: Laboratory & Sequencing
+--
+-- Issue #38 / T19-B. Applied by hand (the migration runner does not run database/indexes/) and
+-- safe to run more than once (CREATE INDEX IF NOT EXISTS; the second run only prints NOTICEs):
+--
+--   psql "$DATABASE_URL" -f database/indexes/lab_indexes.sql
+--
+-- When benchmarking, the UNINDEXED BASELINE MUST EXIST first: take the "before" plans, then
+-- apply this file, run ANALYZE on the two tables, and take the "after" plans.
+--
+-- Evidence. Test database ebiotrack_test, `npm run volume:load -- --scale medium` (from tests/):
+-- dna_extractions 100 017 rows, sequencing_libraries 100 016, sequencing_runs 1 002,
+-- extraction_batches 2 003. Every figure below is EXPLAIN (ANALYZE, BUFFERS) output from a
+-- single session with max_parallel_workers_per_gather = 0, jit = off and
+-- plan_cache_mode = force_custom_plan (so a prepared statement is planned for its actual
+-- parameter, as the literal would be); one warm-up run, then the MEDIAN of 5 runs. No
+-- enable_* setting was changed. All data was in shared buffers ("shared hit"), so the Buffers
+-- line is the fairer comparison of work done. The measured queries (ids looked up from the data):
+--   BQ1  EXECUTE q2_run_libraries_with_samples(1000500)          (database/queries/lab_queries.sql)
+--   BQ2a SELECT * FROM dna_extractions WHERE batch_id = 1000700  (GET /api/extractions?batch_id=)
+--   BQ2b EXECUTE q1_extraction_qc_by_batch(1)                    (Q1, all batches of one lab)
+--   BQ3a SELECT * FROM dna_extractions WHERE sample_id = 1040000
+--   BQ3b SELECT * FROM v_lab_pipeline_status WHERE sample_id = 1040000
+--
+-- Indexes that already exist because of constraints (030_lab_sequencing.sql):
+--   uq_dna_extractions_sample_attempt (sample_id, attempt_number)  -> sample_id lookups
+--   uq_sequencing_libraries_extraction_run (extraction_id, run_id) -> extraction_id lookups
+--   the primary keys, uq_sequencing_libraries_library_code, uq_sequencing_runs_run_code,
+--   uq_laboratories_name. A lookup by sequencing_libraries.run_id alone, by
+--   dna_extractions.batch_id, and by any lab_id had no index.
+
+-- --------------------------------------------------------------------------------------------
+-- 1. idx_sequencing_libraries_run_id
+-- --------------------------------------------------------------------------------------------
+-- Serves: Q2 (q2_run_libraries_with_samples) and the run detail route
+--   GET /api/sequencing-runs/:id (a run with its libraries and source samples), which find the
+--   libraries of one run; also the RESTRICT check when a run row is changed or deleted.
+-- run_id is only the SECOND column of uq_sequencing_libraries_extraction_run, so that index
+--   cannot be used for a run_id-only lookup (leading-column rule).
+-- BQ1, ~100 of 100 016 libraries belong to the run:
+--   before: Seq Scan on sequencing_libraries (Rows Removed by Filter: 99916)
+--           Buffers: shared hit=2138 total (935 for the scan)   Execution Time: 3.273 ms
+--   after:  Index Scan using idx_sequencing_libraries_run_id (rows=100)
+--           Buffers: shared hit=1207 total (4 for the scan)     Execution Time: 0.300 ms
+--   about 11x faster; the remaining 1 207 buffers are the 100 primary-key lookups per joined
+--   table, which the index does not change.
+-- Trade-off: 688 kB; a bulk INSERT of ~100 000 rows into a temporary copy of the table took
+--   181 ms without it and 206 ms with it (+14%). Libraries are written a few at a time when a run
+--   is booked, so this cost is small next to the read benefit.
+CREATE INDEX IF NOT EXISTS idx_sequencing_libraries_run_id ON sequencing_libraries (run_id);
+
+-- --------------------------------------------------------------------------------------------
+-- 2. idx_dna_extractions_batch_id
+-- --------------------------------------------------------------------------------------------
+-- Serves: the extractions list GET /api/extractions?batch_id= (CONTRACT 8), the lookup of one
+--   batch's extractions in Q1, and the foreign-key check on extraction_batches.
+-- BQ2a, 50 of 100 017 extractions belong to the batch:
+--   before: Seq Scan on dna_extractions (Rows Removed by Filter: 99967)
+--           Buffers: shared hit=1032                            Execution Time: 2.407 ms
+--   after:  Index Scan using idx_dna_extractions_batch_id (rows=50)
+--           Buffers: shared hit=3                               Execution Time: 0.007 ms
+--   about 340x faster, 344x fewer buffers.
+-- BQ2b (Q1 as written) is NOT helped: it aggregates every batch of the lab, so reading all
+--   extractions with a Hash Right Join and a Seq Scan is the right plan; the planner kept it
+--   (16.099 ms before, 16.344 ms after, 1050 buffers both). The index is justified by the
+--   single-batch lookup, not by Q1.
+-- Trade-off: 712 kB; the same bulk INSERT comparison took 97 ms without it and 120 ms with it
+--   (+24%). Extractions are entered in batches of tens of rows, so this is acceptable.
+CREATE INDEX IF NOT EXISTS idx_dna_extractions_batch_id ON dna_extractions (batch_id);
+
+-- --------------------------------------------------------------------------------------------
+-- Deliberately NOT indexed
+-- --------------------------------------------------------------------------------------------
+-- dna_extractions (sample_id): the role document lists it, but it would be redundant. It is the
+--   leading column of uq_dna_extractions_sample_attempt, and the planner already uses that index:
+--   BQ3a  Index Scan using uq_dna_extractions_sample_attempt   Buffers: shared hit=3   0.004 ms
+--   BQ3b  (v_lab_pipeline_status for one sample) uses Index Only Scan and Index Scan Backward
+--         on the same index for the attempt count and the latest attempt (ORDER BY
+--         attempt_number DESC LIMIT 1); 27 buffers, 0.029 ms. After creating the two indexes
+--         above these plans are unchanged (0.004 ms and 0.035 ms; the BQ3b difference is noise).
+-- sequencing_libraries (extraction_id): leading column of uq_sequencing_libraries_extraction_run
+--   (used for the booking check and for the library lookup in BQ3b above).
+-- extraction_batches (lab_id), sequencing_runs (lab_id): small tables (2 003 and 1 002 rows)
+--   and a lab owns about half of the rows, so a sequential scan is the right plan:
+--   Seq Scan, 17 buffers, 0.4 ms and Seq Scan, 12 buffers, 0.36 ms.
+-- quality_control_results (sample_id, analysis_id): volume data has no QC rows, so there is no
+--   measurement to justify an index; not created.
+
+-- Rollback (benchmark reset; do not run in normal use):
+--   DROP INDEX IF EXISTS idx_sequencing_libraries_run_id;
+--   DROP INDEX IF EXISTS idx_dna_extractions_batch_id;

@@ -130,7 +130,8 @@ export async function resetTestDatabase({ seed = true } = {}) {
  * Restore the fixture world without rebuilding the schema: truncate every table (except the
  * migration tracking tables) with RESTART IDENTITY, forget the applied seeds, and re-run them.
  * Faster than resetTestDatabase() and keeps app-created IDs starting at 1000 (D6), but it assumes
- * the schema is current; use resetTestDatabase() after changing a migration.
+ * the schema is current; use resetTestDatabase() after changing a migration. audit_logs is left
+ * empty (see below).
  */
 export async function reseed() {
   const databaseUrl = getTestDatabaseUrl();
@@ -146,7 +147,21 @@ export async function reseed() {
   if (rows[0].tables) await db.query(`TRUNCATE ${rows[0].tables} RESTART IDENTITY CASCADE`);
   await db.query(`DELETE FROM schema_seeds`);
   const migrate = await loadMigrate();
-  return migrate({ seed: true, databaseUrl, nodeEnv: 'test', ...silent });
+  // The analysis seeds insert detections into runs that are already approved, which the T17-A
+  // immutability triggers refuse. Fixture loading is not an application write, so switch the
+  // analysis tables' triggers off for the re-run only.
+  const guarded = ['analysis_runs', 'taxon_assignments'];
+  for (const t of guarded) await db.query(`ALTER TABLE ${t} DISABLE TRIGGER USER`);
+  let result;
+  try {
+    result = await migrate({ seed: true, databaseUrl, nodeEnv: 'test', ...silent });
+  } finally {
+    for (const t of guarded) await db.query(`ALTER TABLE ${t} ENABLE TRIGGER USER`);
+  }
+  // The audit triggers exist while the seeds re-run (a fresh db:reset installs them afterwards),
+  // so every seeded row was audited. The fixture world has an empty audit log: restore that.
+  await db.query('TRUNCATE audit_logs RESTART IDENTITY');
+  return result;
 }
 
 /**

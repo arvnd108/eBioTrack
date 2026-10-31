@@ -48,18 +48,18 @@ Until then the middleware is more permissive than the query; the query is the sa
 
 `access_entity_audit_trail` is unscoped. For a `principal_investigator` the caller must first check that the entity belongs to one of their projects (`accessibleProjectIds(user)` gives the project ids; map the entity to its project, for example `samples` via `collection_events.project_id`, `projects` directly) and return 404 otherwise. Administrators are unrestricted; other roles cannot read audit (CONTRACT 9).
 
-### 3. Proposed `audit_logs.details` shape (decision for T17-C)
+### 3. `audit_logs.details` shape (decided in T17-C)
 
-CONTRACT 4.1 only says `details` is a JSON object of changed columns with old and new values. Proposal for `audit_row_change()`, so that `changed_fields` in the trail query is meaningful:
+CONTRACT 4.1 only says `details` is a JSON object of changed columns with old and new values. Decision, implemented by `audit_row_change()`:
 
-| Action                                 | `details`                                                                    |
-| -------------------------------------- | ---------------------------------------------------------------------------- |
-| `insert`                               | `{ "<column>": { "new": v }, ... }` for the inserted columns                 |
-| `update`                               | `{ "<column>": { "old": v1, "new": v2 }, ... }` for **changed** columns only |
-| `delete`                               | `{ "<column>": { "old": v }, ... }`                                          |
-| `login`, `export`, `approve`, `reject` | `NULL` or a small object chosen by the caller                                |
+| Action                                 | `details`                                                                                              |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `insert`                               | `{ "<column>": { "new": v }, ... }` for the inserted columns                                           |
+| `update`                               | `{ "<column>": { "old": v1, "new": v2 }, ... }` for **changed** columns only                           |
+| `delete`                               | `{ "<column>": { "old": v }, ... }`                                                                    |
+| `login`, `export`, `approve`, `reject` | `NULL` or a small object chosen by the caller (written by procedures or the app, never by the trigger) |
 
-Top-level keys are column names, so the trail query's `changed_fields` is exactly the set of changed columns. The query reads no key itself, so a different shape would not break it, only make `changed_fields` less useful. This is a proposal, not part of the contract.
+Top-level keys are column names, so the trail query's `changed_fields` is exactly the set of changed columns. Rules: `password_hash` is never logged, and neither are columns passed as extra trigger arguments; an update that changes nothing (after those exclusions) writes no row; for composite-key link tables `entity_id` is the parent id and the whole row is in `details`.
 
 ## Views (T15-C)
 
@@ -108,3 +108,118 @@ SELECT project_id, title, owner_name, member_count, sample_count
 ### Installation and grants
 
 `migrate.js` applies `database/views/*.sql` right after the migrations, so a freshly migrated database and the test database have the views. `ebiotrack_readonly` has SELECT on both views. `ebiotrack_app` has SELECT only: `grants.sql` revokes the INSERT/UPDATE/DELETE that table-level grants would give it, and neither view is automatically updatable anyway. Default privileges give new views write rights again, so re-run `database/roles/grants.sql` after views are created or re-created. Both views are owned by `ebiotrack`, the role named in the default privileges.
+
+## Procedure (T16-C)
+
+`create_project_with_owner(p_title text, p_objectives text, p_start_date date, p_owner_id bigint) RETURNS bigint` in `database/procedures/access_procedures.sql` (installed by `migrate.js`, `SECURITY INVOKER`, no dynamic SQL). It inserts a `planned` project (`created_by` = owner) and the `owner` membership, and returns the new `project_id` (ids start at 1000 and can have gaps). Every project must be created through it: `uq_project_members_owner` only guarantees at most one owner, this function guarantees at least one.
+
+Checks run in this order and stop at the first problem:
+
+| Problem                                                          | SQLSTATE | API mapping             |
+| ---------------------------------------------------------------- | -------- | ----------------------- |
+| Title `NULL` or blank                                            | `23514`  | 422 `validation_error`  |
+| Title already used (also a concurrent duplicate)                 | `23505`  | 409 `duplicate`         |
+| `p_owner_id` `NULL`                                              | `EB002`  | 422 `rule_violation`    |
+| Owner does not exist                                             | `23503`  | 422 `invalid_reference` |
+| Owner deactivated (`users.active = false`)                       | `EB002`  | 422 `rule_violation`    |
+| Owner holds neither `administrator` nor `principal_investigator` | `EB002`  | 422 `rule_violation`    |
+
+**Role check is an interpretation** (CONTRACT 9 says who may create projects; the signature has one `p_owner_id`, which is both creator and owner). `authorize('create_project')` must stay on the route. To drop the check, delete the "Allowed to create projects" block in the function.
+
+All or nothing holds as long as the caller's transaction ends in `COMMIT` or `ROLLBACK` (a failed membership insert aborts the transaction; no `EXCEPTION` block swallows errors). Concurrent calls with the same title: the second blocks on `uq_projects_title`, then fails with `23505` if the first committed, or succeeds if it rolled back. The owner row is locked `FOR SHARE` so the checks and the insert see the same user. If `app.current_user_id` is not set, the owner is recorded as the actor.
+
+```sql
+SELECT create_project_with_owner('New survey', 'Objectives', DATE '2026-06-01', 2);  -- new project_id
+```
+
+From the backend: `callProcedure('create_project_with_owner', [title, objectives, startDate, req.user.user_id], client)` inside `withTransaction`.
+
+## Audit trigger (T17-C)
+
+`audit_row_change()` in `database/triggers/access_triggers.sql` is an `AFTER INSERT OR UPDATE OR DELETE ... FOR EACH ROW` trigger function (`SECURITY INVOKER`, no dynamic SQL). It writes one `audit_logs` row per changed row: `entity_type` = table name, `entity_id` = the key column named by `TG_ARGV[0]`, `action` = `insert`/`update`/`delete`, `actor_id` from `app.current_user_id`, `details` as decided above. Attached here to `users` (leaving out `last_login_at`), `user_roles`, `projects`, `project_members` and `project_sites`.
+
+**Attach it from your slice** (A, B, D), after the table's own status-transition trigger:
+
+```sql
+CREATE OR REPLACE TRIGGER trg_<table>_audit
+    AFTER INSERT OR UPDATE OR DELETE ON <table>
+    FOR EACH ROW EXECUTE FUNCTION audit_row_change('<pk_column>');
+```
+
+Optional extra arguments are columns to leave out of the log (a noisy timestamp). For a composite key pass the parent id column. Never attach it to `audit_logs`, `schema_migrations`, `schema_seeds` or `sessions`. `access_triggers.sql` must sort first (the runner applies triggers alphabetically); do not rename it.
+
+Behaviour and traps:
+
+- **Actor:** unset or empty `app.current_user_id` gives `actor_id` NULL (system action); digits give that user; anything else gives NULL plus a `WARNING`. A well-formed id that is not a user (for example `99999`) fails with `23503` and rolls back the business write, on purpose.
+- **Seeds:** triggers are installed after the seeds, so a fresh `db:reset --seed` leaves `audit_logs` empty. `reseed()` (tests) re-runs seeds with the triggers present, so it truncates `audit_logs` (restarting the identity) at the end.
+- **Append-only:** the trigger runs as the caller; `ebiotrack_app` can insert audit rows but `UPDATE`/`DELETE` on `audit_logs` fail with `42501`.
+- **Volume data:** `generate-volume-data.js` disables the audit triggers while loading and cleaning (and re-enables them), so synthetic rows are not audited. Performance runs (T35) should measure with the triggers present and absent.
+- **Misuse** (no key argument, key column missing, statement-level trigger) raises `22023` naming the table.
+
+## Transaction scenario (T18-C)
+
+`database/transactions/access_transaction.sql` is a demonstration script (not a migration, not a test; the runner never executes it). Scenario: **project onboarding**. User 2 creates a project with its owner (`create_project_with_owner()`), adds users 3 and 4 as contributors and user 6 as viewer, and links sites 1 and 4, in one transaction that either commits completely or leaves no trace, audit rows included.
+
+Run it by hand (`ON_ERROR_STOP` stays off because the script fails on purpose):
+
+```bash
+docker compose exec -T db psql -U ebiotrack -d ebiotrack -f - < database/transactions/access_transaction.sql
+psql "$DATABASE_URL" -f database/transactions/access_transaction.sql
+psql "$TEST_DATABASE_URL" -v keep=1 -f database/transactions/access_transaction.sql   # test database only
+```
+
+Every transaction ends in `ROLLBACK`, so the default run leaves the database unchanged and can be repeated (generated ids move on, which is normal). With `-v keep=1` the Part 1 transaction ends in `COMMIT` to show durability; a second `keep=1` run stops in Part 0 because the project exists. Remove it by resetting the test database; never use `keep=1` on the development database. Isolation is the default `READ COMMITTED`, like the backend; each transaction starts with `SET LOCAL app.current_user_id = '2'`, like `withTransaction`.
+
+| Part | What it shows |
+|---|---|
+| 0 | Preflight (objects, fixtures, no leftover demo project) and the baseline counts, including the highest `audit_id` |
+| 1 | Commit path: project, 4 members (one owner), 2 sites, **7 audit rows** all with actor 2 and the project id as `entity_id`; `ROLLBACK` by default, `COMMIT` with `keep=1` |
+| 2 | Rollback A: after project, members and a site succeeded, a second owner fails with `23505` on `uq_project_members_owner`; the next statement fails with `25P02`; after `ROLLBACK` nothing remains, not even audit rows |
+| 3 | Rollback B (five transactions): viewer as owner `EB002`, seeded title `23505`, blank title `23514`, unknown site `23503` on `fk_project_sites_site_id` (the project created one statement earlier disappears too), and B5: unknown member 999 without a savepoint, `23503` on `fk_project_members_user_id`, no project or members remain |
+| 4 | `SAVEPOINT`: unknown member 999 fails (`23503`), `ROLLBACK TO SAVEPOINT`, user 3 is added; the failed insert left no audit row |
+| 5 | Two-session protocol in comments: duplicate title blocks on `uq_projects_title`, uncommitted work is invisible, `FOR SHARE` on the owner blocks `UPDATE users SET active = false` |
+
+| Property | Where shown |
+|---|---|
+| Atomicity | Part 1 (7 audit rows with 1 project), Parts 2 and 3 (nothing remains after the failure) |
+| Consistency | Part 3 (constraints and procedure rules, CONTRACT 7 codes) |
+| Isolation | Part 5 (blocking on the unique index, invisibility of uncommitted work, `FOR SHARE` on the owner) |
+| Durability | Part 1 with `keep=1` (committed project survives the session; reset removes it) |
+
+Excerpt of a default run (26 checks, 0 failed):
+
+```
+PASS: 7 audit rows (1 project, 4 members, 2 sites), all actor 2, all entity_id = the project
+ROLLBACK
+PASS: projects, members, sites and audit rows are back at the baseline
+Caught SQLSTATE 23505 duplicate key value violates unique constraint "uq_project_members_owner"
+PASS: the aborted transaction refused the next statement with 25P02
+PASS: B4 raised 23503 on fk_project_sites_site_id
+PASS: the project created before the failing statement is gone
+Summary: 26 checks passed, 0 checks failed.
+```
+
+Notes:
+
+- Part 2 adds user 5 as a second owner, not user 3 again: re-adding an existing member fails first on the primary key `pk_project_members`, so only a non-member reaches `uq_project_members_owner`.
+- B2 checks the SQLSTATE; the constraint name `uq_projects_title` is printed by the verbose error (the procedure raises it with that constraint field), not by `LAST_ERROR_MESSAGE`.
+- With `keep=1`, Parts 2 to 4 use the title `T18 onboarding demo project (after commit)` because the first title is taken by then.
+- T32 (`tests/transactions/project-create.test.js`) automates the Part 2 and 3 assertions; the Part 5 duplicate-title race becomes the project-creation case of T34.
+
+## Indexes (T19-C)
+
+`database/indexes/access_indexes.sql` (applied by hand, safe to run twice) creates two indexes. The full `EXPLAIN (ANALYZE, BUFFERS)` evidence, the variants tried and the write cost are in the comment block above each `CREATE INDEX`; the exact statements are labelled `BQ1` to `BQ6` in `tests/performance/explain-benchmarks.sql`. All figures: `ebiotrack_test`, `npm run volume:load -- --scale medium` (20 007 memberships, 500 000 audit rows), median of 5 runs after one warm-up, baseline taken before the indexes.
+
+| Index | Table | Serves | Size | Before -> after |
+|---|---|---|---|---|
+| `idx_project_members_user_id_project_id` (user_id, project_id) | `project_members` | `authorize.js` membership lookup (BQ1), Query 1 for one user (BQ2) | 632 kB | BQ1 0.429 ms (Seq Scan, 148 buffers) -> 0.006 ms (Index Only Scan, 3 buffers); BQ2 1.198 -> 0.707 ms |
+| `idx_audit_logs_entity_type_entity_id_created_at` (entity_type, entity_id, created_at) | `audit_logs` | Query 3 and `GET /api/audit?entity_type&entity_id` (BQ3, BQ4) | 24 MB | cold entity 16.216 -> 0.019 ms; hot entity 19.439 -> 3.789 ms; one month of the hot entity 17.132 -> 1.582 ms; largest trail (21 551 rows) 19.123 -> 6.704 ms |
+
+Write cost (bulk insert into a temporary copy, median of 5): `project_members` 2.274 -> 8.697 ms for 20 007 rows (+282%, about 0.3 microseconds a row); `audit_logs` 18.425 -> 93.980 ms for 100 000 rows (+410%, about 0.76 microseconds a row). `audit_logs` receives one row per audited write, so this is the cost that matters; T35 should repeat it with the triggers enabled.
+
+Findings:
+
+- **Query 1 is helped, but only a little.** The primary key `(project_id, user_id)` cannot serve a lookup by `user_id`, and the per-project subqueries (owner, member count, site count) dominate the plan, so the new index only turns the one `project_members` scan into a bitmap scan (35 buffers instead of 148). The index is justified by the `authorize.js` lookup (BQ1), which becomes index-only (`Heap Fetches: 0` after `VACUUM`).
+- **The extra `audit_id` column did not pay off.** The four-column variant (28 MB) removed the Sort node only for tiny trails and gave the same times for every other query; leading with `entity_id` also changed nothing. For large trails the planner prefers a bitmap scan plus a Sort whichever column list is used, because the rows of one entity are scattered over the whole table.
+- **Not indexed, with numbers:** `audit_logs (actor_id)` (the `actor_id` filter: 11.272 ms, 0.168 ms with a test index) and `audit_logs (created_at)`. The second one matters: the dashboard's "newest 5 audit rows" (BQ6) scans all 500 000 rows in 65.066 ms and would take 0.004 ms with an 11 MB index on `created_at`. It is reported as the recommended third index for the dashboard owner rather than added here, because T19 asks for two.
+- Results are unchanged by the indexes: the row sets of Queries 1 and 3 and the audit lookups hashed identically with and without them.

@@ -1,6 +1,6 @@
 # eBioTrack — Project Contract (T00)
 
-**Version:** 1.2 (approved, G0 passed; 1.1 adds the not-blank CHECKs to 4.3; 1.2 names two response fields in section 10)
+**Version:** 1.3 (approved, G0 passed; 1.1 adds the not-blank CHECKs to 4.3; 1.2 names two response fields in section 10; 1.3 links a correction run to the run it supersedes and settles all-`fail` approval)
 
 This is the output of task **T00** in [WORKFLOW.md](WORKFLOW.md). It fixes the names, types, values, and shapes that all four members build against, so the database, API, frontend, tests, and docs line up without anyone guessing.
 
@@ -130,6 +130,11 @@ Enforced by triggers; any other transition is rejected (error `EB001`).
 | `superseded` | *(none)* |
 
 Approved results are never edited in place. A correction is a **new** analysis run; the old one becomes `superseded`.
+
+- The new run names the run it corrects in `analysis_runs.supersedes_analysis_id` (section 4.4). It is set when the correction is created and is NULL for ordinary runs.
+- The old run becomes `superseded` when the **correction is approved**, in the same transaction as `approve_analysis()`, and only then; a correction that is still `draft`, `imported` or `rejected` leaves the old approved run untouched.
+- The referenced run must be `approved` at the time the correction is approved, otherwise `approve_analysis()` raises `EB001`. A run can be superseded by at most one correction.
+- An analysis whose detections all have `qc_flag = 'fail'` may be approved: the approver sees the `pass`/`warn`/`fail` counts, and approved-only views and analytics count only `pass` rows anyway. The only count rule is that an analysis needs at least one detection.
 
 **`sequencing_runs.status`**: `planned` → `running` → `completed` | `failed`; `planned` → `failed`.
 
@@ -303,9 +308,10 @@ UNIQUE (`sample_id`, `attempt_number`) (re-extractions increment the attempt).
 | `imported_by` | bigint | **(090)** →users |
 | `approved_by` | bigint | **(090)** →users |
 | `approved_at` | timestamptz | |
+| `supersedes_analysis_id` | bigint | FK→analysis_runs (self) NULL, UNIQUE; the approved run this one corrects |
 | `created_at` | timestamptz | NN, default `now()` |
 
-`CHECK (status <> 'approved' OR (approved_by IS NOT NULL AND approved_at IS NOT NULL))`.
+`CHECK (status <> 'approved' OR (approved_by IS NOT NULL AND approved_at IS NOT NULL))`. `CHECK (supersedes_analysis_id IS NULL OR supersedes_analysis_id <> analysis_id)`.
 
 **`taxa`**: `taxon_id` PK; `scientific_name` text NN; `rank` taxon_rank NN; `parent_taxon_id` FK→taxa (self) NULL; `external_id` text (for example an NCBI taxon ID); UNIQUE (`scientific_name`, `rank`).
 
@@ -425,7 +431,7 @@ Attached as `AFTER INSERT OR UPDATE OR DELETE` row triggers. The primary key col
 | B | `create_sequencing_run(p_lab_id bigint, p_platform text, p_run_date date, p_extraction_ids bigint[], p_actor_id bigint)` | `run_id` bigint | Creates a `planned` run and one library per extraction; locks extractions (`FOR UPDATE`); rejects extractions that did not pass QC or are already in another `planned`/`running` run |
 | B | `assign_extraction_to_run(p_run_id bigint, p_extraction_id bigint, p_actor_id bigint)` | `library_id` bigint | Adds one extraction to an existing `planned` run with the same checks |
 | A | `import_detections(p_analysis_id bigint, p_rows jsonb, p_actor_id bigint)` | inserted row count integer | Inserts all rows in one transaction; any invalid row raises an error and **nothing** is inserted; moves the analysis to `imported`. Row shape in section 12 |
-| A | `approve_analysis(p_analysis_id bigint, p_actor_id bigint)` | void | Locks the analysis (`FOR UPDATE`), requires status `imported`, requires `p_actor_id` ≠ importer (D17), sets `approved`, `approved_by`, `approved_at`, writes an audit entry |
+| A | `approve_analysis(p_analysis_id bigint, p_actor_id bigint)` | void | Locks the analysis (`FOR UPDATE`), requires status `imported`, requires `p_actor_id` ≠ importer (D17), sets `approved`, `approved_by`, `approved_at`, writes an audit entry; if `supersedes_analysis_id` is set, moves that approved run to `superseded` in the same transaction (section 3) |
 | A | `reject_analysis(p_analysis_id bigint, p_actor_id bigint, p_reason text)` | void | Moves a `draft` or `imported` analysis to `rejected` and records the reason in the audit entry |
 
 Status changes for samples, extractions, and runs that do not need a procedure are plain `UPDATE`s; the triggers enforce the allowed transitions.
@@ -735,6 +741,7 @@ The backend resolves `scientific_name` and `taxon_rank` to `taxon_id` before cal
 | 0.1 | First draft | — |
 | 1.1 | Section 4.3: document the four not-blank CHECKs added in `030` (`laboratories.name`, `sequencing_runs.run_code` / `platform`, `sequencing_libraries.library_code`). Affects T04, T07, T40-B. | Arvind |
 | 1.2 | Section 10: name the response fields the frontend already types. `GET /api/analyses/:id` returns `assignment_counts: { pass, warn, fail }`; `GET /api/dashboard/summary` `recent_activity[]` entries are `audit_logs` rows (up to 5, newest first, empty for roles that cannot read the audit log, same shape as `GET /api/audit`). Affects T20 and T23 (the audit, analysis and dashboard routes) and T24 to T29 (frontend types). | Arvind |
+| 1.3 | Section 3 and 4.4: add `analysis_runs.supersedes_analysis_id` (self FK, NULL, UNIQUE, not its own id) and the rule that approving a correction moves the run it supersedes to `superseded` in the same transaction; state that an analysis whose detections are all `fail` may be approved. Section 7: `approve_analysis()` description. Affects T05 (migration `040`, a follow-up migration), T16-A (`approve_analysis()`), T17-A (status trigger), T23 (analysis routes), T07 (ER diagram), T40-A. | Arvind |
 
 ---
 
