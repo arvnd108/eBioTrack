@@ -42,6 +42,7 @@
 --   1  Commit path: create a draft analysis, import 14 detections as user 5 (analyst), approve
 --      as user 2 (principal investigator). The acting user, the audit rows and the effect on
 --      v_approved_detections (only the 10 qc "pass" rows count).
+--      Part 1b repeats the import on the seeded draft analysis 4 (always rolled back).
 --   2  Rollback A: a bad row undoes the whole import (a draft created in the transaction, and
 --      then the seeded draft analysis 4), and 25P02 after the error. Also: work done by an
 --      earlier statement of the same transaction disappears when a later one fails.
@@ -306,6 +307,29 @@ SELECT site_id, year, observed_taxa FROM v_site_richness WHERE site_id = 1 ORDER
     :assert_baseline \gset
     \echo :line
 \endif
+
+-- Part 1 on the SEEDED draft analysis 4 (the literal issue scenario): always rolled back, even
+-- with keep=1, because committing it would change the fixtures for everybody.
+\echo
+\echo 1b: the same valid file imported into the seeded draft analysis 4 (rolled back afterwards)
+BEGIN;
+SET LOCAL app.current_user_id = '5';
+SELECT count(*) AS detections_before FROM taxon_assignments WHERE analysis_id = 4 \gset
+SELECT import_detections(4, :'valid_batch'::jsonb, 5) AS rows_imported \gset
+\echo Evidence: inserted count and status of analysis 4 (before: :detections_before detections, draft)
+SELECT :rows_imported AS inserted, ar.status, ar.imported_by,
+       (SELECT count(*) FROM taxon_assignments WHERE analysis_id = 4) AS detections_after
+FROM analysis_runs ar WHERE ar.analysis_id = 4;
+\set label '1b import into analysis 4: 14 rows inserted (0 before), status draft to imported, importer 5'
+SELECT :detections_before = 0 AND :rows_imported = 14 AND ar.status = 'imported' AND ar.imported_by = 5
+       AND (SELECT count(*) FROM taxon_assignments WHERE analysis_id = 4) = 14 AS ok
+FROM analysis_runs ar WHERE ar.analysis_id = 4 \gset
+:check \gset
+\echo :line
+ROLLBACK;
+\set label '1b rolled back: analysis 4 is a draft with 0 detections again, baseline restored'
+:assert_baseline \gset
+\echo :line
 
 \echo
 \echo ============================================================================
