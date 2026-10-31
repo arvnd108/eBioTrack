@@ -5,7 +5,10 @@ import { pool } from './db/pool.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { originCheck } from './middleware/originCheck.js';
 import { sessionMiddleware } from './middleware/session.js';
+import auditRoutes from './routes/audit.routes.js';
 import authRoutes from './routes/auth.routes.js';
+import projectsRoutes from './routes/projects.routes.js';
+import { rolesRouter, usersRouter } from './routes/users.routes.js';
 
 export const app = express();
 app.disable('x-powered-by');
@@ -28,6 +31,10 @@ app.get('/api/health', async (_req, res) => {
 app.use('/api', sessionMiddleware, originCheck);
 
 app.use('/api/auth', authRoutes);
+app.use('/api/users', usersRouter);
+app.use('/api/roles', rolesRouter);
+app.use('/api/projects', projectsRoutes);
+app.use('/api/audit', auditRoutes);
 
 // Catch-all 404 handler for unmatched routes
 app.use(notFoundHandler);
