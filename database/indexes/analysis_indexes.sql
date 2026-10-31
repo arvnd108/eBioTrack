@@ -1,2 +1,152 @@
 -- Owner: A (Backend)
 -- Purpose: 2 justified indexes: Analysis, Taxonomy & Analytics
+--
+-- T19-A. Applied by hand (the migration runner does not run database/indexes/) and safe to run
+-- more than once (CREATE INDEX IF NOT EXISTS; the second run only prints NOTICEs):
+--
+--   psql "$DATABASE_URL" -f database/indexes/analysis_indexes.sql
+--
+-- When benchmarking, the UNINDEXED BASELINE MUST EXIST first: take the "before" plans, then
+-- apply this file, run VACUUM (ANALYZE) taxon_assignments, and take the "after" plans. A demo or
+-- CI run must use the volume-loaded TEST database; the seed is too small for the planner to need
+-- any of these.
+--
+-- DEVIATION FROM THE PLAN'S WORDING. ROLE_A_BACKEND names taxon_assignments(taxon_id) and
+-- taxon_assignments(analysis_id). The second is REDUNDANT and is not created: 040_analysis_taxonomy.sql
+-- declares uq_taxon_assignments_analysis_library_taxon (analysis_id, library_id, taxon_id), and
+-- analysis_id is its leading column. BQ6 (all assignments of one analysis) and BQ8 (count for one
+-- analysis) already plan as an Index Scan / Index Only Scan on that constraint index, 0.05 ms and
+-- 7 to 12 buffers on a 500 000 row table, before any new index. A plain (analysis_id) index would
+-- be a second copy of the same ordering (3.6 MB) that slows every write. Proof: a temporary
+-- (analysis_id) index WAS built and measured, then dropped. The planner does pick it, but it adds
+-- almost nothing: BQ6 0.068 -> 0.052 ms (13 -> 9 buffers), BQ8 0.050 -> 0.037 ms (8 -> 4 buffers),
+-- both already sub-0.1 ms on the constraint index, so it is not worth a copy that slows every
+-- write. The replacement is
+-- the best-evidenced candidate from the measurements below: taxon_assignments(library_id).
+-- Index 1 is also a composite, not the plain (taxon_id) the plan expected (see "Variants tried").
+--
+-- Seed scale. On the seed database (43 assignments) the planner uses a Seq Scan for taxon and
+-- library lookups even with both indexes present: the table fits in one page. The plans below
+-- only show on the volume-loaded TEST database, which is what the demo must use. The runner does
+-- not apply database/indexes/, so after `db:reset` the indexes are gone; apply this file again
+-- (see above) in the demo or CI setup that needs them. Nothing in the application depends on them
+-- for correctness.
+--
+-- Evidence. Test database ebiotrack_test, `npm run volume:load -- --scale medium` (from tests/):
+-- taxon_assignments 500 043 rows (40 MB), analysis_runs about 1 000, samples 100 017,
+-- sequencing_libraries 100 016, taxa 2 015. The generator creates every volume analysis as
+-- `imported`, and all of this slice's queries read approved runs only, so for the measurement 200
+-- of the 1 000 volume runs (analysis_id % 5 = 0) were set to `approved` (audit trigger off for
+-- that one UPDATE) and set back to `imported` before volume:clean; v_approved_detections then has
+-- 19 959 rows. VACUUM (ANALYZE) was run on the seven tables before the baseline and again before
+-- the "after". Every figure is EXPLAIN (ANALYZE, BUFFERS) output from one session with
+-- max_parallel_workers_per_gather = 0, jit = off and plan_cache_mode = force_custom_plan; one
+-- warm-up run, then the MEDIAN of 5. No enable_* setting was changed. All data was in shared
+-- buffers, so the Buffers line is the fairer comparison of work. The measured statements (ids
+-- looked up from the data; see tests/performance/explain-benchmarks.sql, section T19-A):
+--   BQ1a SELECT ... FROM taxon_assignments WHERE taxon_id = <hot>        (13 432 rows)
+--   BQ1b same, <cold> taxon                                              (3 rows)
+--   BQ1c same as BQ1a plus AND qc_flag = 'pass'                          (passing detections)
+--   BQ2a EXECUTE analysis_taxon_detection_history(<genus, 2 003 taxa>, NULL, NULL, NULL)
+--   BQ2b EXECUTE analysis_taxon_detection_history(<hot taxon>, NULL, NULL, NULL)
+--   BQ3  EXECUTE analysis_taxa_at_site(<busy site>, NULL, NULL, NULL)
+--   BQ4a EXECUTE analysis_richness_by_site_year(NULL, NULL, NULL, NULL)
+--   BQ4b same for <busy site>
+--   BQ5a SELECT * FROM v_approved_detections WHERE taxon_id = <hot>
+--   BQ5b SELECT * FROM v_approved_detections WHERE site_id = <busy site>
+--   BQ6  SELECT ... FROM taxon_assignments WHERE analysis_id = <500-row analysis>   (redundancy check)
+--   BQ7a SELECT ... FROM taxon_assignments WHERE library_id = <hot library>
+--   BQ7b approved + pass counts per taxon over analysis_runs JOIN taxon_assignments (not helped)
+--   BQ8  SELECT count(*) ... WHERE analysis_id = <500-row analysis>                  (redundancy check)
+--
+-- Indexes that already exist because of constraints (040_analysis_taxonomy.sql, 096):
+--   pk_taxon_assignments (assignment_id); uq_taxon_assignments_analysis_library_taxon
+--   (analysis_id, library_id, taxon_id) -> analysis_id lookups, library_id second and taxon_id
+--   third, so a library_id-only or taxon_id-only lookup cannot use it (leading-column rule);
+--   pk_analysis_runs, pk_taxa, uq_taxa_* and the other tables' keys. taxon_assignments.taxon_id
+--   and .library_id had no index of their own.
+
+-- --------------------------------------------------------------------------------------------
+-- 1. idx_taxon_assignments_taxon_id_qc_flag
+-- --------------------------------------------------------------------------------------------
+-- Serves: every "where was this taxon detected" read: analysis_taxon_detection_history (BQ2),
+--   the correlated lookup of other detections of a taxon inside analysis_taxa_at_site (BQ3),
+--   v_approved_detections filtered by taxon (BQ5a), the taxon detail routes, and the foreign-key
+--   check on taxa. The qc_flag second column serves the `qc_flag = 'pass'` filter that every
+--   approved-only query applies, from the index instead of the heap.
+-- BQ1a/BQ1b/BQ1c, hot taxon 13 432 rows (2.7%), cold taxon 3 rows:
+--   before: Seq Scan on taxon_assignments (500 043 rows)
+--           BQ1a 13.2 ms, BQ1b 11.5 ms, BQ1c 12.7 ms; Buffers: shared hit=5156 each (scan only)
+--   after:  Bitmap Index Scan on idx_taxon_assignments_taxon_id_qc_flag
+--           BQ1a 2.8 ms (4 864 buffers), BQ1b 0.027 ms (64 buffers), BQ1c 0.78 ms (2 029 buffers)
+--   about 4.7x, 430x and 16x faster; buffers 1.1x, 80x and 2.5x fewer. The hot case is limited by
+--   fetching 13 432 scattered heap rows, not by the index.
+-- BQ3 (analysis_taxa_at_site, busy site): 86.4 -> 8.2 ms with both indexes (10.5x; 17 996 -> 7 543
+--   buffers); with this index alone 86.4 -> 35.1 ms (the correlated taxon subquery now uses it).
+-- BQ5a (v_approved_detections, hot taxon): 3.17 ms -> 2.51 ms (9 876 -> 8 247 buffers), i.e. a
+--   modest gain; the plain (taxon_id) variant made it SLOWER (7.3 ms), see below.
+-- Not helped: BQ2a/BQ2b (recursive subtree of a genus, 55 to 75 ms before and after): the plan
+--   is dominated by hash-joining all 500 000 assignments to libraries, samples and events for the
+--   20% approved runs, so no per-taxon index changes it; BQ4a/BQ4b aggregate across taxa;
+--   BQ6/BQ8 use the unique index; BQ7b scans the table for approved+pass counts.
+-- Variants tried (hot/cold taxon, same method):
+--   (taxon_id)                           3 488 kB  BQ1a 4.2, BQ1b 0.030, BQ1c 5.5, BQ5a 7.3 ms
+--   (taxon_id, qc_flag)  CHOSEN          3 592 kB  BQ1a 2.8, BQ1b 0.027, BQ1c 0.78, BQ5a 2.5 ms
+--   (taxon_id) WHERE qc_flag = 'pass'      736 kB  BQ1a 12.4 and BQ1b 11.5 (not usable: Seq Scan),
+--                                          BQ1c 0.73, BQ5a 2.6 ms; rejected, serves only 'pass'
+--   (taxon_id) INCLUDE (analysis_id, library_id, read_count, confidence, qc_flag)
+--                                           28 MB  BQ1a 4.0, BQ1c 3.1, BQ5a 5.1 ms; rejected, no
+--                                          index-only scans (visibility map) for 8x the size
+--   The composite costs 104 kB more than the plain index and is better on every statement.
+-- Trade-off: 3 592 kB (9% of the 40 MB table). A bulk INSERT of ~100 000 rows into a temporary
+--   copy of the table took about 73 ms with only the unique index and 142 ms with this index and
+--   idx_taxon_assignments_library_id together (+95% for the two). In the real write path,
+--   import_detections() with 10 000 rows (100 libraries x 100 taxa, rolled back; 6 runs each) took
+--   231 to 239 ms without the new indexes and 224 to 233 ms with both (a re-run without them,
+--   after dropping, gave 209 to 214 ms): the difference is within run-to-run drift because the
+--   function's validation and joins dominate, not index maintenance. Approval (approve_analysis)
+--   inserts nothing into taxon_assignments, so it pays no index cost.
+CREATE INDEX IF NOT EXISTS idx_taxon_assignments_taxon_id_qc_flag ON taxon_assignments (taxon_id, qc_flag);
+
+-- --------------------------------------------------------------------------------------------
+-- 2. idx_taxon_assignments_library_id   (replaces the redundant planned (analysis_id) index)
+-- --------------------------------------------------------------------------------------------
+-- Serves: the library-to-assignments joins of analysis_taxa_at_site, analysis_richness_by_site_year
+--   and v_approved_detections when they are restricted to one site or project (BQ3, BQ4b, BQ5b),
+--   the "detections of a library" lookup (BQ7a), and the foreign-key check when a library row is
+--   changed or deleted. library_id is only the SECOND column of the unique constraint index, so
+--   that index cannot answer a library_id lookup.
+-- BQ7a, hot library with 5 of 500 043 assignments:
+--   before: Seq Scan on taxon_assignments            11.4 ms   Buffers: shared hit=5156
+--   after:  Index Scan using idx_taxon_assignments_library_id  0.005 ms  Buffers: shared hit=4
+--   about 2 000x faster, 1 300x fewer buffers.
+-- Site-restricted reads (with idx 1 already present):
+--   BQ3  analysis_taxa_at_site(busy site)      35.1 -> 17.7 ms with this index added
+--        (86.4 ms and 17 996 buffers with neither; 8.2 ms and 7 543 buffers with both final indexes)
+--   BQ4b richness for one site                 32.9 -> 14.0 ms   (10 882 -> 5 928 buffers)
+--   BQ5b v_approved_detections, one site       26.2 -> 7.8 ms    (9 337 -> 4 383 buffers)
+--   the planner now starts from the site's few libraries and fetches their assignments instead
+--   of scanning all 500 000 rows.
+-- Not helped: BQ4a (richness for all sites, 127 ms before and after: must read every approved
+--   detection), BQ2a/BQ2b, BQ7b, BQ6/BQ8.
+-- Candidates considered and not built (by plan inspection, not by building them):
+--   analysis_runs(status) / partial WHERE status = 'approved' (about 1 000 rows: the Seq Scan on
+--   analysis_runs takes 0.06 ms in BQ2a); taxa(parent_taxon_id) (2 015 rows, the recursive CTE takes
+--   about 0.3 ms); a plain (analysis_id) index (redundant). Measured and rejected: see index 1.
+-- Trade-off: 5 720 kB (14% of the table); see the combined bulk-insert figure above.
+CREATE INDEX IF NOT EXISTS idx_taxon_assignments_library_id ON taxon_assignments (library_id);
+
+-- --------------------------------------------------------------------------------------------
+-- Correctness. md5(string_agg(row::text ORDER BY row::text)) over v_approved_detections and
+-- v_site_richness is identical before and after (298cf893292489b2f7d9578c5eed73f2 and
+-- 34d6561e67de0bde984ede3736853b57); the row counts of the three queries are unchanged.
+--
+-- Deliberately NOT indexed:
+--   taxon_assignments(analysis_id)   redundant, see the header (leading column of the unique index)
+--   taxon_assignments(qc_flag) alone two values, low selectivity, no query filters on it alone
+--   analysis_runs(status)            about 1 000 rows; sequential scan is faster than any index
+--   taxa(parent_taxon_id)            2 015 rows
+--
+-- To remove (e.g. to retake the baseline):
+--   DROP INDEX IF EXISTS idx_taxon_assignments_taxon_id_qc_flag;
+--   DROP INDEX IF EXISTS idx_taxon_assignments_library_id;

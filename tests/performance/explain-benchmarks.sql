@@ -153,3 +153,70 @@ EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM samples WHERE event_id = :hot_event;
 EXPLAIN (ANALYZE, BUFFERS) EXECUTE field_site_sample_counts(NULL);
 \echo FQ5d (v_site_sample_summary, one site; not indexed)
 EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM v_site_sample_summary WHERE site_id = :hot_site;
+
+-- ============================================================================================
+-- T19-A: Analysis, Taxonomy & Analytics (results: database/indexes/analysis_indexes.sql)
+-- ============================================================================================
+-- Same order as above: take the "before" plans on the unindexed database FIRST, apply
+-- database/indexes/analysis_indexes.sql, run VACUUM (ANALYZE) taxon_assignments (outside a
+-- transaction), and run this section again. For a figure: one warm-up, then the median of 5.
+-- The volume generator creates every analysis as `imported`, but all of these queries read
+-- approved runs only, so before measuring, approve some (test database only), e.g.
+--   ALTER TABLE analysis_runs DISABLE TRIGGER trg_analysis_runs_audit;
+--   UPDATE analysis_runs SET status = 'approved', approved_by = 2, approved_at = now()
+--    WHERE analysis_id >= 1000000 AND analysis_id % 5 = 0;
+--   ALTER TABLE analysis_runs ENABLE TRIGGER trg_analysis_runs_audit;
+-- and undo it before `npm run volume:clean` (set status back to 'imported', approved_by and
+-- approved_at to NULL, with the immutability triggers disabled for that statement).
+
+SELECT count(*) > 0 AS ok FROM v_approved_detections \gset
+\if :ok
+\else
+    \echo STOP T19-A: no approved detections; approve some volume analyses first (see above).
+    \quit
+\endif
+
+SELECT taxon_id AS hot_taxon FROM taxon_assignments GROUP BY taxon_id ORDER BY count(*) DESC, taxon_id LIMIT 1 \gset
+SELECT taxon_id AS cold_taxon FROM taxon_assignments WHERE taxon_id >= 1000000
+GROUP BY taxon_id ORDER BY count(*), taxon_id LIMIT 1 \gset
+SELECT parent_taxon_id AS big_genus FROM taxa WHERE parent_taxon_id IS NOT NULL
+GROUP BY parent_taxon_id ORDER BY count(*) DESC, parent_taxon_id LIMIT 1 \gset
+SELECT site_id AS busy_site FROM v_approved_detections GROUP BY site_id ORDER BY count(*) DESC, site_id LIMIT 1 \gset
+SELECT analysis_id AS big_analysis FROM taxon_assignments GROUP BY analysis_id ORDER BY count(*) DESC, analysis_id LIMIT 1 \gset
+SELECT library_id AS hot_library FROM taxon_assignments GROUP BY library_id ORDER BY count(*) DESC, library_id LIMIT 1 \gset
+SELECT taxon_id AS hot_approved_taxon FROM v_approved_detections GROUP BY taxon_id ORDER BY count(*) DESC, taxon_id LIMIT 1 \gset
+\echo hot taxon :hot_taxon, cold taxon :cold_taxon, genus :big_genus, busy site :busy_site, big analysis :big_analysis, hot library :hot_library
+
+\o /dev/null
+\i ../database/queries/analysis_queries.sql
+\o
+
+\echo BQ1a (taxon lookup, hot taxon)
+EXPLAIN (ANALYZE, BUFFERS) SELECT assignment_id, analysis_id, library_id, read_count, confidence, qc_flag FROM taxon_assignments WHERE taxon_id = :hot_taxon;
+\echo BQ1b (taxon lookup, cold taxon)
+EXPLAIN (ANALYZE, BUFFERS) SELECT assignment_id, analysis_id, library_id, read_count, confidence, qc_flag FROM taxon_assignments WHERE taxon_id = :cold_taxon;
+\echo BQ1c (hot taxon, passing detections only)
+EXPLAIN (ANALYZE, BUFFERS) SELECT assignment_id, analysis_id, library_id, read_count, confidence, qc_flag FROM taxon_assignments WHERE taxon_id = :hot_taxon AND qc_flag = 'pass';
+\echo BQ2a (taxon detection history, genus subtree)
+EXPLAIN (ANALYZE, BUFFERS) EXECUTE analysis_taxon_detection_history(:big_genus, NULL, NULL, NULL);
+\echo BQ2b (taxon detection history, hot taxon)
+EXPLAIN (ANALYZE, BUFFERS) EXECUTE analysis_taxon_detection_history(:hot_approved_taxon, NULL, NULL, NULL);
+\echo BQ3 (taxa at a site)
+EXPLAIN (ANALYZE, BUFFERS) EXECUTE analysis_taxa_at_site(:busy_site, NULL, NULL, NULL);
+\echo BQ4a (richness, all sites)
+EXPLAIN (ANALYZE, BUFFERS) EXECUTE analysis_richness_by_site_year(NULL, NULL, NULL, NULL);
+\echo BQ4b (richness, one site)
+EXPLAIN (ANALYZE, BUFFERS) EXECUTE analysis_richness_by_site_year(NULL, :busy_site, NULL, NULL);
+\echo BQ5a (v_approved_detections, hot taxon)
+EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM v_approved_detections WHERE taxon_id = :hot_approved_taxon;
+\echo BQ5b (v_approved_detections, one site)
+EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM v_approved_detections WHERE site_id = :busy_site;
+\echo BQ6 (redundancy check: analysis_id lookup must use the unique constraint index)
+EXPLAIN (ANALYZE, BUFFERS) SELECT assignment_id, library_id, taxon_id, read_count, qc_flag FROM taxon_assignments WHERE analysis_id = :big_analysis;
+\echo BQ7a (library lookup)
+EXPLAIN (ANALYZE, BUFFERS) SELECT assignment_id, analysis_id, taxon_id, read_count, qc_flag FROM taxon_assignments WHERE library_id = :hot_library;
+\echo BQ7b (approved and pass counts per taxon; not helped)
+EXPLAIN (ANALYZE, BUFFERS) SELECT ta.taxon_id, count(*) FROM taxon_assignments ta JOIN analysis_runs ar USING (analysis_id)
+WHERE ar.status = 'approved' AND ta.qc_flag = 'pass' GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 5;
+\echo BQ8 (redundancy check: count for one analysis)
+EXPLAIN (ANALYZE, BUFFERS) SELECT count(*) FROM taxon_assignments WHERE analysis_id = :big_analysis;
