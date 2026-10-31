@@ -17,9 +17,20 @@
 -- analysis_id is its leading column. BQ6 (all assignments of one analysis) and BQ8 (count for one
 -- analysis) already plan as an Index Scan / Index Only Scan on that constraint index, 0.05 ms and
 -- 7 to 12 buffers on a 500 000 row table, before any new index. A plain (analysis_id) index would
--- be a second copy of the same ordering (about 3.5 MB) that slows every write. The replacement is
+-- be a second copy of the same ordering (3.6 MB) that slows every write. Proof: a temporary
+-- (analysis_id) index WAS built and measured, then dropped. The planner does pick it, but it adds
+-- almost nothing: BQ6 0.068 -> 0.052 ms (13 -> 9 buffers), BQ8 0.050 -> 0.037 ms (8 -> 4 buffers),
+-- both already sub-0.1 ms on the constraint index, so it is not worth a copy that slows every
+-- write. The replacement is
 -- the best-evidenced candidate from the measurements below: taxon_assignments(library_id).
 -- Index 1 is also a composite, not the plain (taxon_id) the plan expected (see "Variants tried").
+--
+-- Seed scale. On the seed database (43 assignments) the planner uses a Seq Scan for taxon and
+-- library lookups even with both indexes present: the table fits in one page. The plans below
+-- only show on the volume-loaded TEST database, which is what the demo must use. The runner does
+-- not apply database/indexes/, so after `db:reset` the indexes are gone; apply this file again
+-- (see above) in the demo or CI setup that needs them. Nothing in the application depends on them
+-- for correctness.
 --
 -- Evidence. Test database ebiotrack_test, `npm run volume:load -- --scale medium` (from tests/):
 -- taxon_assignments 500 043 rows (40 MB), analysis_runs about 1 000, samples 100 017,
@@ -89,8 +100,12 @@
 --   The composite costs 104 kB more than the plain index and is better on every statement.
 -- Trade-off: 3 592 kB (9% of the 40 MB table). A bulk INSERT of ~100 000 rows into a temporary
 --   copy of the table took about 73 ms with only the unique index and 142 ms with this index and
---   idx_taxon_assignments_library_id together (+95% for the two). Assignments are written in
---   bulk per analysis run by import_detections(), once per run, so this cost is paid rarely.
+--   idx_taxon_assignments_library_id together (+95% for the two). In the real write path,
+--   import_detections() with 10 000 rows (100 libraries x 100 taxa, rolled back; 6 runs each) took
+--   231 to 239 ms without the new indexes and 224 to 233 ms with both (a re-run without them,
+--   after dropping, gave 209 to 214 ms): the difference is within run-to-run drift because the
+--   function's validation and joins dominate, not index maintenance. Approval (approve_analysis)
+--   inserts nothing into taxon_assignments, so it pays no index cost.
 CREATE INDEX IF NOT EXISTS idx_taxon_assignments_taxon_id_qc_flag ON taxon_assignments (taxon_id, qc_flag);
 
 -- --------------------------------------------------------------------------------------------
