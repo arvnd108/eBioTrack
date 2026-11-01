@@ -530,6 +530,65 @@ describe('T20 write rules match the real API (values checked against backend PR 
     });
   });
 
+  it('searches samples by code prefix only, case-insensitive', async () => {
+    await as('viewer');
+    const prefix = await api.get<{ sample_code: string }[]>('/samples', { q: 'eb-2026031' });
+    expect(prefix.data).toHaveLength(6);
+    expect((await api.get<unknown[]>('/samples', { q: '0001' })).data).toEqual([]);
+  });
+
+  it('refuses writes from a project viewer whose global role could write (403)', async () => {
+    await as('principal_investigator');
+    await api.delete('/projects/2/members/3');
+    await api.post('/projects/2/members', { user_id: 3, project_role: 'viewer' });
+    await as('field_researcher');
+    const forbidden = { status: 403, code: 'forbidden' };
+    const at = { project_id: 2, site_id: 4, collected_at: '2026-04-05T10:00:00Z' };
+    expect(await failure(api.post('/events', at))).toMatchObject(forbidden);
+    expect(await failure(api.post('/samples', { event_id: 7, sample_type_id: 1 }))).toMatchObject(
+      forbidden,
+    );
+    expect(
+      await failure(api.patch('/samples/13/status', { new_status: 'discarded' })),
+    ).toMatchObject(forbidden);
+    // Reading stays open.
+    await expect(api.get('/samples/13')).resolves.toBeDefined();
+  });
+
+  it('follows the status transitions of CONTRACT section 3 and records each change', async () => {
+    await as('field_researcher');
+    const created = await api.post<{ sample_id: number; sample_code: string }>('/samples', {
+      event_id: 1,
+      sample_type_id: 3,
+      depth_m: 0,
+    });
+    expect(created.data.sample_code).toBe('EB-20250515-0001-004');
+    const id = created.data.sample_id;
+    expect(
+      await failure(api.patch(`/samples/${id}/status`, { new_status: 'analyzed' })),
+    ).toMatchObject({
+      status: 409,
+      message: 'Invalid sample status transition: collected -> analyzed',
+    });
+    expect(
+      await failure(api.patch(`/samples/${id}/status`, { new_status: 'collected' })),
+    ).toMatchObject({
+      status: 409,
+      message: 'Sample is already collected',
+    });
+    await api.patch(`/samples/${id}/status`, {
+      new_status: 'stored',
+      note: 'not stored by the API yet',
+    });
+    const detail = await api.get<{ status_history: { new_status: string; note: string | null }[] }>(
+      `/samples/${id}`,
+    );
+    expect(detail.data.status_history.map((h) => [h.new_status, h.note])).toEqual([
+      ['collected', null],
+      ['stored', null],
+    ]);
+  });
+
   it('sorts lists through ?sort and rejects fields the API does not allow', async () => {
     await as('administrator');
     const users = await api.get<User[]>('/users', { sort: '-full_name', limit: 3 });

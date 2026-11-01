@@ -21,6 +21,7 @@ import type {
   Region,
   Role,
   Sample,
+  SampleStatus,
   SampleStatusChange,
   SampleType,
   SequencingLibrary,
@@ -205,7 +206,8 @@ export const mockEvents: CollectionEvent[] = [
 
 /** Sample code format: EB-<YYYYMMDD>-<event, 4 digits>-<sequence, 3 digits> (section 4.2). */
 export function sampleCode(event: CollectionEvent, sequence: number): string {
-  const day = event.collected_at.slice(0, 10).replace(/-/g, '');
+  // register_sample(): the UTC day of collected_at (which may carry any offset).
+  const day = new Date(event.collected_at).toISOString().slice(0, 10).replace(/-/g, '');
   return `EB-${day}-${String(event.event_id).padStart(4, '0')}-${String(sequence).padStart(3, '0')}`;
 }
 
@@ -278,49 +280,114 @@ export const mockMeasurements: EnvironmentalMeasurement[] = MEASUREMENTS.flatMap
   })),
 );
 
-/** Status history consistent with each sample's current status. */
-export function statusHistoryFor(sample: Sample): SampleStatusChange[] {
-  const t = sample.created_at;
-  if (sample.status === 'failed') {
-    return [
-      {
-        old_status: null,
-        new_status: 'collected',
-        changed_at: t,
-        changed_by: 3,
-        note: 'Initial field collection',
-      },
-      {
-        old_status: 'collected',
-        new_status: 'stored',
-        changed_at: t,
-        changed_by: 3,
-        note: 'Stored at 4C in field depot',
-      },
-      {
-        old_status: 'stored',
-        new_status: 'failed',
-        changed_at: t,
-        changed_by: 4,
-        note: 'Extraction failed QC',
-      },
-    ];
-  }
-  const steps: [SampleStatusChange['new_status'], number, string][] = [
-    ['collected', 3, 'Initial field collection'],
-    ['stored', 3, 'Stored at 4C in field depot'],
-    ['extracted', 4, 'DNA extraction completed'],
-    ['sequenced', 4, 'Sequencing run completed'],
-    ['analyzed', 5, 'Taxonomic assignment approved'],
-  ];
-  return steps.map(([new_status, changed_by, note], i) => ({
-    old_status: i === 0 ? null : steps[i - 1][0],
-    new_status,
-    changed_at: t,
-    changed_by,
-    note,
-  }));
+/** A status-history row with its sample (database/seeds/020_seed_field.sql, history 1-84). */
+export interface StatusHistoryRow extends SampleStatusChange {
+  sample_id: number;
 }
+
+const h = (
+  sample_id: number,
+  old_status: SampleStatus | null,
+  new_status: SampleStatus,
+  changed_at: string,
+  changed_by: number,
+  note: string,
+): StatusHistoryRow => ({ sample_id, old_status, new_status, changed_at, changed_by, note });
+
+/** sample_status_history as seeded, ordered by sample and time (copied from the dev database). */
+export const mockStatusHistory: StatusHistoryRow[] = [
+  h(1, null, 'collected', '2025-05-15T08:30:00Z', 3, 'Initial field collection'),
+  h(1, 'collected', 'stored', '2025-05-15T11:00:00Z', 3, 'Stored at 4C in field depot'),
+  h(1, 'stored', 'extracted', '2025-05-20T14:00:00Z', 4, 'DNA extraction completed'),
+  h(1, 'extracted', 'sequenced', '2026-03-25T14:00:00Z', 4, 'Sequencing run completed'),
+  h(1, 'sequenced', 'analyzed', '2026-04-02T11:30:00Z', 5, 'Taxonomic assignment approved'),
+  h(2, null, 'collected', '2025-05-15T08:30:00Z', 3, 'Initial field collection'),
+  h(2, 'collected', 'stored', '2025-05-15T11:00:00Z', 3, 'Stored at 4C in field depot'),
+  h(2, 'stored', 'extracted', '2025-05-20T14:00:00Z', 4, 'DNA extraction completed'),
+  h(2, 'extracted', 'sequenced', '2026-03-25T14:00:00Z', 4, 'Sequencing run completed'),
+  h(2, 'sequenced', 'analyzed', '2026-04-02T11:30:00Z', 5, 'Taxonomic assignment approved'),
+  h(3, null, 'collected', '2025-05-18T09:15:00Z', 3, 'Initial field collection'),
+  h(3, 'collected', 'stored', '2025-05-18T12:00:00Z', 3, 'Stored at 4C in field depot'),
+  h(3, 'stored', 'extracted', '2025-05-20T15:00:00Z', 4, 'DNA extraction completed'),
+  h(3, 'extracted', 'sequenced', '2026-03-25T14:00:00Z', 4, 'Sequencing run completed'),
+  h(3, 'sequenced', 'analyzed', '2026-04-02T11:30:00Z', 5, 'Taxonomic assignment approved'),
+  h(4, null, 'collected', '2025-05-18T09:15:00Z', 3, 'Initial field collection'),
+  h(4, 'collected', 'stored', '2025-05-18T12:00:00Z', 3, 'Stored at 4C in field depot'),
+  h(4, 'stored', 'extracted', '2025-05-20T15:00:00Z', 4, 'DNA extraction completed'),
+  h(4, 'extracted', 'sequenced', '2026-03-25T14:00:00Z', 4, 'Sequencing run completed'),
+  h(4, 'sequenced', 'analyzed', '2026-04-02T11:30:00Z', 5, 'Taxonomic assignment approved'),
+  h(5, null, 'collected', '2025-05-22T07:45:00Z', 3, 'Initial field collection'),
+  h(5, 'collected', 'stored', '2025-05-22T10:30:00Z', 3, 'Stored at 4C in field depot'),
+  h(5, 'stored', 'extracted', '2025-05-25T11:00:00Z', 4, 'DNA extraction completed'),
+  h(5, 'extracted', 'sequenced', '2026-03-25T14:00:00Z', 4, 'Sequencing run completed'),
+  h(5, 'sequenced', 'analyzed', '2026-04-02T11:30:00Z', 5, 'Taxonomic assignment approved'),
+  h(6, null, 'collected', '2025-05-22T07:45:00Z', 3, 'Initial field collection'),
+  h(6, 'collected', 'stored', '2025-05-22T10:30:00Z', 3, 'Stored at 4C in field depot'),
+  h(6, 'stored', 'extracted', '2025-05-25T11:00:00Z', 4, 'DNA extraction completed'),
+  h(6, 'extracted', 'sequenced', '2026-03-25T14:00:00Z', 4, 'Sequencing run completed'),
+  h(6, 'sequenced', 'analyzed', '2026-04-02T11:30:00Z', 5, 'Taxonomic assignment approved'),
+  h(7, null, 'collected', '2026-03-10T08:00:00Z', 3, 'Initial field collection'),
+  h(7, 'collected', 'stored', '2026-03-10T11:00:00Z', 3, 'Stored at 4C in field depot'),
+  h(7, 'stored', 'extracted', '2026-03-16T10:00:00Z', 4, 'DNA extraction completed'),
+  h(7, 'extracted', 'sequenced', '2026-03-25T14:00:00Z', 4, 'Sequencing run completed'),
+  h(7, 'sequenced', 'analyzed', '2026-04-02T11:30:00Z', 5, 'Taxonomic assignment approved'),
+  h(8, null, 'collected', '2026-03-10T08:00:00Z', 3, 'Initial field collection'),
+  h(8, 'collected', 'stored', '2026-03-10T11:00:00Z', 3, 'Stored at 4C in field depot'),
+  h(8, 'stored', 'extracted', '2026-03-16T10:00:00Z', 4, 'DNA extraction completed'),
+  h(8, 'extracted', 'sequenced', '2026-03-25T14:00:00Z', 4, 'Sequencing run completed'),
+  h(8, 'sequenced', 'analyzed', '2026-04-02T11:30:00Z', 5, 'Taxonomic assignment approved'),
+  h(9, null, 'collected', '2026-03-12T09:30:00Z', 3, 'Initial field collection'),
+  h(9, 'collected', 'stored', '2026-03-12T12:30:00Z', 3, 'Stored at 4C in field depot'),
+  h(9, 'stored', 'extracted', '2026-03-16T11:00:00Z', 4, 'DNA extraction completed'),
+  h(9, 'extracted', 'sequenced', '2026-04-18T15:00:00Z', 4, 'Sequencing run completed'),
+  h(9, 'sequenced', 'analyzed', '2026-04-25T14:00:00Z', 5, 'Taxonomic assignment approved'),
+  h(10, null, 'collected', '2026-03-12T09:30:00Z', 3, 'Initial field collection'),
+  h(10, 'collected', 'stored', '2026-03-12T12:30:00Z', 3, 'Stored at 4C in field depot'),
+  h(10, 'stored', 'extracted', '2026-03-16T11:00:00Z', 4, 'DNA extraction completed'),
+  h(10, 'extracted', 'sequenced', '2026-04-18T15:00:00Z', 4, 'Sequencing run completed'),
+  h(10, 'sequenced', 'analyzed', '2026-04-25T14:00:00Z', 5, 'Taxonomic assignment approved'),
+  h(11, null, 'collected', '2026-03-15T08:15:00Z', 3, 'Initial field collection'),
+  h(11, 'collected', 'stored', '2026-03-15T11:15:00Z', 3, 'Stored at 4C in field depot'),
+  h(11, 'stored', 'extracted', '2026-03-16T12:00:00Z', 4, 'DNA extraction completed'),
+  h(11, 'extracted', 'sequenced', '2026-04-18T15:00:00Z', 4, 'Sequencing run completed'),
+  h(11, 'sequenced', 'analyzed', '2026-04-25T14:00:00Z', 5, 'Taxonomic assignment approved'),
+  h(12, null, 'collected', '2026-03-15T08:15:00Z', 3, 'Initial field collection'),
+  h(12, 'collected', 'stored', '2026-03-15T11:15:00Z', 3, 'Stored at 4C in field depot'),
+  h(12, 'stored', 'extracted', '2026-03-16T12:00:00Z', 4, 'DNA extraction completed'),
+  h(12, 'extracted', 'sequenced', '2026-04-18T15:00:00Z', 4, 'Sequencing run completed'),
+  h(12, 'sequenced', 'analyzed', '2026-04-25T14:00:00Z', 5, 'Taxonomic assignment approved'),
+  h(13, null, 'collected', '2026-04-05T10:00:00Z', 3, 'Initial field collection'),
+  h(13, 'collected', 'stored', '2026-04-05T13:00:00Z', 3, 'Stored at 4C in field depot'),
+  h(13, 'stored', 'extracted', '2026-04-10T10:30:00Z', 4, 'DNA extraction completed'),
+  h(13, 'extracted', 'sequenced', '2026-04-18T15:00:00Z', 4, 'Sequencing run completed'),
+  h(13, 'sequenced', 'analyzed', '2026-04-25T14:00:00Z', 5, 'Taxonomic assignment approved'),
+  h(14, null, 'collected', '2026-04-05T10:00:00Z', 3, 'Initial field collection'),
+  h(14, 'collected', 'stored', '2026-04-05T13:00:00Z', 3, 'Stored at 4C in field depot'),
+  h(14, 'stored', 'extracted', '2026-04-10T10:30:00Z', 4, 'DNA extraction completed'),
+  h(14, 'extracted', 'sequenced', '2026-04-18T15:00:00Z', 4, 'Sequencing run completed'),
+  h(14, 'sequenced', 'analyzed', '2026-04-25T14:00:00Z', 5, 'Taxonomic assignment approved'),
+  h(15, null, 'collected', '2026-04-08T11:30:00Z', 3, 'Initial field collection'),
+  h(15, 'collected', 'stored', '2026-04-08T14:30:00Z', 3, 'Stored at 4C in field depot'),
+  h(15, 'stored', 'extracted', '2026-04-10T11:30:00Z', 4, 'DNA extraction completed'),
+  h(15, 'extracted', 'sequenced', '2026-04-18T15:00:00Z', 4, 'Sequencing run completed'),
+  h(15, 'sequenced', 'analyzed', '2026-04-25T14:00:00Z', 5, 'Taxonomic assignment approved'),
+  h(16, null, 'collected', '2026-04-08T11:30:00Z', 3, 'Initial field collection'),
+  h(16, 'collected', 'stored', '2026-04-08T14:30:00Z', 3, 'Stored at 4C in field depot'),
+  h(16, 'stored', 'extracted', '2026-04-10T11:30:00Z', 4, 'DNA extraction completed'),
+  h(16, 'extracted', 'sequenced', '2026-04-18T15:00:00Z', 4, 'Sequencing run completed'),
+  h(16, 'sequenced', 'analyzed', '2026-04-25T14:00:00Z', 5, 'Taxonomic assignment approved'),
+  h(17, null, 'collected', '2025-05-15T08:30:00Z', 3, 'Initial field collection'),
+  h(17, 'collected', 'stored', '2025-05-15T11:00:00Z', 3, 'Stored at 4C in field depot'),
+  h(17, 'stored', 'extracted', '2025-05-20T14:00:00Z', 4, 'DNA extraction attempted'),
+  h(
+    17,
+    'extracted',
+    'failed',
+    '2025-05-20T16:00:00Z',
+    4,
+    'Extraction failed concentration QC check',
+  ),
+];
 
 // ---------------------------------------------------------------------------
 // Laboratory & Sequencing (copies seed 030, database/seeds/030_seed_lab.sql)
@@ -987,53 +1054,8 @@ export const mockAssignments: MockAssignment[] = ASSIGNMENTS.map(
   }),
 );
 
-export const mockAudit: AuditEntry[] = [
-  {
-    audit_id: 5,
-    actor_id: 5,
-    entity_type: 'analysis_runs',
-    entity_id: 3,
-    action: 'insert',
-    details: null,
-    created_at: '2026-04-27T09:00:00Z',
-  },
-  {
-    audit_id: 4,
-    actor_id: 2,
-    entity_type: 'analysis_runs',
-    entity_id: 2,
-    action: 'approve',
-    details: { status: { old: 'imported', new: 'approved' } },
-    created_at: '2026-04-25T14:00:00Z',
-  },
-  {
-    audit_id: 3,
-    actor_id: 4,
-    entity_type: 'sequencing_runs',
-    entity_id: 2,
-    action: 'update',
-    details: { status: { old: 'running', new: 'completed' } },
-    created_at: '2026-04-18T15:00:00Z',
-  },
-  {
-    audit_id: 2,
-    actor_id: 3,
-    entity_type: 'collection_events',
-    entity_id: 8,
-    action: 'insert',
-    details: null,
-    created_at: '2026-04-08T11:30:00Z',
-  },
-  {
-    audit_id: 1,
-    actor_id: 1,
-    entity_type: 'users',
-    entity_id: 6,
-    action: 'login',
-    details: null,
-    created_at: '2026-03-01T08:00:00Z',
-  },
-];
+/** The seeded database has no audit rows; entries appear as people sign in and make changes. */
+export const mockAudit: AuditEntry[] = [];
 
 export function hasAnyRole(user: User, roles: User['roles']): boolean {
   return user.roles.some((r) => roles.includes(r));

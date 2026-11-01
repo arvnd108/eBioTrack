@@ -271,19 +271,23 @@ export interface CollectionEventDetail extends CollectionEvent {
   measurements: EnvironmentalMeasurement[];
 }
 
+/** One sample in a `POST /api/events` body, or the fields of `POST /api/samples`. */
+export interface NewSampleFields {
+  sample_type_id: number;
+  volume_ml?: number | null;
+  depth_m?: number | null;
+  storage_location?: string | null;
+}
+
 /** `POST /api/events` body (section 11 example). */
 export interface CreateEventRequest {
   project_id: number;
   site_id: number;
+  /** ISO timestamp with an offset; at most one day in the future. */
   collected_at: string;
-  notes?: string;
+  notes?: string | null;
   measurements?: { parameter: string; value: number; unit: string }[];
-  samples?: {
-    sample_type_id: number;
-    volume_ml?: number;
-    depth_m?: number;
-    storage_location?: string;
-  }[];
+  samples?: NewSampleFields[];
 }
 
 // Samples -----------------------------------------------------------------------
@@ -292,6 +296,11 @@ export interface CreateEventRequest {
 export interface SampleType {
   sample_type_id: number;
   type_name: string;
+}
+
+/** `POST /api/samples` body. */
+export interface CreateSampleRequest extends NewSampleFields {
+  event_id: number;
 }
 
 /** `GET /api/samples`, `POST /api/samples`, `PATCH /api/samples/:id/status`. */

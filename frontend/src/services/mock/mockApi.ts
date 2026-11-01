@@ -3,14 +3,16 @@
 //
 // Used when VITE_USE_MOCK=true (see apiClient.ts). Each handler returns what the real server
 // would: an HTTP status and a JSON body (`{ data, meta? }` or `{ error }`). Covers every GET
-// endpoint in section 10, plus the section 11 write examples (login/logout, create event,
-// import dry run, export). Pages that need more writes add a handler here.
+// endpoint in section 10 and the writes the pages use so far (auth, users, projects, sites,
+// events, samples, import dry run, export). Pages that need more writes add a handler here.
 //
 // Rules copied from the contract so pages see realistic behaviour:
 //   - lists are paginated (?page, ?limit; default 25, max 100) with meta { page, limit, total }
 //   - project data the user is not a member of is hidden (404 for a single item)
 //   - analytics and detections use only approved analyses and qc_flag = 'pass', and analytics
 //     responses carry meta.caveat
+//   - the T20 routes (users, projects, audit) and T21 routes (regions, sites, events, samples)
+//     follow the real API scenario by scenario: same checks, order, status codes and messages
 //
 // To mock a new endpoint, add one entry to `routes` below. Paths are relative to /api and may
 // use `:params`, for example '/projects/:id'.
@@ -25,9 +27,13 @@ import {
   type CollectionEvent,
   type CollectionEventDetail,
   type CreateEventRequest,
+  type EnvironmentalMeasurement,
+  type HabitatType,
   type PageMeta,
   type RoleName,
   type Sample,
+  type SampleStatus,
+  type Site,
   type User,
 } from '../../types';
 import type { HttpMethod } from '../apiClient';
@@ -56,8 +62,9 @@ import {
   mockTaxa,
   mockUsers,
   DEV_PASSWORD,
+  mockStatusHistory,
   sampleCode,
-  statusHistoryFor,
+  type StatusHistoryRow,
 } from './fixtures';
 
 export interface MockResponse {
@@ -130,9 +137,18 @@ interface MockState {
   members: MemberRow[];
   projectSites: { project_id: number; site_id: number }[];
   audit: AuditEntry[];
+  sites: Site[];
+  events: CollectionEvent[];
+  samples: Sample[];
+  measurements: EnvironmentalMeasurement[];
+  history: StatusHistoryRow[];
   nextUserId: number;
   nextProjectId: number;
   nextAuditId: number;
+  nextSiteId: number;
+  nextEventId: number;
+  nextSampleId: number;
+  nextMeasurementId: number;
 }
 
 function freshState(): MockState {
@@ -145,10 +161,20 @@ function freshState(): MockState {
       siteIds.map((siteId) => ({ project_id: Number(projectId), site_id: siteId })),
     ),
     audit: mockAudit.map((a) => ({ ...a })),
-    // Application-generated IDs start at 1000 (CONTRACT D6).
+    sites: mockSites.map((x) => ({ ...x })),
+    events: mockEvents.map((x) => ({ ...x })),
+    samples: mockSamples.map((x) => ({ ...x })),
+    measurements: mockMeasurements.map((x) => ({ ...x })),
+    history: mockStatusHistory.map((x) => ({ ...x })),
+    // Application-generated IDs start at 1000 (CONTRACT D6). Like a PostgreSQL sequence, an
+    // insert the database refuses (unknown region, duplicate name) still uses up its id.
     nextUserId: 1000,
     nextProjectId: 1000,
     nextAuditId: 1000,
+    nextSiteId: 1000,
+    nextEventId: 1000,
+    nextSampleId: 1000,
+    nextMeasurementId: 1000,
   };
 }
 
@@ -210,8 +236,8 @@ export function setMockDelay(ms: number): void {
   delayMs = ms;
 }
 
-/** Records created through the mock during this page load (cleared by resetMockState). */
-const created = { events: [] as CollectionEvent[], samples: [] as Sample[], exports: 0 };
+/** Exports created through the mock during this page load (cleared by resetMockState). */
+const created = { exports: 0 };
 
 /**
  * Failed sign-ins per email, mirroring backend/src/utils/loginAttempts.js: 5 failures within
@@ -244,8 +270,6 @@ export function resetMockState(): void {
   storeSession(null);
   loginFailures.clear();
   state = freshState();
-  created.events = [];
-  created.samples = [];
   created.exports = 0;
 }
 
@@ -326,6 +350,8 @@ function paginate<T>(
   rows: T[],
   query: URLSearchParams,
   sortable?: readonly string[],
+  /** Id column the API breaks ties on in the same direction (`ORDER BY field DESC, id DESC`). */
+  tieKey?: string,
 ): MockResponse {
   const rawSort = query.get('sort')?.trim();
   if (rawSort) {
@@ -336,12 +362,11 @@ function paginate<T>(
         { field: 'sort', message: `Must be one of: ${sortable.join(', ')}` },
       ]);
     }
+    const value = (row: T, key: string) => (row as Record<string, unknown>)[key];
     rows = [...rows].sort(
       (a, b) =>
-        compareValues(
-          (a as Record<string, unknown>)[field],
-          (b as Record<string, unknown>)[field],
-        ) * (descending ? -1 : 1),
+        (compareValues(value(a, field), value(b, field)) ||
+          (tieKey ? compareValues(value(a, tieKey), value(b, tieKey)) : 0)) * (descending ? -1 : 1),
     );
   }
   const page = Math.max(1, Number(query.get('page')) || 1);
@@ -382,8 +407,8 @@ function projectsFor(user: User): Project[] {
     .map((p) => ({ ...p, your_role: roleIn(p.project_id, user.user_id) }));
 }
 
-const allEvents = () => [...mockEvents, ...created.events];
-const allSamples = () => [...mockSamples, ...created.samples];
+const allEvents = () => state.events;
+const allSamples = () => state.samples;
 
 function eventsFor(user: User, query?: URLSearchParams): CollectionEvent[] {
   const ids = visibleProjectIds(user);
@@ -398,10 +423,6 @@ function eventsFor(user: User, query?: URLSearchParams): CollectionEvent[] {
   );
 }
 
-function eventOf(sample: Sample): CollectionEvent {
-  return allEvents().find((e) => e.event_id === sample.event_id)!;
-}
-
 /** Approved analyses + passing rows, joined to their library, sample, event, and site. */
 function approvedDetections(user: User) {
   const events = eventsFor(user);
@@ -414,7 +435,7 @@ function approvedDetections(user: User) {
       const sample = allSamples().find((s) => s.sample_id === extraction.sample_id)!;
       const event = events.find((e) => e.event_id === sample.event_id);
       if (!event) return [];
-      const site = mockSites.find((s) => s.site_id === event.site_id)!;
+      const site = state.sites.find((s) => s.site_id === event.site_id)!;
       return [{ assignment: a, sample, event, site }];
     });
 }
@@ -605,6 +626,417 @@ const duplicateTitle = (title: string) => {
   return fail(409, 'duplicate', detail, [{ message: detail }]);
 };
 
+// ---------------------------------------------------------------------------
+// T21 helpers: regions, sites, events and samples (backend routes/sites|events|samples.routes.js
+// and services/*.service.js). Messages are zod's own, as the API sends them.
+// ---------------------------------------------------------------------------
+
+const REGION_TYPES = ['country', 'state', 'basin', 'reserve', 'other'];
+const HABITAT_TYPES: HabitatType[] = [
+  'river',
+  'lake',
+  'estuary',
+  'marine',
+  'wetland',
+  'groundwater',
+  'soil',
+  'other',
+];
+const SAMPLE_STATUSES: SampleStatus[] = [
+  'collected',
+  'stored',
+  'extracted',
+  'sequenced',
+  'analyzed',
+  'failed',
+  'discarded',
+];
+
+/** CONTRACT section 3, enforced by the samples status trigger (EB001 -> 409). */
+const SAMPLE_TRANSITIONS: Record<SampleStatus, SampleStatus[]> = {
+  collected: ['stored', 'failed', 'discarded'],
+  stored: ['extracted', 'failed', 'discarded'],
+  extracted: ['sequenced', 'failed', 'discarded'],
+  sequenced: ['analyzed', 'failed'],
+  analyzed: [],
+  failed: ['discarded'],
+  discarded: [],
+};
+
+const MAX_MEASUREMENTS = 50;
+const MAX_SAMPLES = 100;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const validationError = (details: ApiErrorDetail[]) =>
+  fail(422, 'validation_error', details[0].message, details);
+
+/** z.enum(values) */
+function checkEnum(value: unknown, field: string, values: readonly string[]): ApiErrorDetail[] {
+  if (typeof value === 'string' && values.includes(value)) return [];
+  const options = values.map((v) => `"${v}"`).join('|');
+  return [{ field, message: `Invalid option: expected one of ${options}` }];
+}
+
+/** utils/schemas.js idString: an id in a URL or query string. */
+function checkIdString(value: string | null, field: string): ApiErrorDetail[] {
+  return value === null || /^[1-9]\d{0,14}$/.test(value)
+    ? []
+    : [{ field, message: 'must be a positive integer' }];
+}
+
+/** z.number() with optional bounds; `min`/`max` carry the schema's own message when it has one. */
+function checkNumber(
+  value: unknown,
+  field: string,
+  bounds: {
+    min?: number;
+    minMessage?: string;
+    positive?: string;
+    max?: number;
+    maxMessage?: string;
+  } = {},
+): ApiErrorDetail[] {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    const received = typeof value === 'number' ? 'NaN' : typeName(value);
+    return [{ field, message: `Invalid input: expected number, received ${received}` }];
+  }
+  if (bounds.positive !== undefined && value <= 0) return [{ field, message: bounds.positive }];
+  if (bounds.min !== undefined && value < bounds.min) {
+    return [
+      { field, message: bounds.minMessage ?? `Too small: expected number to be >=${bounds.min}` },
+    ];
+  }
+  if (bounds.max !== undefined && value > bounds.max) {
+    return [
+      { field, message: bounds.maxMessage ?? `Too big: expected number to be <=${bounds.max}` },
+    ];
+  }
+  return [];
+}
+
+/** Optional (`.nullish()`) values are skipped when null or undefined. */
+const present = (value: unknown) => value !== undefined && value !== null;
+
+/** z.strictObject: unknown keys are one issue on the whole payload, after the field issues. */
+function unknownKeys(body: Record<string, unknown>, allowed: readonly string[]): ApiErrorDetail[] {
+  const extra = Object.keys(body).filter((k) => !allowed.includes(k));
+  if (extra.length === 0) return [];
+  const list = extra.map((k) => `"${k}"`).join(', ');
+  return [{ field: 'root', message: `Unrecognized key${extra.length > 1 ? 's' : ''}: ${list}` }];
+}
+
+/** z.iso.datetime({ offset: true }): seconds required, `Z` or `±HH:MM`, a real date and time. */
+function isIsoDateTime(value: string): boolean {
+  const m =
+    /^(\d{4}-\d{2}-\d{2})T([01]\d|2[0-3]):[0-5]\d:[0-5]\d(\.\d+)?(Z|[+-]([01]\d|2[0-3]):[0-5]\d)$/.exec(
+      value,
+    );
+  if (!m) return false;
+  const day = new Date(`${m[1]}T00:00:00Z`);
+  return !Number.isNaN(day.getTime()) && day.toISOString().slice(0, 10) === m[1];
+}
+
+/**
+ * utils/schemas.js rangeFrom/rangeTo: an ISO timestamp, or a day meaning the start (from) or the
+ * end (to) of that UTC day. Returns the bounds in ms, or the validation details.
+ */
+function rangeOf(
+  query: URLSearchParams,
+): { from: number | null; to: number | null } | ApiErrorDetail[] {
+  const parse = (key: 'from' | 'to') => {
+    const raw = query.get(key);
+    if (raw === null) return null;
+    if (isIsoDateTime(raw)) return Date.parse(raw);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw) && !Number.isNaN(Date.parse(`${raw}T00:00:00Z`))) {
+      const day = new Date(`${raw}T00:00:00Z`);
+      if (day.toISOString().slice(0, 10) === raw) {
+        return key === 'from' ? day.getTime() : day.getTime() + DAY_MS - 1;
+      }
+    }
+    return undefined;
+  };
+  const from = parse('from');
+  const to = parse('to');
+  const details: ApiErrorDetail[] = [];
+  if (from === undefined) details.push({ field: 'from', message: 'Invalid input' });
+  if (to === undefined) details.push({ field: 'to', message: 'Invalid input' });
+  return details.length ? details : { from: from ?? null, to: to ?? null };
+}
+
+/** numeric(p, s): the database rounds to `scale` decimals. */
+const round = (value: number, scale: number) => Number(value.toFixed(scale));
+
+/** The project of an event or sample, or null when it does not exist (services/projectAccess.js). */
+const eventById = (id: number) => state.events.find((e) => e.event_id === id) ?? null;
+const sampleById = (id: number) => state.samples.find((s) => s.sample_id === id) ?? null;
+
+/**
+ * services/projectAccess.js assertProjectAccess: an administrator passes (an unknown project is
+ * still a 404); anyone else must be a member (404 with `notFound` otherwise, so existence is not
+ * leaked), and a project viewer is read-only (403 on writes).
+ */
+function projectAccess(
+  user: User,
+  projectId: number,
+  { write = false, what = 'Project' }: { write?: boolean; what?: string } = {},
+): MockResponse | null {
+  if (isAdmin(user)) {
+    return state.projects.some((p) => p.project_id === projectId) ? null : notFound(what);
+  }
+  const role = roleIn(projectId, user.user_id);
+  if (role === null) return notFound(what);
+  if (write && role === 'viewer')
+    return fail(403, 'forbidden', 'You do not have permission to do this');
+  return null;
+}
+
+/** The audit trigger stores timestamps as to_jsonb(timestamptz) does: `2026-03-12T09:30:00+00:00`. */
+const jsonbTime = (iso: string) =>
+  new Date(iso)
+    .toISOString()
+    .replace(/\.\d{3}Z$/, '+00:00')
+    .replace(/\.(\d+)Z$/, '.$1+00:00');
+
+/** register_sample(): the next code in the event, the first history row, and the audit entry. */
+function registerSample(
+  event: CollectionEvent,
+  input: {
+    sample_type_id: number;
+    volume_ml?: number | null;
+    depth_m?: number | null;
+    storage_location?: string | null;
+  },
+  now: string,
+  pending: Sample[],
+): Sample | MockResponse {
+  if (!mockSampleTypes.some((t) => t.sample_type_id === input.sample_type_id)) {
+    return fail(422, 'invalid_reference', `Sample type ${input.sample_type_id} does not exist`, []);
+  }
+  const sequence =
+    [...state.samples, ...pending].filter((s) => s.event_id === event.event_id).length + 1;
+  return {
+    sample_id: state.nextSampleId++,
+    event_id: event.event_id,
+    sample_type_id: input.sample_type_id,
+    sample_code: sampleCode(event, sequence),
+    volume_ml: present(input.volume_ml) ? round(input.volume_ml!, 2) : null,
+    depth_m: present(input.depth_m) ? round(input.depth_m!, 2) : null,
+    storage_location: present(input.storage_location) ? input.storage_location!.trim() : null,
+    status: 'collected',
+    created_at: now,
+  };
+}
+
+/** Saves samples made by registerSample (rows, first history entries, audit). */
+function commitSamples(samples: Sample[], actorId: number, now: string): void {
+  for (const sample of samples) {
+    state.samples.push(sample);
+    state.history.push({
+      sample_id: sample.sample_id,
+      old_status: null,
+      new_status: 'collected',
+      changed_at: now,
+      changed_by: actorId,
+      note: null,
+    });
+    writeAudit(actorId, 'samples', sample.sample_id, 'insert', null, {
+      ...sample,
+      created_at: jsonbTime(sample.created_at),
+    });
+  }
+}
+
+/** Checks a site body (POST when `create`, PATCH otherwise); returns the cleaned fields. */
+function checkSiteBody(
+  body: Record<string, unknown>,
+  create: boolean,
+): Partial<Omit<Site, 'site_id'>> | ApiErrorDetail[] {
+  const details: ApiErrorDetail[] = [];
+  const has = (key: string) => (create ? true : body[key] !== undefined);
+  if (has('region_id')) details.push(...checkId(body.region_id, 'region_id'));
+  if (has('name')) details.push(...checkText(body.name, 'name', 200, true));
+  if (has('latitude')) {
+    const message = 'Latitude must be between -90 and 90';
+    details.push(
+      ...checkNumber(body.latitude, 'latitude', {
+        min: -90,
+        minMessage: message,
+        max: 90,
+        maxMessage: message,
+      }),
+    );
+  }
+  if (has('longitude')) {
+    const message = 'Longitude must be between -180 and 180';
+    details.push(
+      ...checkNumber(body.longitude, 'longitude', {
+        min: -180,
+        minMessage: message,
+        max: 180,
+        maxMessage: message,
+      }),
+    );
+  }
+  if (has('habitat_type'))
+    details.push(...checkEnum(body.habitat_type, 'habitat_type', HABITAT_TYPES));
+  if (present(body.description))
+    details.push(...checkText(body.description, 'description', 2000, false));
+  if (!create && details.length === 0 && Object.keys(body).length === 0) {
+    const message =
+      'at least one of region_id, name, latitude, longitude, habitat_type, description is required';
+    details.push({ field: 'root', message });
+  }
+  details.push(
+    ...unknownKeys(body, [
+      'region_id',
+      'name',
+      'latitude',
+      'longitude',
+      'habitat_type',
+      'description',
+    ]),
+  );
+  if (details.length) return details;
+
+  const out: Partial<Omit<Site, 'site_id'>> = {};
+  if (body.region_id !== undefined) out.region_id = body.region_id as number;
+  if (body.name !== undefined) out.name = (body.name as string).trim();
+  if (body.latitude !== undefined) out.latitude = round(body.latitude as number, 6);
+  if (body.longitude !== undefined) out.longitude = round(body.longitude as number, 6);
+  if (body.habitat_type !== undefined) out.habitat_type = body.habitat_type as HabitatType;
+  if (body.description !== undefined) {
+    out.description = body.description === null ? null : (body.description as string).trim();
+  }
+  return out;
+}
+
+/** The database's FK and unique checks on sampling_sites (both use up the id on insert). */
+function siteConflict(site: Omit<Site, 'site_id'>, siteId: number | null): MockResponse | null {
+  if (!mockRegions.some((r) => r.region_id === site.region_id)) {
+    const detail = `Key (region_id)=(${site.region_id}) is not present in table "regions".`;
+    return fail(422, 'invalid_reference', detail, [{ message: detail }]);
+  }
+  if (
+    state.sites.some(
+      (s) => s.site_id !== siteId && s.region_id === site.region_id && s.name === site.name,
+    )
+  ) {
+    const detail = `Key (region_id, name)=(${site.region_id}, ${site.name}) already exists.`;
+    return fail(409, 'duplicate', detail, [{ message: detail }]);
+  }
+  return null;
+}
+
+/** The sample fields both POST /events (per sample) and POST /samples accept. */
+function checkSampleFields(body: Record<string, unknown>, prefix: string): ApiErrorDetail[] {
+  const details: ApiErrorDetail[] = [];
+  details.push(...checkId(body.sample_type_id, `${prefix}sample_type_id`));
+  if (present(body.volume_ml)) {
+    details.push(
+      ...checkNumber(body.volume_ml, `${prefix}volume_ml`, {
+        positive: 'must be greater than 0',
+        max: 99999999.99,
+      }),
+    );
+  }
+  if (present(body.depth_m)) {
+    details.push(
+      ...checkNumber(body.depth_m, `${prefix}depth_m`, {
+        min: 0,
+        minMessage: 'must be 0 or more',
+        max: 999999.99,
+      }),
+    );
+  }
+  if (present(body.storage_location)) {
+    details.push(...checkText(body.storage_location, `${prefix}storage_location`, 200, true));
+  }
+  return details;
+}
+
+/** routes/events.routes.js createBody. */
+function checkEventBody(body: Record<string, unknown>): ApiErrorDetail[] {
+  const details: ApiErrorDetail[] = [];
+  details.push(...checkId(body.project_id, 'project_id'));
+  details.push(...checkId(body.site_id, 'site_id'));
+  if (typeof body.collected_at !== 'string') {
+    details.push({
+      field: 'collected_at',
+      message: `Invalid input: expected string, received ${typeName(body.collected_at)}`,
+    });
+  } else if (!isIsoDateTime(body.collected_at)) {
+    details.push({ field: 'collected_at', message: 'Invalid ISO datetime' });
+  } else if (Date.parse(body.collected_at) > Date.now() + DAY_MS) {
+    details.push({ field: 'collected_at', message: 'must not be more than one day in the future' });
+  }
+  if (present(body.notes)) details.push(...checkText(body.notes, 'notes', 5000, false));
+
+  const list = (key: 'measurements' | 'samples', max: number) => {
+    const value = body[key];
+    if (value === undefined) return [] as Record<string, unknown>[];
+    if (!Array.isArray(value)) {
+      details.push({
+        field: key,
+        message: `Invalid input: expected array, received ${typeName(value)}`,
+      });
+      return [];
+    }
+    if (value.length > max) {
+      details.push({ field: key, message: `Too big: expected array to have <=${max} items` });
+    }
+    return value as Record<string, unknown>[];
+  };
+  const measurements = list('measurements', MAX_MEASUREMENTS);
+  measurements.forEach((m, i) => {
+    const at = `measurements[${i}].`;
+    if (typeof m !== 'object' || m === null) {
+      details.push({
+        field: `measurements[${i}]`,
+        message: `Invalid input: expected object, received ${typeName(m)}`,
+      });
+      return;
+    }
+    details.push(...checkText(m.parameter, `${at}parameter`, 100, true));
+    details.push(...checkNumber(m.value, `${at}value`));
+    details.push(...checkText(m.unit, `${at}unit`, 50, true));
+  });
+  const samples = list('samples', MAX_SAMPLES);
+  samples.forEach((s, i) => {
+    if (typeof s !== 'object' || s === null) {
+      details.push({
+        field: `samples[${i}]`,
+        message: `Invalid input: expected object, received ${typeName(s)}`,
+      });
+      return;
+    }
+    details.push(...checkSampleFields(s, `samples[${i}].`));
+  });
+  // zod: unknown keys are one issue after the field issues; superRefine (each parameter at most
+  // once per request) still runs after an unknown key, but not after a field issue.
+  const keyIssues = unknownKeys(body, [
+    'project_id',
+    'site_id',
+    'collected_at',
+    'notes',
+    'measurements',
+    'samples',
+  ]);
+  if (details.length > 0) return [...details, ...keyIssues];
+  const seen = new Set<string>();
+  const repeats: ApiErrorDetail[] = [];
+  measurements.forEach((m, i) => {
+    const parameter = (m.parameter as string).trim();
+    if (seen.has(parameter)) {
+      repeats.push({
+        field: `measurements[${i}].parameter`,
+        message: 'appears more than once in this request',
+      });
+    }
+    seen.add(parameter);
+  });
+  return [...keyIssues, ...repeats];
+}
+
 function memberView(row: MemberRow) {
   const member = state.users.find((u) => u.user_id === row.user_id)!;
   return {
@@ -647,7 +1079,7 @@ function projectDetail(project: Project) {
     event_count: events.length,
     sample_count: allSamples().filter((s) => events.some((e) => e.event_id === s.event_id)).length,
     members,
-    sites: mockSites.filter((s) => siteIds.includes(s.site_id)),
+    sites: state.sites.filter((s) => siteIds.includes(s.site_id)),
   };
 }
 
@@ -1059,7 +1491,7 @@ const routes: MockRoute[] = [
         const details = checkId(req.site_id, 'site_id');
         if (details.length) return fail(422, 'validation_error', details[0].message, details);
         const siteId = req.site_id as number;
-        if (!mockSites.some((site) => site.site_id === siteId)) {
+        if (!state.sites.some((site) => site.site_id === siteId)) {
           return fail(422, 'invalid_reference', `Site ${siteId} does not exist`, [
             { field: 'site_id', message: `Site ${siteId} does not exist` },
           ]);
@@ -1097,140 +1529,317 @@ const routes: MockRoute[] = [
       }),
   },
 
-  // Sites and regions ------------------------------------------------------------------
-  { method: 'GET', path: '/regions', handler: () => ok(mockRegions) },
+  // Sites and regions (T21) --------------------------------------------------------------
+  {
+    method: 'GET',
+    path: '/regions',
+    handler: ({ query }) => {
+      const type = query.get('region_type');
+      if (type !== null) {
+        const bad = checkEnum(type, 'region_type', REGION_TYPES);
+        if (bad.length) return validationError(bad);
+      }
+      return ok(mockRegions.filter((r) => type === null || r.region_type === type));
+    },
+  },
   {
     method: 'GET',
     path: '/sites',
     handler: ({ query, user }) => {
+      const habitat = query.get('habitat_type');
+      const bad = [
+        ...checkIdString(query.get('project_id'), 'project_id'),
+        ...checkIdString(query.get('region_id'), 'region_id'),
+        ...(habitat === null ? [] : checkEnum(habitat, 'habitat_type', HABITAT_TYPES)),
+      ];
+      if (bad.length) return validationError(bad);
       const projectId = num(query, 'project_id');
       const regionId = num(query, 'region_id');
-      const habitat = query.get('habitat_type');
-      // As the API: filtering by a project needs access to it (backend sites.service.js).
-      if (projectId !== null && !visibleProjectIds(user).includes(projectId)) {
-        return notFound('Project');
+      // As the API: filtering by a project needs access to it (services/sites.service.js).
+      if (projectId !== null) {
+        const denied = projectAccess(user, projectId);
+        if (denied) return denied;
       }
-      const rows = mockSites.filter(
-        (s) =>
-          (projectId === null || siteIdsOf(projectId).includes(s.site_id)) &&
-          (regionId === null || s.region_id === regionId) &&
-          (!habitat || s.habitat_type === habitat),
-      );
-      return paginate(rows, query, ['site_id', 'name']);
+      const rows = state.sites
+        .filter(
+          (s) =>
+            (projectId === null || siteIdsOf(projectId).includes(s.site_id)) &&
+            (regionId === null || s.region_id === regionId) &&
+            (!habitat || s.habitat_type === habitat),
+        )
+        .sort((a, b) => a.site_id - b.site_id);
+      return paginate(rows, query, ['site_id', 'name'], 'site_id');
+    },
+  },
+  {
+    method: 'POST',
+    path: '/sites',
+    roles: ['principal_investigator', 'field_researcher'],
+    handler: ({ body, user }) => {
+      const input = (body ?? {}) as Record<string, unknown>;
+      const fields = checkSiteBody(input, true);
+      if (Array.isArray(fields)) return validationError(fields);
+      const site_id = state.nextSiteId++; // used up even when the insert fails
+      const site = { description: null, ...fields } as Omit<Site, 'site_id'>;
+      const conflict = siteConflict(site, null);
+      if (conflict) return conflict;
+      const created: Site = { site_id, ...site };
+      state.sites.push(created);
+      writeAudit(user.user_id, 'sampling_sites', site_id, 'insert', null, {
+        ...created,
+        created_by: user.user_id,
+        created_at: jsonbTime(new Date().toISOString()),
+      });
+      return ok(created, undefined, 201);
     },
   },
   {
     method: 'GET',
     path: '/sites/:id',
     handler: ({ params }) => {
-      const site = mockSites.find((s) => s.site_id === Number(params.id));
+      const bad = checkIdString(params.id, 'id');
+      if (bad.length) return validationError(bad);
+      const site = state.sites.find((s) => s.site_id === Number(params.id));
       return site ? ok(site) : notFound('Site');
     },
   },
+  {
+    method: 'PATCH',
+    path: '/sites/:id',
+    roles: ['principal_investigator', 'field_researcher'],
+    handler: ({ params, body, user }) => {
+      const input = (body ?? {}) as Record<string, unknown>;
+      const fields = checkSiteBody(input, false);
+      const bad = [...checkIdString(params.id, 'id'), ...(Array.isArray(fields) ? fields : [])];
+      if (bad.length || Array.isArray(fields)) return validationError(bad);
+      const site = state.sites.find((s) => s.site_id === Number(params.id));
+      if (!site) return notFound('Site');
+      const next: Site = { ...site, ...fields };
+      const conflict = siteConflict(next, site.site_id);
+      if (conflict) return conflict;
+      writeAudit(user.user_id, 'sampling_sites', site.site_id, 'update', { ...site }, { ...next });
+      Object.assign(site, next);
+      return ok({ ...site });
+    },
+  },
 
-  // Collection events ------------------------------------------------------------------
+  // Collection events (T21) --------------------------------------------------------------
   {
     method: 'GET',
     path: '/events',
-    handler: ({ user, query }) => paginate(eventsFor(user, query), query),
+    handler: ({ user, query }) => {
+      const range = rangeOf(query);
+      const bad = [
+        ...checkIdString(query.get('project_id'), 'project_id'),
+        ...checkIdString(query.get('site_id'), 'site_id'),
+        ...(Array.isArray(range) ? range : []),
+      ];
+      if (bad.length === 0 && !Array.isArray(range) && range.from !== null && range.to !== null) {
+        if (range.from > range.to) bad.push({ field: 'from', message: 'must not be after to' });
+      }
+      if (bad.length || Array.isArray(range)) return validationError(bad);
+      const projectId = num(query, 'project_id');
+      const siteId = num(query, 'site_id');
+      if (projectId !== null) {
+        const denied = projectAccess(user, projectId);
+        if (denied) return denied;
+      }
+      const visible = visibleProjectIds(user);
+      const rows = state.events
+        .filter((e) => {
+          const at = Date.parse(e.collected_at);
+          return (
+            visible.includes(e.project_id) &&
+            (projectId === null || e.project_id === projectId) &&
+            (siteId === null || e.site_id === siteId) &&
+            (range.from === null || at >= range.from) &&
+            (range.to === null || at <= range.to)
+          );
+        })
+        // Newest first unless ?sort is given (collected_at DESC, event_id DESC).
+        .sort(
+          (a, b) =>
+            Date.parse(b.collected_at) - Date.parse(a.collected_at) || b.event_id - a.event_id,
+        );
+      if (query.get('sort')) rows.sort((a, b) => a.event_id - b.event_id);
+      return paginate(rows, query, ['event_id', 'collected_at'], 'event_id');
+    },
   },
   {
     method: 'GET',
     path: '/events/:id',
     handler: ({ user, params }) => {
-      const event = eventsFor(user).find((e) => e.event_id === Number(params.id));
-      if (!event) return notFound('Collection event');
+      const bad = checkIdString(params.id, 'id');
+      if (bad.length) return validationError(bad);
+      const event = eventById(Number(params.id));
+      if (!event) return notFound('Event');
+      const denied = projectAccess(user, event.project_id, { what: 'Event' });
+      if (denied) return denied;
       const detail: CollectionEventDetail = {
         ...event,
-        samples: allSamples().filter((s) => s.event_id === event.event_id),
-        measurements: mockMeasurements.filter((m) => m.event_id === event.event_id),
+        samples: state.samples
+          .filter((s) => s.event_id === event.event_id)
+          .sort((a, b) => a.sample_id - b.sample_id),
+        measurements: state.measurements
+          .filter((m) => m.event_id === event.event_id)
+          .sort((a, b) => a.measurement_id - b.measurement_id),
       };
       return ok(detail);
     },
   },
   {
-    // Section 11 example: event with samples and measurements, created in one transaction.
+    // One transaction: event, measurements, then register_sample() per sample
+    // (services/events.service.js). Any failure keeps nothing (ids still used up).
     method: 'POST',
     path: '/events',
     roles: ['principal_investigator', 'field_researcher'],
     handler: ({ user, body }) => {
-      const req = (body ?? {}) as Partial<CreateEventRequest>;
-      const details: ApiErrorDetail[] = [];
-      if (!req.project_id) details.push({ field: 'project_id', message: 'Project is required' });
-      if (!req.site_id) details.push({ field: 'site_id', message: 'Site is required' });
-      if (!req.collected_at) {
-        details.push({ field: 'collected_at', message: 'Collection time is required' });
+      const input = (body ?? {}) as Record<string, unknown>;
+      // authorize('create_event_sample', { source: 'body.project_id' }) runs before validation.
+      if (!isAdmin(user)) {
+        const raw = input.project_id;
+        const projectId =
+          typeof raw === 'number' && Number.isSafeInteger(raw) && raw > 0 ? raw : null;
+        if (projectId === null || !state.projects.some((p) => p.project_id === projectId)) {
+          return notFound('Project');
+        }
+        const denied = projectAccess(user, projectId, { write: true });
+        if (denied) return denied;
       }
-      if (details.length) {
-        return fail(422, 'validation_error', 'Check the highlighted fields', details);
+      const bad = checkEventBody(input);
+      if (bad.length) return validationError(bad);
+      const req = input as unknown as CreateEventRequest;
+      if (!state.projects.some((p) => p.project_id === req.project_id)) {
+        return fail(422, 'invalid_reference', 'Project does not exist', [
+          { field: 'project_id', message: 'does not exist' },
+        ]);
       }
-      if (!visibleProjectIds(user).includes(req.project_id!)) return notFound('Project');
-      if (!siteIdsOf(req.project_id!).includes(req.site_id!)) {
-        return fail(422, 'invalid_reference', 'That site is not attached to this project');
+      if (!siteIdsOf(req.project_id).includes(req.site_id)) {
+        return fail(422, 'invalid_reference', 'Site is not attached to this project', [
+          { field: 'site_id', message: 'is not attached to this project' },
+        ]);
       }
-      const event_id = 1000 + created.events.length;
       const now = new Date().toISOString();
       const event: CollectionEvent = {
-        event_id,
-        project_id: req.project_id!,
-        site_id: req.site_id!,
+        event_id: state.nextEventId++,
+        project_id: req.project_id,
+        site_id: req.site_id,
         collector_id: user.user_id,
-        collected_at: req.collected_at!,
-        notes: req.notes ?? null,
+        collected_at: new Date(req.collected_at).toISOString(),
+        notes: present(req.notes) ? req.notes!.trim() : null,
         created_at: now,
       };
-      const samples: Sample[] = (req.samples ?? []).map((s, i) => ({
-        sample_id: 1000 + created.samples.length + i,
-        event_id,
-        sample_type_id: s.sample_type_id,
-        sample_code: sampleCode(event, i + 1),
-        volume_ml: s.volume_ml ?? null,
-        depth_m: s.depth_m ?? null,
-        storage_location: s.storage_location ?? null,
-        status: 'collected',
-        created_at: now,
+      const measurements: EnvironmentalMeasurement[] = (req.measurements ?? []).map((m) => ({
+        measurement_id: state.nextMeasurementId++,
+        event_id: event.event_id,
+        parameter: m.parameter.trim(),
+        value: m.value,
+        unit: m.unit.trim(),
       }));
-      const measurements = (req.measurements ?? []).map((m, i) => ({
-        measurement_id: 1000 + i,
-        event_id,
-        ...m,
-      }));
-      created.events.push(event);
-      created.samples.push(...samples);
+      const samples: Sample[] = [];
+      for (const input of req.samples ?? []) {
+        const sample = registerSample(event, input, now, samples);
+        if (!('sample_id' in sample)) return sample;
+        samples.push(sample);
+      }
+      state.events.push(event);
+      state.measurements.push(...measurements);
+      writeAudit(user.user_id, 'collection_events', event.event_id, 'insert', null, {
+        ...event,
+        collected_at: jsonbTime(event.collected_at),
+        created_at: jsonbTime(now),
+      });
+      commitSamples(samples, user.user_id, now);
       return ok({ ...event, samples, measurements }, undefined, 201);
     },
   },
 
-  // Samples ------------------------------------------------------------------------------
+  // Samples (T21) ---------------------------------------------------------------------------
   { method: 'GET', path: '/sample-types', handler: () => ok(mockSampleTypes) },
   {
     method: 'GET',
     path: '/samples',
     handler: ({ user, query }) => {
-      const events = eventsFor(user, query);
-      const eventId = num(query, 'event_id');
       const status = query.get('status');
-      const q = query.get('q')?.toLowerCase();
-      const rows = allSamples().filter(
-        (s) =>
-          events.some((e) => e.event_id === s.event_id) &&
-          (eventId === null || s.event_id === eventId) &&
-          (!status || s.status === status) &&
-          (!q || s.sample_code.toLowerCase().includes(q)),
-      );
-      return paginate(rows, query);
+      const q = query.get('q');
+      const bad = [
+        ...checkIdString(query.get('project_id'), 'project_id'),
+        ...checkIdString(query.get('site_id'), 'site_id'),
+        ...checkIdString(query.get('event_id'), 'event_id'),
+        ...(status === null ? [] : checkEnum(status, 'status', SAMPLE_STATUSES)),
+        ...(q === null ? [] : checkText(q, 'q', 64, false)),
+      ];
+      if (q !== null && q.trim() === '') {
+        bad.push({ field: 'q', message: 'Too small: expected string to have >=1 characters' });
+      }
+      if (bad.length) return validationError(bad);
+      const projectId = num(query, 'project_id');
+      const siteId = num(query, 'site_id');
+      const eventId = num(query, 'event_id');
+      if (projectId !== null) {
+        const denied = projectAccess(user, projectId);
+        if (denied) return denied;
+      }
+      const visible = visibleProjectIds(user);
+      // q is a case-insensitive prefix of the sample code.
+      const prefix = q?.trim().toUpperCase();
+      const rows = state.samples
+        .filter((s) => {
+          const event = eventById(s.event_id)!;
+          return (
+            visible.includes(event.project_id) &&
+            (projectId === null || event.project_id === projectId) &&
+            (siteId === null || event.site_id === siteId) &&
+            (eventId === null || s.event_id === eventId) &&
+            (!status || s.status === status) &&
+            (!prefix || s.sample_code.startsWith(prefix))
+          );
+        })
+        .sort((a, b) => a.sample_id - b.sample_id);
+      return paginate(rows, query, ['sample_id', 'sample_code', 'created_at'], 'sample_id');
+    },
+  },
+  {
+    method: 'POST',
+    path: '/samples',
+    roles: ['principal_investigator', 'field_researcher'],
+    handler: ({ user, body }) => {
+      const input = (body ?? {}) as Record<string, unknown>;
+      const bad = [
+        ...checkId(input.event_id, 'event_id'),
+        ...checkSampleFields(input, ''),
+        ...unknownKeys(input, [
+          'event_id',
+          'sample_type_id',
+          'volume_ml',
+          'depth_m',
+          'storage_location',
+        ]),
+      ];
+      if (bad.length) return validationError(bad);
+      const event = eventById(input.event_id as number);
+      if (!event) return notFound('Event');
+      const denied = projectAccess(user, event.project_id, { write: true, what: 'Event' });
+      if (denied) return denied;
+      const now = new Date().toISOString();
+      const sample = registerSample(event, input as { sample_type_id: number }, now, []);
+      if (!('sample_id' in sample)) return sample;
+      commitSamples([sample], user.user_id, now);
+      return ok(sample, undefined, 201);
     },
   },
   {
     method: 'GET',
     path: '/samples/:id',
     handler: ({ user, params }) => {
-      const sample = allSamples().find((s) => s.sample_id === Number(params.id));
-      if (!sample || !eventsFor(user).some((e) => e.event_id === sample.event_id)) {
-        return notFound('Sample');
-      }
-      const event = eventOf(sample);
-      const site = mockSites.find((s) => s.site_id === event.site_id)!;
+      const bad = checkIdString(params.id, 'id');
+      if (bad.length) return validationError(bad);
+      const sample = sampleById(Number(params.id));
+      if (!sample) return notFound('Sample');
+      const event = eventById(sample.event_id)!;
+      const denied = projectAccess(user, event.project_id, { what: 'Sample' });
+      if (denied) return denied;
+      const site = state.sites.find((s) => s.site_id === event.site_id)!;
       return ok({
         sample_id: sample.sample_id,
         sample_code: sample.sample_code,
@@ -1247,13 +1856,77 @@ const routes: MockRoute[] = [
         site: { site_id: site.site_id, name: site.name },
         extractions: mockExtractions
           .filter((x) => x.sample_id === sample.sample_id)
+          .sort((a, b) => a.attempt_number - b.attempt_number || a.extraction_id - b.extraction_id)
           .map(({ extraction_id, attempt_number, qc_status }) => ({
             extraction_id,
             attempt_number,
             qc_status,
           })),
-        status_history: statusHistoryFor(sample),
+        status_history: state.history
+          .filter((h) => h.sample_id === sample.sample_id)
+          .map(({ old_status, new_status, changed_at, changed_by, note }) => ({
+            old_status,
+            new_status,
+            changed_at,
+            changed_by,
+            note,
+          })),
       });
+    },
+  },
+  {
+    // A plain UPDATE: the trigger enforces CONTRACT section 3 and writes the history row.
+    // `note` is accepted but not stored yet (the API's known gap: history note stays NULL).
+    method: 'PATCH',
+    path: '/samples/:id/status',
+    roles: ['principal_investigator', 'field_researcher', 'lab_technician'],
+    handler: ({ user, params, body }) => {
+      const input = (body ?? {}) as Record<string, unknown>;
+      const bad = [
+        ...checkIdString(params.id, 'id'),
+        ...checkEnum(input.new_status, 'new_status', SAMPLE_STATUSES),
+        ...(present(input.note) ? checkText(input.note, 'note', 1000, false) : []),
+        ...unknownKeys(input, ['new_status', 'note']),
+      ];
+      if (bad.length) return validationError(bad);
+      const sample = sampleById(Number(params.id));
+      if (!sample) return notFound('Sample');
+      const denied = projectAccess(user, eventById(sample.event_id)!.project_id, {
+        write: true,
+        what: 'Sample',
+      });
+      if (denied) return denied;
+      const next = input.new_status as SampleStatus;
+      if (sample.status === next) {
+        return fail(409, 'invalid_transition', `Sample is already ${next}`, []);
+      }
+      if (!SAMPLE_TRANSITIONS[sample.status].includes(next)) {
+        return fail(
+          409,
+          'invalid_transition',
+          `Invalid sample status transition: ${sample.status} -> ${next}`,
+          [],
+        );
+      }
+      const now = new Date().toISOString();
+      state.history.push({
+        sample_id: sample.sample_id,
+        old_status: sample.status,
+        new_status: next,
+        changed_at: now,
+        changed_by: user.user_id,
+        note: null,
+      });
+      writeAudit(
+        user.user_id,
+        'samples',
+        sample.sample_id,
+        'update',
+        { status: sample.status },
+        { status: next },
+      );
+      sample.status = next;
+      return ok({ ...sample });
     },
   },
 
@@ -1463,7 +2136,7 @@ const routes: MockRoute[] = [
       }
       const keyOf = (e: CollectionEvent) =>
         groupBy === 'site'
-          ? mockSites.find((s) => s.site_id === e.site_id)!.name
+          ? state.sites.find((s) => s.site_id === e.site_id)!.name
           : e.collected_at.slice(0, groupBy === 'year' ? 4 : 7);
       const events = eventsFor(user, query).filter(
         (e) =>
