@@ -9,10 +9,9 @@
 // Definitions (not all are pinned by the contract; B and C should read these):
 //  - observed_taxa: distinct SPECIES (rank species) with at least one approved + pass detection in
 //    the group.
-//  - sample_count: distinct samples of the group that have a library on a sequencing run with at
-//    least one approved analysis (the sampling effort that could produce a detection; a sample
-//    with no library, e.g. a failed extraction, is not counted, but one analysed with no
-//    detection is). v_site_richness counts every sample instead; this is deliberately narrower.
+//  - rows: one per (group, site), site_id always present (CONTRACT 10 example, B's mock).
+//  - sample_count: distinct samples collected in the group at the site, including samples with no
+//    detection (sampling effort); the same definition as v_site_richness.
 //  - detection-frequency: per site, `detections` = distinct samples with an approved + pass
 //    detection of the taxon, `samples_total` = distinct samples of that site that have such an
 //    approved analysis (the denominator of a detection rate). Sites with at least one sample are
@@ -54,13 +53,11 @@ const ANALYSED = `EXISTS (
 /**
  * Richness rows, shared by the analytics route and the richness export.
  * @param {{ projectIds: number[] | null, siteId?: number, groupBy: 'year'|'month'|'site', from?: string, to?: string }} options
- * @returns {Promise<{ group: string, site_id?: number, observed_taxa: number, sample_count: number }[]>}
+ * @returns {Promise<{ group: string, site_id: number, observed_taxa: number, sample_count: number }[]>}
  */
 export async function queryRichness({ projectIds, siteId, groupBy, from, to }) {
   const expression = GROUP_EXPRESSION[groupBy];
   if (!expression) throw new TypeError(`invalid group_by: ${groupBy}`);
-  const withSite = groupBy === 'site' || siteId !== undefined;
-  const siteColumn = withSite ? 'ev.site_id' : 'NULL::bigint';
   const rows = await query(
     `WITH ev AS (
        SELECT ce.event_id, ce.site_id, ${expression} AS grp
@@ -72,13 +69,12 @@ export async function queryRichness({ projectIds, siteId, groupBy, from, to }) {
           AND ($4::timestamptz IS NULL OR ce.collected_at <= $4::timestamptz)
      ),
      effort AS (
-       SELECT ev.grp, ${siteColumn} AS site_id, count(DISTINCT s.sample_id) AS sample_count
+       SELECT ev.grp, ev.site_id AS site_id, count(DISTINCT s.sample_id) AS sample_count
          FROM ev JOIN samples s ON s.event_id = ev.event_id
-        WHERE ${ANALYSED}
         GROUP BY 1, 2
      ),
      detected AS (
-       SELECT ev.grp, ${siteColumn} AS site_id, count(DISTINCT ta.taxon_id) AS observed_taxa
+       SELECT ev.grp, ev.site_id AS site_id, count(DISTINCT ta.taxon_id) AS observed_taxa
          FROM ev
          JOIN samples s ON s.event_id = ev.event_id
          JOIN dna_extractions x ON x.sample_id = s.sample_id
@@ -92,11 +88,11 @@ export async function queryRichness({ projectIds, siteId, groupBy, from, to }) {
      SELECT e.grp AS "group", e.site_id, COALESCE(d.observed_taxa, 0)::int AS observed_taxa,
             e.sample_count::int AS sample_count
        FROM effort e
-       LEFT JOIN detected d ON d.grp = e.grp AND d.site_id IS NOT DISTINCT FROM e.site_id
+       LEFT JOIN detected d ON d.grp = e.grp AND d.site_id = e.site_id
       ORDER BY e.grp, e.site_id`,
     [projectIds, siteId ?? null, from ?? null, to ?? null],
   );
-  return withSite ? rows : rows.map(({ site_id: _site, ...rest }) => rest);
+  return rows;
 }
 
 export async function richness(user, filters) {
@@ -155,7 +151,7 @@ export async function dashboardSummary(user, filters) {
       'SELECT count(*)::int AS n FROM v_approved_detections d WHERE ($1::bigint[] IS NULL OR d.project_id = ANY($1::bigint[]))',
       [projectIds],
     ),
-    recentActivity(user, { limit: 5 }),
+    recentActivity(user, { limit: 5, projectId: filters.project_id }),
   ]);
   return {
     projects: projects.n,

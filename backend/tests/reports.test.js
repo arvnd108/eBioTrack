@@ -142,7 +142,16 @@ describe.skipIf(!available)('taxa, analytics, dashboard and exports', () => {
       const year = Object.fromEntries(res.body.data.map((r) => [r.group, r.observed_taxa]));
       expect(Object.keys(year).sort()).toEqual(['2025', '2026']);
       const bySite = await richness(as.administrator, '?group_by=site');
-      expect(bySite.body.data.length).toBeGreaterThan(0);
+      expect(bySite.body.data.length).toBe(5);
+      const perSiteYear = await richness(as.administrator, '?group_by=year&project_id=1');
+      const cell = (site, y) =>
+        perSiteYear.body.data.find((r) => r.site_id === site && r.group === y);
+      expect([cell(1, '2025'), cell(1, '2026'), cell(2, '2025'), cell(2, '2026')]).toEqual([
+        { group: '2025', site_id: 1, observed_taxa: 2, sample_count: 3 },
+        { group: '2026', site_id: 1, observed_taxa: 2, sample_count: 2 },
+        { group: '2025', site_id: 2, observed_taxa: 2, sample_count: 2 },
+        { group: '2026', site_id: 2, observed_taxa: 1, sample_count: 2 },
+      ]);
     });
     it('observed_taxa equals an independent count of species passing in approved analyses', async () => {
       const res = await richness(as.administrator, '?group_by=year');
@@ -218,6 +227,23 @@ describe.skipIf(!available)('taxa, analytics, dashboard and exports', () => {
       ).toBe(1);
       expect((await as.lab_technician.get('/api/dashboard/summary?project_id=2')).status).toBe(404);
       expect((await as.administrator.get('/api/dashboard/summary?x=1')).status).toBe(422);
+    });
+    it('narrows the activity feed to the requested project', async () => {
+      const feed = async (agent, qs) =>
+        (await agent.get(`/api/dashboard/summary${qs}`)).body.data.recent_activity;
+      const projectIds = (rows) =>
+        rows.filter((r) => r.entity_type === 'projects').map((r) => r.entity_id);
+      for (const [agent, id] of [
+        [as.administrator, 1],
+        [as.administrator, 2],
+        [as.principal_investigator, 1],
+      ]) {
+        const rows = await feed(agent, `?project_id=${id}`);
+        expect(rows.length).toBeLessThanOrEqual(5);
+        expect(projectIds(rows).every((p) => p === id)).toBe(true);
+      }
+      const unfiltered = await feed(as.administrator, '');
+      expect(unfiltered.length).toBeGreaterThan(0);
     });
     it('lists recent activity newest first for roles with audit access', async () => {
       const res = await as.principal_investigator.get('/api/dashboard/summary');

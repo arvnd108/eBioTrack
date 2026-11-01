@@ -6,7 +6,7 @@ import { z } from 'zod';
 import * as controller from '../controllers/analyses.controller.js';
 import { auth } from '../middleware/auth.js';
 import { requireRole } from '../middleware/authorize.js';
-import { unprocessable } from '../middleware/errorHandler.js';
+import { AppError, unprocessable } from '../middleware/errorHandler.js';
 import { pagination } from '../middleware/pagination.js';
 import { ROLES } from '../middleware/permissions.js';
 import { validate } from '../middleware/validate.js';
@@ -57,6 +57,11 @@ function receiveFile(req, res, next) {
             ? 'the file must be sent in the field "file"'
             : 'the upload could not be read';
       const field = err.code === 'LIMIT_FIELD_COUNT' ? 'form' : 'file';
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return next(
+          new AppError(413, 'payload_too_large', 'The upload is too large', [{ field, message }]),
+        );
+      }
       return next(unprocessable('The upload was rejected', [{ field, message }]));
     }
     if (!req.file) {

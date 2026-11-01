@@ -29,7 +29,7 @@ export const MAX_REPORTED_ERRORS = 100;
 const COLUMNS = `
   a.analysis_id, a.run_id, a.marker_id, a.pipeline_name, a.pipeline_version, a.reference_db,
   a.reference_db_version, COALESCE(a.parameters, '{}'::jsonb) AS parameters, a.status,
-  a.imported_by, a.approved_by, a.approved_at, a.created_at`;
+  a.imported_by, a.approved_by, a.approved_at, a.created_at, a.supersedes_analysis_id`;
 const SORT = { analysis_id: 'a.analysis_id', created_at: 'a.created_at' };
 
 const hasRole = (user, ...names) => names.some((name) => user.roles.includes(name));

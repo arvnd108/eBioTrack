@@ -26,6 +26,7 @@ const ANALYSIS_KEYS = [
   'reference_db_version',
   'run_id',
   'status',
+  'supersedes_analysis_id',
 ];
 
 describe.skipIf(!available)('analyses', () => {
@@ -205,6 +206,7 @@ describe.skipIf(!available)('analyses', () => {
         .post('/api/analyses')
         .send({ ...base, supersedes_analysis_id: 2 });
       expect(first.status).toBe(201);
+      expect(first.body.data.supersedes_analysis_id).toBe(2);
       const again = await as.analyst
         .post('/api/analyses')
         .send({ ...base, supersedes_analysis_id: 2 });
@@ -296,13 +298,14 @@ describe.skipIf(!available)('analyses', () => {
       expect(res.body.data.errors).toHaveLength(100);
       expect(res.body.meta).toEqual({ total_errors: 150, errors_shown: 100 });
     });
-    it('rejects missing, empty, oversize and non-UTF-8 files and stray fields with 422', async () => {
+    it('rejects missing, empty, oversize (413) and non-UTF-8 files and stray fields (422)', async () => {
       const none = await as.analyst.post('/api/analyses/import').field('analysis_id', '4');
       expect(none.status).toBe(422);
       expect(none.body.error.details[0]).toMatchObject({ field: 'file' });
       expect((await upload(as.analyst, 4, '')).status).toBe(422);
       const big = await upload(as.analyst, 4, Buffer.alloc(10 * 1024 * 1024 + 1, 'a'));
-      expect(big.status).toBe(422);
+      expect(big.status).toBe(413);
+      expect(big.body.error.code).toBe('payload_too_large');
       expect(big.body.error.details).toEqual([{ field: 'file', message: 'maximum size is 10 MB' }]);
       expect((await upload(as.analyst, 4, Buffer.from([0xff, 0xfe, 0x41]))).status).toBe(422);
       const stray = await as.analyst
