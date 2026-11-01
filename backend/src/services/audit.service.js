@@ -25,9 +25,14 @@ import { ROLES } from '../middleware/permissions.js';
 const AUDIT_COLUMNS =
   'a.audit_id, a.actor_id, a.entity_type, a.entity_id, a.action, a.details, a.created_at';
 
-// $1 = the PI's user_id. Rows are (entity_type, entity_id) pairs the PI may see.
+// $1 = the PI's user_id, $7 = optional project to narrow to, $8 = true for the administrator (every project). Rows are (entity_type, entity_id) pairs the PI may see.
 const PI_SCOPE = `
-  my_projects AS (SELECT project_id FROM project_members WHERE user_id = $1),
+  my_projects AS (
+    SELECT p.project_id FROM projects p
+     WHERE ($8::boolean OR EXISTS (
+             SELECT 1 FROM project_members m WHERE m.project_id = p.project_id AND m.user_id = $1))
+       AND ($7::bigint IS NULL OR p.project_id = $7::bigint)
+  ),
   my_events AS (
     SELECT e.event_id, e.project_id FROM collection_events e JOIN my_projects mp ON mp.project_id = e.project_id
   ),
@@ -64,14 +69,16 @@ export const canReadAudit = (user) => isAdmin(user) || isPi(user);
 // where the scope CTE (the other user of $1) is absent.
 const FILTERS = `
   $1::bigint IS NOT NULL
+  AND ($7::bigint IS NULL OR TRUE)
+  AND ($8::boolean IS NULL OR TRUE)
   AND ($2::text IS NULL OR a.entity_type = $2::text)
   AND ($3::bigint IS NULL OR a.entity_id = $3::bigint)
   AND ($4::bigint IS NULL OR a.actor_id = $4::bigint)
   AND ($5::timestamptz IS NULL OR a.created_at >= $5::timestamptz)
   AND ($6::timestamptz IS NULL OR a.created_at <= $6::timestamptz)`;
 
-function fromClause(user) {
-  return isAdmin(user)
+function fromClause(user, projectId) {
+  return isAdmin(user) && projectId === undefined
     ? { with: '', join: '' }
     : {
         with: `WITH ${PI_SCOPE}`,
@@ -83,9 +90,9 @@ function fromClause(user) {
  * Newest first (created_at DESC, audit_id DESC). Callers must have passed the route gate; a role
  * that cannot read the audit log gets an empty page here as a second line of defence.
  */
-export async function listAudit(user, filters, { limit, offset }) {
+export async function listAudit(user, filters, { limit, offset, projectId }) {
   if (!canReadAudit(user)) return { rows: [], total: 0 };
-  const { with: withClause, join } = fromClause(user);
+  const { with: withClause, join } = fromClause(user, projectId);
   const params = [
     user.user_id,
     filters.entity_type ?? null,
@@ -93,12 +100,14 @@ export async function listAudit(user, filters, { limit, offset }) {
     filters.actor_id ?? null,
     filters.from ?? null,
     filters.to ?? null,
+    projectId ?? null,
+    isAdmin(user),
   ];
   const rows = await query(
     `${withClause}
      SELECT ${AUDIT_COLUMNS} FROM audit_logs a ${join}
       WHERE ${FILTERS}
-      ORDER BY a.created_at DESC, a.audit_id DESC LIMIT $7 OFFSET $8`,
+      ORDER BY a.created_at DESC, a.audit_id DESC LIMIT $9 OFFSET $10`,
     [...params, limit, offset],
   );
   const [{ total }] = await query(
@@ -112,10 +121,10 @@ export async function listAudit(user, filters, { limit, offset }) {
  * The newest audit entries the user may see, for the dashboard (T23). Same item shape as
  * GET /api/audit; an empty array for roles that cannot read the audit log.
  * @param {{ user_id: number, roles: string[] }} user
- * @param {{ limit?: number }} [options]
+ * @param {{ limit?: number, projectId?: number }} [options] projectId narrows to one project
  */
-export async function recentActivity(user, { limit = 5 } = {}) {
+export async function recentActivity(user, { limit = 5, projectId } = {}) {
   if (!canReadAudit(user)) return [];
-  const { rows } = await listAudit(user, {}, { limit, offset: 0 });
+  const { rows } = await listAudit(user, {}, { limit, offset: 0, projectId });
   return rows;
 }
