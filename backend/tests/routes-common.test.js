@@ -1,5 +1,5 @@
 // Owner: A (Backend)
-// Purpose: Cross-cutting checks for the T20 and T21 routes: 401 everywhere, error envelope, numeric ids
+// Purpose: Cross-cutting checks for the T20, T21 and T22 routes: 401 everywhere, error envelope, numeric ids
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { app } from '../src/app.js';
@@ -36,9 +36,23 @@ const ROUTES = [
   ['post', '/api/samples'],
   ['get', '/api/samples/1'],
   ['patch', '/api/samples/1/status'],
+  ['get', '/api/labs'],
+  ['get', '/api/markers'],
+  ['get', '/api/extraction-batches'],
+  ['post', '/api/extraction-batches'],
+  ['get', '/api/extractions'],
+  ['post', '/api/extractions'],
+  ['patch', '/api/extractions/1'],
+  ['get', '/api/qc-results'],
+  ['post', '/api/qc-results'],
+  ['get', '/api/sequencing-runs'],
+  ['get', '/api/sequencing-runs/1'],
+  ['post', '/api/sequencing-runs'],
+  ['post', '/api/sequencing-runs/1/libraries'],
+  ['patch', '/api/sequencing-runs/1'],
 ];
 
-describe.skipIf(!available)('T20 and T21 routes, cross-cutting', () => {
+describe.skipIf(!available)('T20, T21 and T22 routes, cross-cutting', () => {
   beforeAll(resetAndSeedDatabase);
   afterAll(async () => {
     loginAttempts.clear();

@@ -8,8 +8,15 @@ import { sessionMiddleware } from './middleware/session.js';
 import auditRoutes from './routes/audit.routes.js';
 import authRoutes from './routes/auth.routes.js';
 import eventsRoutes from './routes/events.routes.js';
+import extractionsRoutes, {
+  batchesRouter,
+  labsRouter,
+  markersRouter,
+  qcRouter,
+} from './routes/extractions.routes.js';
 import projectsRoutes from './routes/projects.routes.js';
 import samplesRoutes, { sampleTypesRouter } from './routes/samples.routes.js';
+import sequencingRoutes from './routes/sequencing.routes.js';
 import sitesRoutes, { regionsRouter } from './routes/sites.routes.js';
 import { rolesRouter, usersRouter } from './routes/users.routes.js';
 
@@ -43,6 +50,12 @@ app.use('/api/sites', sitesRoutes);
 app.use('/api/events', eventsRoutes);
 app.use('/api/sample-types', sampleTypesRouter);
 app.use('/api/samples', samplesRoutes);
+app.use('/api/labs', labsRouter);
+app.use('/api/markers', markersRouter);
+app.use('/api/extraction-batches', batchesRouter);
+app.use('/api/extractions', extractionsRoutes);
+app.use('/api/qc-results', qcRouter);
+app.use('/api/sequencing-runs', sequencingRoutes);
 
 // Catch-all 404 handler for unmatched routes
 app.use(notFoundHandler);

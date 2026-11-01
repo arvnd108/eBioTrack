@@ -15,7 +15,15 @@
 -- 2. trg_sequencing_runs_status (BEFORE UPDATE OF status)
 --    Allowed: planned -> running, running -> completed, running -> failed, planned -> failed.
 --    Anything else raises EB001. Updating other columns without changing status is allowed.
--- 3. Audit (CONTRACT 7): Dhruve's audit_row_change() attached AFTER INSERT OR UPDATE OR DELETE
+-- 3. trg_dna_extractions_qc_status (BEFORE UPDATE OF qc_status)
+--    An extraction's QC verdict is decided once: pending -> pass and pending -> fail only.
+--    Anything else raises EB001, so a booked (passed) extraction can never be marked fail
+--    under its library; a wrong verdict is fixed by recording a new attempt. Setting the value
+--    it already has is not a transition. (T22 follow-up.)
+-- 4. trg_dna_extractions_sample_status (AFTER INSERT)
+--    Recording an extraction moves its sample stored -> extracted (history row written by the
+--    sample status trigger). Samples in any other status are left as they are.
+-- 5. Audit (CONTRACT 7): Dhruve's audit_row_change() attached AFTER INSERT OR UPDATE OR DELETE
 --    to dna_extractions, sequencing_libraries, sequencing_runs and quality_control_results.
 --    Until T17-C (#31) creates that function, this block skips with a NOTICE; run this file
 --    again once it exists and the four triggers are attached.
@@ -70,7 +78,47 @@ CREATE TRIGGER trg_sequencing_runs_status
     FOR EACH ROW EXECUTE FUNCTION fn_sequencing_runs_status();
 
 -- --------------------------------------------------------------------------------------------
--- 3. Audit triggers (need audit_row_change() from T17-C)
+-- 3. Extraction QC verdict is final
+-- --------------------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fn_dna_extractions_qc_status() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.qc_status IS DISTINCT FROM OLD.qc_status AND NOT (
+           OLD.qc_status = 'pending' AND NEW.qc_status IN ('pass', 'fail')
+    ) THEN
+        RAISE EXCEPTION 'Extraction % cannot move from QC status % to %',
+                OLD.extraction_id, OLD.qc_status, NEW.qc_status
+            USING ERRCODE = 'EB001',
+                  DETAIL = 'Allowed: pending -> pass or fail. A QC verdict is final; record a new extraction attempt instead.';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_dna_extractions_qc_status ON dna_extractions;
+CREATE TRIGGER trg_dna_extractions_qc_status
+    BEFORE UPDATE OF qc_status ON dna_extractions
+    FOR EACH ROW EXECUTE FUNCTION fn_dna_extractions_qc_status();
+
+-- --------------------------------------------------------------------------------------------
+-- 4. A recorded extraction advances its sample
+-- --------------------------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION fn_dna_extractions_sample_status() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    UPDATE samples SET status = 'extracted'
+     WHERE sample_id = NEW.sample_id AND status = 'stored';
+    RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_dna_extractions_sample_status ON dna_extractions;
+CREATE TRIGGER trg_dna_extractions_sample_status
+    AFTER INSERT ON dna_extractions
+    FOR EACH ROW EXECUTE FUNCTION fn_dna_extractions_sample_status();
+
+-- --------------------------------------------------------------------------------------------
+-- 5. Audit triggers (need audit_row_change() from T17-C)
 -- --------------------------------------------------------------------------------------------
 DO $$
 DECLARE
