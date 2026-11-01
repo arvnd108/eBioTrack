@@ -270,6 +270,7 @@ describe.skipIf(!available)('taxa, analytics, dashboard and exports', () => {
           const rows = csvRows(file.body);
           expect(rows.length - 1).toBe(res.body.data.row_count);
           expect(Number(file.headers['x-row-count'])).toBe(res.body.data.row_count);
+          expect(file.headers['x-caveat']).toMatch(/does not indicate abundance/);
         }
       }
     });

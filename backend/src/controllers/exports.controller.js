@@ -1,5 +1,6 @@
 // Owner: A (Backend)
 // Purpose: Request handling: CSV report exports
+import { EDNA_CAVEAT } from '../services/analytics.service.js';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import * as service from '../services/exports.service.js';
@@ -16,6 +17,8 @@ export async function downloadExport(req, res) {
     'Content-Type': 'text/csv; charset=utf-8',
     'Content-Disposition': `attachment; filename="${file.filename}"`,
     'X-Row-Count': String(file.rowCount),
+    // The file stays machine-clean CSV; the interpretation caveat travels as a header.
+    'X-Caveat': EDNA_CAVEAT,
     'Cache-Control': 'no-store',
   });
   // Headers are out once streaming starts, so a late failure can only end the response early.
