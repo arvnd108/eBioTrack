@@ -12,9 +12,13 @@ export async function createSample(body: CreateSampleRequest): Promise<Sample> {
   return (await api.post<Sample>('/samples', body)).data;
 }
 
+/** `note` (optional, up to 1000 characters) is stored on the status history entry. */
 export async function changeSampleStatus(
   sampleId: number,
   newStatus: SampleStatus,
+  note?: string,
 ): Promise<Sample> {
-  return (await api.patch<Sample>(`/samples/${sampleId}/status`, { new_status: newStatus })).data;
+  const body: { new_status: SampleStatus; note?: string } = { new_status: newStatus };
+  if (note?.trim()) body.note = note.trim();
+  return (await api.patch<Sample>(`/samples/${sampleId}/status`, body)).data;
 }

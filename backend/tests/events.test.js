@@ -11,6 +11,7 @@ const available = await probeDatabase();
 const EVENT_KEYS = [
   'collected_at',
   'collector_id',
+  'collector_name',
   'created_at',
   'event_id',
   'notes',
@@ -123,7 +124,13 @@ describe.skipIf(!available)('events', () => {
       const res = await as.lab_technician.get('/api/events/4');
       expect(res.status).toBe(200);
       const { samples, measurements, ...event } = res.body.data;
-      expect(event).toMatchObject({ event_id: 4, project_id: 1, site_id: 1, collector_id: 3 });
+      expect(event).toMatchObject({
+        event_id: 4,
+        project_id: 1,
+        site_id: 1,
+        collector_id: 3,
+        collector_name: 'Farah Field',
+      });
       expect(samples.map((s) => s.sample_id)).toEqual([7, 8]);
       expect(samples[0]).toMatchObject({ sample_code: 'EB-20260310-0004-001', status: 'analyzed' });
       expect(measurements.length).toBeGreaterThan(0);

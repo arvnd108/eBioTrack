@@ -768,6 +768,14 @@ const round = (value: number, scale: number) => Number(value.toFixed(scale));
 
 /** The project of an event or sample, or null when it does not exist (services/projectAccess.js). */
 const eventById = (id: number) => state.events.find((e) => e.event_id === id) ?? null;
+
+/** The collector's name next to `collector_id`, as the events routes return it (CONTRACT 1.6). */
+const withCollectorName = <T extends CollectionEvent>(
+  event: T,
+): T & { collector_name: string | null } => ({
+  ...event,
+  collector_name: state.users.find((u) => u.user_id === event.collector_id)?.full_name ?? null,
+});
 const sampleById = (id: number) => state.samples.find((s) => s.sample_id === id) ?? null;
 
 /**
@@ -1662,7 +1670,7 @@ const routes: MockRoute[] = [
             Date.parse(b.collected_at) - Date.parse(a.collected_at) || b.event_id - a.event_id,
         );
       if (query.get('sort')) rows.sort((a, b) => a.event_id - b.event_id);
-      return paginate(rows, query, ['event_id', 'collected_at'], 'event_id');
+      return paginate(rows.map(withCollectorName), query, ['event_id', 'collected_at'], 'event_id');
     },
   },
   {
@@ -1676,7 +1684,7 @@ const routes: MockRoute[] = [
       const denied = projectAccess(user, event.project_id, { what: 'Event' });
       if (denied) return denied;
       const detail: CollectionEventDetail = {
-        ...event,
+        ...withCollectorName(event),
         samples: state.samples
           .filter((s) => s.event_id === event.event_id)
           .sort((a, b) => a.sample_id - b.sample_id),
@@ -1750,7 +1758,7 @@ const routes: MockRoute[] = [
         created_at: jsonbTime(now),
       });
       commitSamples(samples, user.user_id, now);
-      return ok({ ...event, samples, measurements }, undefined, 201);
+      return ok({ ...withCollectorName(event), samples, measurements }, undefined, 201);
     },
   },
 
@@ -1869,6 +1877,7 @@ const routes: MockRoute[] = [
             new_status,
             changed_at,
             changed_by,
+            changed_by_name: state.users.find((u) => u.user_id === changed_by)?.full_name ?? null,
             note,
           })),
       });
@@ -1876,7 +1885,7 @@ const routes: MockRoute[] = [
   },
   {
     // A plain UPDATE: the trigger enforces CONTRACT section 3 and writes the history row.
-    // `note` is accepted but not stored yet (the API's known gap: history note stays NULL).
+    // `note` is stored on the history row; none (or only spaces) stores NULL (CONTRACT 1.6).
     method: 'PATCH',
     path: '/samples/:id/status',
     roles: ['principal_investigator', 'field_researcher', 'lab_technician'],
@@ -1915,7 +1924,7 @@ const routes: MockRoute[] = [
         new_status: next,
         changed_at: now,
         changed_by: user.user_id,
-        note: null,
+        note: present(input.note) ? (input.note as string).trim() || null : null,
       });
       writeAudit(
         user.user_id,

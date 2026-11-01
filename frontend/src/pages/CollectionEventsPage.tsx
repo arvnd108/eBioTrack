@@ -75,7 +75,11 @@ export default function CollectionEventsPage() {
       header: 'Site',
       render: (e) => allSites.byId.get(e.site_id)?.name ?? `Site ${e.site_id}`,
     },
-    { key: 'collector_id', header: 'Collector', render: (e) => nameOf(e.collector_id) },
+    {
+      key: 'collector_id',
+      header: 'Collector',
+      render: (e) => nameOf(e.collector_id, e.collector_name),
+    },
     {
       key: 'notes',
       header: 'Notes',

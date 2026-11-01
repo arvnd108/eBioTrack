@@ -22,6 +22,9 @@ interface StatusChangeFormProps {
   onChanged: () => void;
 }
 
+/** Same limit as the API (backend samples.routes.js). */
+const NOTE_MAX = 1000;
+
 /** Statuses after which nothing else is allowed (or only discarding). */
 const FINAL_WARNING: Partial<Record<SampleStatus, string>> = {
   discarded: 'Discarded is final: the sample cannot change status again.',
@@ -32,10 +35,13 @@ const FINAL_WARNING: Partial<Record<SampleStatus, string>> = {
 export function StatusChangeForm({ sampleId, status, onChanged }: StatusChangeFormProps) {
   const options = SAMPLE_TRANSITIONS[status];
   const [next, setNext] = useState<SampleStatus | ''>('');
+  const [note, setNote] = useState('');
   const [choiceError, setChoiceError] = useState<string | null>(null);
-  const save = useSubmit(async (id: number, newStatus: SampleStatus) => {
+  const noteError =
+    note.trim().length > NOTE_MAX ? `Note must be at most ${NOTE_MAX} characters.` : null;
+  const save = useSubmit(async (id: number, newStatus: SampleStatus, text: string) => {
     try {
-      return await changeSampleStatus(id, newStatus);
+      return await changeSampleStatus(id, newStatus, text);
     } catch (err) {
       // 409: the sample changed since the page loaded; show its current status.
       if (isApiError(err) && err.code === 'invalid_transition') {
@@ -74,9 +80,11 @@ export function StatusChangeForm({ sampleId, status, onChanged }: StatusChangeFo
       setChoiceError('Choose the new status.');
       return;
     }
+    if (noteError) return;
     setChoiceError(null);
-    if (await save.run(sampleId, next)) {
+    if (await save.run(sampleId, next, note)) {
       setNext('');
+      setNote('');
       onChanged();
     }
   }
@@ -113,6 +121,14 @@ export function StatusChangeForm({ sampleId, status, onChanged }: StatusChangeFo
           {save.submitting ? 'Saving…' : 'Change status'}
         </button>
       </div>
+      <FormField label="Note" hint="Optional. Shown in the status history." error={noteError}>
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          rows={2}
+          className={fieldControlClass(!!noteError)}
+        />
+      </FormField>
       {next && FINAL_WARNING[next] && (
         <p className="text-sm text-amber-800">{FINAL_WARNING[next]}</p>
       )}

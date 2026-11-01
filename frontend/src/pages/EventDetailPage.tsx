@@ -90,7 +90,7 @@ export default function EventDetailPage() {
             {site.data?.name ?? `Site ${e.site_id}`}
           </Link>
         </Fact>
-        <Fact label="Collector">{nameOf(e.collector_id)}</Fact>
+        <Fact label="Collector">{nameOf(e.collector_id, e.collector_name)}</Fact>
         <Fact label="Recorded">{formatDateTime(e.created_at)}</Fact>
       </dl>
       <p className="whitespace-pre-line text-slate-700">{e.notes || 'No notes.'}</p>

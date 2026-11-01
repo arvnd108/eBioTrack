@@ -578,14 +578,16 @@ describe('T20 write rules match the real API (values checked against backend PR 
     });
     await api.patch(`/samples/${id}/status`, {
       new_status: 'stored',
-      note: 'not stored by the API yet',
+      note: '  in the cold room  ',
     });
-    const detail = await api.get<{ status_history: { new_status: string; note: string | null }[] }>(
-      `/samples/${id}`,
-    );
-    expect(detail.data.status_history.map((h) => [h.new_status, h.note])).toEqual([
-      ['collected', null],
-      ['stored', null],
+    const detail = await api.get<{
+      status_history: { new_status: string; note: string | null; changed_by_name: string }[];
+    }>(`/samples/${id}`);
+    expect(
+      detail.data.status_history.map((h) => [h.new_status, h.note, h.changed_by_name]),
+    ).toEqual([
+      ['collected', null, 'Farah Field'],
+      ['stored', 'in the cold room', 'Farah Field'],
     ]);
   });
 

@@ -54,10 +54,14 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
     v_actor_id BIGINT;
+    v_note TEXT;
 BEGIN
     -- The backend sets this transaction-local value for requests that write. It may be NULL
     -- for a maintenance/manual SQL operation, so preserve NULL instead of raising a cast error.
     v_actor_id := NULLIF(current_setting('app.current_user_id', true), '')::BIGINT;
+    -- Optional note for this change: the backend sets app.status_note (transaction-local) before
+    -- the UPDATE. Unset or empty means no note.
+    v_note := NULLIF(btrim(current_setting('app.status_note', true)), '');
 
     INSERT INTO sample_status_history (
         sample_id,
@@ -71,7 +75,7 @@ BEGIN
         OLD.status,
         NEW.status,
         v_actor_id,
-        NULL
+        v_note
     );
 
     RETURN NEW;
@@ -87,7 +91,7 @@ EXECUTE FUNCTION record_sample_status_history();
 COMMENT ON FUNCTION enforce_sample_status_transition() IS
     'Rejects sample status changes not permitted by CONTRACT 3 using SQLSTATE EB001.';
 COMMENT ON FUNCTION record_sample_status_history() IS
-    'Writes one history row after each successful sample status change, using app.current_user_id as changed_by.';
+    'Writes one history row after each successful sample status change, using app.current_user_id as changed_by and app.status_note (when set) as note.';
 
 -- Audit triggers: T17-C owns audit_row_change(). This conditional block keeps a fresh
 -- install working before T17-C is merged; re-running this file after T17-C lands

@@ -115,7 +115,8 @@ describe('Sample detail page', () => {
       'Failed',
     ]);
     expect(steps[3].textContent).toContain('Extraction failed concentration QC check');
-    expect(steps[3].textContent).toContain('User 4'); // names need GET /api/users (administrators)
+    // Every role sees who did it: the API sends the name (a viewer cannot call GET /api/users).
+    expect(steps[3].textContent).toContain('Lakshmi Lab');
     expect(within(table('DNA extractions')).getByText('Fail')).toBeTruthy();
     // A project viewer may read but not change the status.
     expect(screen.queryByRole('form', { name: 'Change status' })).toBeNull();
@@ -145,6 +146,34 @@ describe('Sample detail page', () => {
     expect(steps).toHaveLength(5);
     expect(steps[4].textContent).toContain('from Failed');
     expect(steps[4].textContent).toContain('You');
+  });
+
+  it('stores an optional note with the change and shows it in the history', async () => {
+    await signInAs('field_researcher');
+    const created = await api.post<{ sample_id: number }>('/samples', {
+      event_id: 1,
+      sample_type_id: 1,
+    });
+    renderApp(`/samples/${created.data.sample_id}`);
+    const form = await screen.findByRole('form', { name: 'Change status' });
+    const user = userEvent.setup();
+    await user.selectOptions(within(form).getByLabelText(/New status/), 'stored');
+    fireEvent.change(within(form).getByLabelText('Note'), { target: { value: 'x'.repeat(1001) } });
+    await user.click(within(form).getByRole('button', { name: 'Change status' }));
+    expect(within(form).getByText('Note must be at most 1000 characters.')).toBeTruthy();
+
+    fireEvent.change(within(form).getByLabelText('Note'), {
+      target: { value: '  Cold room, shelf 2  ' },
+    });
+    await user.click(within(form).getByRole('button', { name: 'Change status' }));
+    await waitFor(() => {
+      const steps = within(screen.getByRole('list', { name: 'Status history' })).getAllByRole(
+        'listitem',
+      );
+      expect(steps).toHaveLength(2);
+      expect(steps[1].textContent).toContain('Cold room, shelf 2');
+    });
+    expect((within(form).getByLabelText('Note') as HTMLTextAreaElement).value).toBe('');
   });
 
   it('explains a 409 when the sample changed meanwhile, and shows the new status', async () => {
@@ -205,6 +234,14 @@ describe('Collection events page', () => {
     await waitFor(() => expect(rows[0].textContent).toContain('Kakdwip Bay'));
     expect(rows[0].textContent).toContain('Coastal Estuary Pilot');
     await waitFor(() => expect(rows[0].textContent).toContain('Farah Field'));
+  });
+
+  it('names the collector for roles that cannot list users', async () => {
+    await signInAs('lab_technician');
+    renderApp('/events');
+    const rows = await rowsOf('Collection events');
+    expect(rows[0].textContent).toContain('Farah Field');
+    expect(rows[0].textContent).not.toContain('User 3');
   });
 
   it('filters by site from the URL and rejects a reversed day range', async () => {

@@ -7,8 +7,8 @@ import { formatDateTime, humanize } from '../../utils/format';
 
 interface StatusTimelineProps {
   history: SampleStatusChange[];
-  /** User id -> display name (see useUserNames). */
-  nameOf: (id: number | null) => string;
+  /** User id and the name the API sent -> display name (see useUserNames). */
+  nameOf: (id: number | null, name?: string | null) => string;
 }
 
 export function StatusTimeline({ history, nameOf }: StatusTimelineProps) {
@@ -32,7 +32,7 @@ export function StatusTimeline({ history, nameOf }: StatusTimelineProps) {
           <p className="mt-1 text-sm text-slate-700">
             <time dateTime={change.changed_at}>{formatDateTime(change.changed_at)}</time>
             {' · '}
-            {nameOf(change.changed_by)}
+            {nameOf(change.changed_by, change.changed_by_name)}
           </p>
           {change.note && <p className="mt-0.5 text-sm text-slate-500">{change.note}</p>}
         </li>

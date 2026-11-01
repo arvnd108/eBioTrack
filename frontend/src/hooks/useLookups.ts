@@ -3,9 +3,10 @@
 //
 // Each reads one list once (up to 100 rows, the API's page maximum) and offers a lookup:
 //   const projects = useProjectIndex();  projects.byId.get(1)?.title
-//   const names = useUserNames();       names(3) -> "Farah Field" (administrator) or "User 3"
-// GET /api/users is administrator-only (CONTRACT 10), so other roles see "User <id>", and
-// "You" for themselves.
+//   const names = useUserNames();       names(3, "Farah Field") -> "Farah Field"
+// Responses name the person next to the id (`collector_name`, `changed_by_name`, CONTRACT 1.6),
+// which works for every role; GET /api/users is administrator-only (CONTRACT 10), so the list is
+// only a fallback for them. The signed-in user is always "You"; with no name at all: "User <id>".
 
 import { useCallback, useMemo } from 'react';
 import type { PageMeta, Project, Region, SampleType, Site, User } from '../types';
@@ -46,8 +47,8 @@ export function useSampleTypes() {
   return { ...res, list: res.data ?? [], byId };
 }
 
-/** A function from user id to a display name (see the header comment). */
-export function useUserNames(): (id: number | null) => string {
+/** A function from user id (and the name the API sent with it) to a display name. */
+export function useUserNames(): (id: number | null, name?: string | null) => string {
   const { user, can } = useAuth();
   const isAdmin = can('manage_users');
   const users = useFetch<User[], PageMeta>(isAdmin ? '/users' : null, {
@@ -60,11 +61,10 @@ export function useUserNames(): (id: number | null) => string {
   );
   const me = user?.user_id;
   return useCallback(
-    (id: number | null) => {
+    (id: number | null, apiName?: string | null) => {
       if (id === null) return 'System';
-      const name = names.get(id);
-      if (name) return name;
-      return id === me ? 'You' : `User ${id}`;
+      if (id === me) return 'You';
+      return apiName || names.get(id) || `User ${id}`;
     },
     [names, me],
   );

@@ -252,6 +252,8 @@ export interface CollectionEvent {
   project_id: number;
   site_id: number;
   collector_id: number;
+  /** The collector's name, so roles that cannot list users can show it (CONTRACT 1.6). */
+  collector_name?: string | null;
   collected_at: string;
   notes: string | null;
   created_at: string;
@@ -321,6 +323,8 @@ export interface SampleStatusChange {
   new_status: SampleStatus;
   changed_at: string;
   changed_by: number | null;
+  /** Name of `changed_by`; null when the user is unknown (CONTRACT 1.6). */
+  changed_by_name?: string | null;
   note?: string | null;
 }
 
