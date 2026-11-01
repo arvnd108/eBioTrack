@@ -78,7 +78,10 @@ describe.skipIf(!available)('laboratory and sequencing', () => {
         'lab_id',
         'notes',
         'operator_id',
+        'operator_name',
       ]);
+      // The operator is named for every role (CONTRACT 1.7): a viewer cannot list users.
+      expect(all.body.data[0]).toMatchObject({ operator_id: 4, operator_name: 'Lakshmi Lab' });
       const byLab = await as.viewer.get('/api/extraction-batches?lab_id=999');
       expect(byLab.body.meta.total).toBe(0);
     });
@@ -90,6 +93,7 @@ describe.skipIf(!available)('laboratory and sequencing', () => {
       expect(res.body.data).toMatchObject({
         lab_id: 1,
         operator_id: 4,
+        operator_name: 'Lakshmi Lab',
         extraction_date: today,
         kit_name: 'Kit X',
         notes: null,
@@ -153,16 +157,28 @@ describe.skipIf(!available)('laboratory and sequencing', () => {
       expect(byBatch.body.meta.total).toBe(6);
       const row = byBatch.body.data[0];
       expect(Object.keys(row).sort()).toEqual([
+        'active_run_code',
+        'active_run_id',
         'attempt_number',
         'batch_id',
         'concentration_ng_ul',
         'created_at',
         'extraction_id',
+        'project_id',
         'purity_a260_280',
         'qc_status',
+        'sample_code',
         'sample_id',
       ]);
       expect(typeof row.concentration_ng_ul).toBe('number');
+      // Seeded runs are completed, so no seeded extraction is booked on an active run.
+      expect(row).toMatchObject({
+        sample_id: 7,
+        sample_code: 'EB-20260310-0004-001',
+        project_id: 1,
+        active_run_id: null,
+        active_run_code: null,
+      });
     });
     it('numbers attempts per sample, also for simultaneous requests', async () => {
       const first = await lt()
@@ -293,8 +309,10 @@ describe.skipIf(!available)('laboratory and sequencing', () => {
       expect(res.status).toBe(201);
       expect(res.body.data).toMatchObject({
         sample_id: 1,
+        sample_code: 'EB-20250515-0001-001',
         analysis_id: null,
         recorded_by: 4,
+        recorded_by_name: 'Lakshmi Lab',
         metric_value: 3.5,
       });
     });
@@ -303,7 +321,7 @@ describe.skipIf(!available)('laboratory and sequencing', () => {
         .post('/api/qc-results')
         .send({ analysis_id: 1, qc_type: 'read_quality', result: 'pass' });
       expect(res.status).toBe(201);
-      expect(res.body.data).toMatchObject({ sample_id: null, analysis_id: 1 });
+      expect(res.body.data).toMatchObject({ sample_id: null, sample_code: null, analysis_id: 1 });
       const seen = await lt().get('/api/qc-results?analysis_id=1');
       expect(seen.body.data.map((r) => r.qc_id)).toContain(res.body.data.qc_id);
       expect(
@@ -378,10 +396,12 @@ describe.skipIf(!available)('laboratory and sequencing', () => {
         'extraction_id',
         'library_code',
         'library_id',
+        'project_id',
         'run_id',
         'sample_code',
         'sample_id',
       ]);
+      expect(detail.body.data.libraries.map((l) => l.project_id)).toEqual([1, 1, 1, 1, 2, 2, 2, 2]);
       // lab technician is in project 1 only: run 2 shows just the project-1 libraries
       const mine = await lt().get('/api/sequencing-runs/2');
       expect(mine.status).toBe(200);
@@ -401,6 +421,25 @@ describe.skipIf(!available)('laboratory and sequencing', () => {
       expect(res.body.data.run_code).toMatch(/^RUN-/);
       expect(res.body.data.libraries).toHaveLength(2);
       expect(res.body.data.libraries[0].library_code).toMatch(/^LIB-/);
+    });
+    it('shows on each extraction the planned or running run it is booked on', async () => {
+      const id = await newExtraction(4);
+      const extraction = async () =>
+        (await lt().get(`/api/extractions?sample_id=4&limit=100`)).body.data.find(
+          (x) => x.extraction_id === id,
+        );
+      expect(await extraction()).toMatchObject({ active_run_id: null, active_run_code: null });
+      const run = await lt()
+        .post('/api/sequencing-runs')
+        .send({ lab_id: 1, platform: 'MiSeq', run_date: today, extraction_ids: [id] });
+      expect(run.status).toBe(201);
+      const { run_id: runId, run_code: runCode } = run.body.data;
+      expect(await extraction()).toMatchObject({ active_run_id: runId, active_run_code: runCode });
+      await lt().patch(`/api/sequencing-runs/${runId}`).send({ status: 'running' });
+      expect(await extraction()).toMatchObject({ active_run_id: runId });
+      await lt().patch(`/api/sequencing-runs/${runId}`).send({ status: 'completed' });
+      // A finished run frees the extraction for another run.
+      expect(await extraction()).toMatchObject({ active_run_id: null, active_run_code: null });
     });
     it('is all-or-nothing when an extraction cannot be booked', async () => {
       const good = await newExtraction(4);

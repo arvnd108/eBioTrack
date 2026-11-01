@@ -9,7 +9,7 @@
 // only a fallback for them. The signed-in user is always "You"; with no name at all: "User <id>".
 
 import { useCallback, useMemo } from 'react';
-import type { PageMeta, Project, Region, SampleType, Site, User } from '../types';
+import type { Laboratory, PageMeta, Project, Region, SampleType, Site, User } from '../types';
 import { useAuth } from './useAuth';
 import { useFetch } from './useFetch';
 
@@ -38,6 +38,12 @@ export function useSiteIndex(projectId?: number | null, enabled = true) {
 export function useRegions() {
   const res = useFetch<Region[]>('/regions');
   const byId = useMemo(() => indexBy(res.data, (r) => r.region_id), [res.data]);
+  return { ...res, list: res.data ?? [], byId };
+}
+
+export function useLabs() {
+  const res = useFetch<Laboratory[]>('/labs');
+  const byId = useMemo(() => indexBy(res.data, (l) => l.lab_id), [res.data]);
   return { ...res, list: res.data ?? [], byId };
 }
 

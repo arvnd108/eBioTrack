@@ -42,6 +42,8 @@ const VALUE_TONES: Record<string, Tone> = {
   analyzed: 'green',
   failed: 'red',
   discarded: 'grey',
+  // run_status (planned, completed and failed are above)
+  running: 'amber',
   // qc_status / qc_result
   pending: 'amber',
   pass: 'green',

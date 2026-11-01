@@ -27,6 +27,16 @@ import {
   type CollectionEvent,
   type CollectionEventDetail,
   type CreateEventRequest,
+  type DnaExtraction,
+  type ExtractionBatch,
+  type QcResult,
+  type QcStatus,
+  type QcType,
+  type QualityControlResult,
+  type RunStatus,
+  type SequencingLibrary,
+  type SequencingRun,
+  type SequencingRunDetail,
   type EnvironmentalMeasurement,
   type HabitatType,
   type PageMeta,
@@ -65,6 +75,9 @@ import {
   mockStatusHistory,
   sampleCode,
   type StatusHistoryRow,
+  type StoredBatch,
+  type StoredExtraction,
+  type StoredQcResult,
 } from './fixtures';
 
 export interface MockResponse {
@@ -142,6 +155,11 @@ interface MockState {
   samples: Sample[];
   measurements: EnvironmentalMeasurement[];
   history: StatusHistoryRow[];
+  batches: StoredBatch[];
+  extractions: StoredExtraction[];
+  qcResults: StoredQcResult[];
+  runs: SequencingRun[];
+  libraries: SequencingLibrary[];
   nextUserId: number;
   nextProjectId: number;
   nextAuditId: number;
@@ -149,6 +167,11 @@ interface MockState {
   nextEventId: number;
   nextSampleId: number;
   nextMeasurementId: number;
+  nextBatchId: number;
+  nextExtractionId: number;
+  nextQcId: number;
+  nextRunId: number;
+  nextLibraryId: number;
 }
 
 function freshState(): MockState {
@@ -166,6 +189,11 @@ function freshState(): MockState {
     samples: mockSamples.map((x) => ({ ...x })),
     measurements: mockMeasurements.map((x) => ({ ...x })),
     history: mockStatusHistory.map((x) => ({ ...x })),
+    batches: mockBatches.map((x) => ({ ...x })),
+    extractions: mockExtractions.map((x) => ({ ...x })),
+    qcResults: mockQcResults.map((x) => ({ ...x })),
+    runs: mockRuns.map((x) => ({ ...x })),
+    libraries: mockLibraries.map((x) => ({ ...x })),
     // Application-generated IDs start at 1000 (CONTRACT D6). Like a PostgreSQL sequence, an
     // insert the database refuses (unknown region, duplicate name) still uses up its id.
     nextUserId: 1000,
@@ -175,6 +203,11 @@ function freshState(): MockState {
     nextEventId: 1000,
     nextSampleId: 1000,
     nextMeasurementId: 1000,
+    nextBatchId: 1000,
+    nextExtractionId: 1000,
+    nextQcId: 1000,
+    nextRunId: 1000,
+    nextLibraryId: 1000,
   };
 }
 
@@ -430,8 +463,8 @@ function approvedDetections(user: User) {
     .filter((a) => a.qc_flag === 'pass')
     .filter((a) => mockAnalyses.find((x) => x.analysis_id === a.analysis_id)?.status === 'approved')
     .flatMap((a) => {
-      const library = mockLibraries.find((l) => l.library_id === a.library_id)!;
-      const extraction = mockExtractions.find((x) => x.extraction_id === library.extraction_id)!;
+      const library = state.libraries.find((l) => l.library_id === a.library_id)!;
+      const extraction = state.extractions.find((x) => x.extraction_id === library.extraction_id)!;
       const sample = allSamples().find((s) => s.sample_id === extraction.sample_id)!;
       const event = events.find((e) => e.event_id === sample.event_id);
       if (!event) return [];
@@ -461,8 +494,8 @@ function auditFor(user: User): AuditEntry[] {
         .filter((s) => events.some((e) => e.event_id === s.event_id))
         .map((s) => s.sample_id),
     );
-    const extractions = mockExtractions.filter((x) => samples.has(x.sample_id));
-    const libraries = mockLibraries.filter((l) =>
+    const extractions = state.extractions.filter((x) => samples.has(x.sample_id));
+    const libraries = state.libraries.filter((l) =>
       extractions.some((x) => x.extraction_id === l.extraction_id),
     );
     const runs = new Set(libraries.map((l) => l.run_id));
@@ -480,7 +513,7 @@ function auditFor(user: User): AuditEntry[] {
       sequencing_runs: runs,
       analysis_runs: analyses,
       quality_control_results: new Set(
-        mockQcResults
+        state.qcResults
           .filter(
             (q) =>
               (q.sample_id !== null && samples.has(q.sample_id)) ||
@@ -1043,6 +1076,174 @@ function checkEventBody(body: Record<string, unknown>): ApiErrorDetail[] {
     seen.add(parameter);
   });
   return [...keyIssues, ...repeats];
+}
+
+// ---------------------------------------------------------------------------
+// T22 helpers: laboratory and sequencing (backend routes/extractions|sequencing.routes.js,
+// services/extractions|sequencing.service.js, database/procedures/lab_procedures.sql and
+// triggers/lab_triggers.sql). Messages are the API's own.
+// ---------------------------------------------------------------------------
+
+const QC_STATUSES = ['pending', 'pass', 'fail'];
+const QC_TYPES = [
+  'extraction_blank',
+  'negative_control',
+  'positive_control',
+  'concentration',
+  'contamination_check',
+  'read_quality',
+];
+const QC_RESULTS = ['pass', 'warn', 'fail'];
+const RUN_STATUSES: RunStatus[] = ['planned', 'running', 'completed', 'failed'];
+const RUN_TRANSITIONS: Record<RunStatus, RunStatus[]> = {
+  planned: ['running', 'failed'],
+  running: ['completed', 'failed'],
+  completed: [],
+  failed: [],
+};
+const MAX_EXTRACTIONS_PER_RUN = 500;
+const EARLIEST_BATCH_DATE = '2000-01-01';
+
+/** RUN-001 / LIB-0001: zero-padded to at least `width` digits (fn_lab_code). */
+const labCode = (prefix: string, id: number, width: number) =>
+  `${prefix}${String(id).padStart(width, '0')}`;
+
+const userName = (id: number | null) =>
+  id === null ? null : (state.users.find((u) => u.user_id === id)?.full_name ?? null);
+const codeOfSample = (id: number | null) =>
+  id === null ? null : (sampleById(id)?.sample_code ?? null);
+
+/** The planned or running run an extraction is booked on (the booking rule allows one). */
+function activeRunOf(extractionId: number): SequencingRun | null {
+  const runIds = state.libraries
+    .filter((l) => l.extraction_id === extractionId)
+    .map((l) => l.run_id)
+    .sort((a, b) => a - b);
+  return (
+    runIds
+      .map((id) => state.runs.find((r) => r.run_id === id)!)
+      .find((r) => r.status === 'planned' || r.status === 'running') ?? null
+  );
+}
+
+// Rows as the API returns them (CONTRACT 1.7 names and codes).
+const batchView = (b: StoredBatch): ExtractionBatch => ({
+  ...b,
+  operator_name: userName(b.operator_id),
+});
+function extractionView(x: StoredExtraction): DnaExtraction {
+  const run = activeRunOf(x.extraction_id);
+  return {
+    ...x,
+    sample_code: codeOfSample(x.sample_id)!,
+    project_id: projectOfSample(x.sample_id)!,
+    active_run_id: run?.run_id ?? null,
+    active_run_code: run?.run_code ?? null,
+  };
+}
+const qcView = (q: StoredQcResult): QualityControlResult => ({
+  ...q,
+  sample_code: codeOfSample(q.sample_id),
+  recorded_by_name: userName(q.recorded_by),
+});
+
+const projectOfSample = (sampleId: number) => {
+  const sample = sampleById(sampleId);
+  return sample ? eventById(sample.event_id)!.project_id : null;
+};
+const extractionById = (id: number) =>
+  state.extractions.find((x) => x.extraction_id === id) ?? null;
+
+/** projectAccess.js projectIdsOfRun: the projects of a run's libraries; null when no such run. */
+function projectsOfRun(runId: number): number[] | null {
+  if (!state.runs.some((r) => r.run_id === runId)) return null;
+  const ids = state.libraries
+    .filter((l) => l.run_id === runId)
+    .map((l) => projectOfSample(extractionById(l.extraction_id)!.sample_id)!);
+  return [...new Set(ids)];
+}
+
+/** projectAccess.js assertAnyProjectAccess: a membership in one of them (non-viewer to write). */
+function anyProjectAccess(
+  user: User,
+  projectIds: number[],
+  { write = false, what }: { write?: boolean; what: string },
+): MockResponse | null {
+  if (isAdmin(user)) return null;
+  const roles = projectIds.map((id) => roleIn(id, user.user_id)).filter((r) => r !== null);
+  if (roles.length === 0) return notFound(what);
+  if (write && roles.every((r) => r === 'viewer')) {
+    return fail(403, 'forbidden', 'You do not have permission to do this');
+  }
+  return null;
+}
+
+/** Visible library rows of a run for this user (all for an administrator). */
+function runDetail(run: SequencingRun, user: User): SequencingRunDetail {
+  const visible = visibleProjectIds(user);
+  const libraries = state.libraries
+    .filter((l) => l.run_id === run.run_id)
+    .sort((a, b) => a.library_id - b.library_id)
+    .flatMap((l) => {
+      const extraction = extractionById(l.extraction_id)!;
+      const projectId = projectOfSample(extraction.sample_id)!;
+      if (!visible.includes(projectId)) return [];
+      return [
+        {
+          ...l,
+          sample_id: extraction.sample_id,
+          sample_code: codeOfSample(extraction.sample_id)!,
+          project_id: projectId,
+        },
+      ];
+    });
+  return { ...run, libraries };
+}
+
+/** fn_lab_check_bookable: QC must have passed, and no other planned or running run may hold it. */
+function bookingProblem(x: StoredExtraction): MockResponse | null {
+  if (x.qc_status !== 'pass') {
+    return fail(
+      422,
+      'rule_violation',
+      `Extraction ${x.extraction_id} has not passed QC (qc_status ${x.qc_status})`,
+      [{ message: 'Only extractions with qc_status pass can be sequenced.' }],
+    );
+  }
+  const run = activeRunOf(x.extraction_id);
+  if (run) {
+    return fail(
+      422,
+      'rule_violation',
+      `Extraction ${x.extraction_id} is already booked on run ${run.run_code} (${run.status})`,
+      [{ message: 'An extraction can be in only one planned or running run at a time.' }],
+    );
+  }
+  return null;
+}
+
+/** A database foreign-key refusal, worded as the API passes it through. */
+const missingKey = (column: string, value: unknown, table: string) => {
+  const detail = `Key (${column})=(${String(value)}) is not present in table "${table}".`;
+  return fail(422, 'invalid_reference', detail, [{ message: detail }]);
+};
+
+/** A new library row and its audit entry. */
+function addLibraryRow(runId: number, extractionId: number, actorId: number, now: string) {
+  const id = state.nextLibraryId++;
+  const library: SequencingLibrary = {
+    library_id: id,
+    library_code: labCode('LIB-', id, 4),
+    extraction_id: extractionId,
+    run_id: runId,
+    created_at: now,
+  };
+  state.libraries.push(library);
+  writeAudit(actorId, 'sequencing_libraries', id, 'insert', null, {
+    ...library,
+    created_at: jsonbTime(now),
+  });
+  return library;
 }
 
 function memberView(row: MemberRow) {
@@ -1862,7 +2063,7 @@ const routes: MockRoute[] = [
           project_id: event.project_id,
         },
         site: { site_id: site.site_id, name: site.name },
-        extractions: mockExtractions
+        extractions: state.extractions
           .filter((x) => x.sample_id === sample.sample_id)
           .sort((a, b) => a.attempt_number - b.attempt_number || a.extraction_id - b.extraction_id)
           .map(({ extraction_id, attempt_number, qc_status }) => ({
@@ -1939,78 +2140,611 @@ const routes: MockRoute[] = [
     },
   },
 
-  // Laboratory ---------------------------------------------------------------------------------
+  // Laboratory (T22) ----------------------------------------------------------------------------
   { method: 'GET', path: '/labs', handler: () => ok(mockLabs) },
   { method: 'GET', path: '/markers', handler: () => ok(mockMarkers) },
   {
     method: 'GET',
     path: '/extraction-batches',
     handler: ({ query }) => {
+      const bad = checkIdString(query.get('lab_id'), 'lab_id');
+      if (bad.length) return validationError(bad);
       const labId = num(query, 'lab_id');
-      return paginate(
-        mockBatches.filter((b) => labId === null || b.lab_id === labId),
-        query,
-      );
+      const rows = state.batches
+        .filter((b) => labId === null || b.lab_id === labId)
+        .sort((a, b) => a.batch_id - b.batch_id)
+        .map(batchView);
+      return paginate(rows, query, ['batch_id', 'extraction_date'], 'batch_id');
+    },
+  },
+  {
+    method: 'POST',
+    path: '/extraction-batches',
+    roles: ['principal_investigator', 'lab_technician'],
+    handler: ({ body, user }) => {
+      const input = (body ?? {}) as Record<string, unknown>;
+      const details = [...checkId(input.lab_id, 'lab_id')];
+      if (typeof input.extraction_date !== 'string') {
+        details.push({
+          field: 'extraction_date',
+          message: `Invalid input: expected string, received ${typeName(input.extraction_date)}`,
+        });
+      } else {
+        const dateIssues = checkDate(input.extraction_date, 'extraction_date');
+        const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+        if (dateIssues.length) details.push(...dateIssues);
+        else if (input.extraction_date < EARLIEST_BATCH_DATE || input.extraction_date > tomorrow) {
+          details.push({
+            field: 'extraction_date',
+            message: 'must be between 2000-01-01 and tomorrow',
+          });
+        }
+      }
+      if (present(input.kit_name))
+        details.push(...checkText(input.kit_name, 'kit_name', 200, true));
+      if (present(input.notes)) details.push(...checkText(input.notes, 'notes', 2000, false));
+      details.push(...unknownKeys(input, ['lab_id', 'extraction_date', 'kit_name', 'notes']));
+      if (details.length) return validationError(details);
+
+      const batch_id = state.nextBatchId++; // used up even when the insert fails
+      if (!mockLabs.some((l) => l.lab_id === input.lab_id)) {
+        return missingKey('lab_id', input.lab_id, 'laboratories');
+      }
+      const batch: StoredBatch = {
+        batch_id,
+        lab_id: input.lab_id as number,
+        operator_id: user.user_id,
+        extraction_date: input.extraction_date as string,
+        kit_name: present(input.kit_name) ? (input.kit_name as string).trim() : null,
+        notes: present(input.notes) ? (input.notes as string).trim() : null,
+        created_at: new Date().toISOString(),
+      };
+      state.batches.push(batch);
+      return ok(batchView(batch), undefined, 201);
     },
   },
   {
     method: 'GET',
     path: '/extractions',
-    handler: ({ query }) => {
+    handler: ({ query, user }) => {
+      const qc = query.get('qc_status');
+      const bad = [
+        ...checkIdString(query.get('sample_id'), 'sample_id'),
+        ...checkIdString(query.get('batch_id'), 'batch_id'),
+        ...(qc === null ? [] : checkEnum(qc, 'qc_status', QC_STATUSES)),
+      ];
+      if (bad.length) return validationError(bad);
       const sampleId = num(query, 'sample_id');
       const batchId = num(query, 'batch_id');
-      const qc = query.get('qc_status');
-      const rows = mockExtractions.filter(
-        (x) =>
-          (sampleId === null || x.sample_id === sampleId) &&
-          (batchId === null || x.batch_id === batchId) &&
-          (!qc || x.qc_status === qc),
+      if (sampleId !== null) {
+        const projectId = projectOfSample(sampleId);
+        if (projectId === null) return notFound('Sample');
+        const denied = projectAccess(user, projectId, { what: 'Sample' });
+        if (denied) return denied;
+      }
+      const visible = visibleProjectIds(user);
+      const rows = state.extractions
+        .filter(
+          (x) =>
+            visible.includes(projectOfSample(x.sample_id)!) &&
+            (sampleId === null || x.sample_id === sampleId) &&
+            (batchId === null || x.batch_id === batchId) &&
+            (!qc || x.qc_status === qc),
+        )
+        .sort((a, b) => a.extraction_id - b.extraction_id)
+        .map(extractionView);
+      return paginate(rows, query, ['extraction_id', 'created_at'], 'extraction_id');
+    },
+  },
+  {
+    // services/extractions.service.js createExtraction: the attempt number is the sample's next
+    // one; a failed or discarded sample cannot be extracted; a stored sample becomes extracted.
+    method: 'POST',
+    path: '/extractions',
+    roles: ['principal_investigator', 'lab_technician'],
+    handler: ({ body, user }) => {
+      const input = (body ?? {}) as Record<string, unknown>;
+      const details = [
+        ...checkId(input.sample_id, 'sample_id'),
+        ...checkId(input.batch_id, 'batch_id'),
+        ...(present(input.concentration_ng_ul)
+          ? checkNumber(input.concentration_ng_ul, 'concentration_ng_ul', {
+              min: 0,
+              minMessage: 'must be 0 or more',
+              max: 9999999.999,
+            })
+          : []),
+        ...(present(input.purity_a260_280)
+          ? checkNumber(input.purity_a260_280, 'purity_a260_280', {
+              min: 0,
+              minMessage: 'must be 0 or more',
+              max: 999.99,
+            })
+          : []),
+        ...unknownKeys(input, ['sample_id', 'batch_id', 'concentration_ng_ul', 'purity_a260_280']),
+      ];
+      if (details.length) return validationError(details);
+      const sample = sampleById(input.sample_id as number);
+      if (!sample) return notFound('Sample');
+      const denied = projectAccess(user, eventById(sample.event_id)!.project_id, {
+        write: true,
+        what: 'Sample',
+      });
+      if (denied) return denied;
+      if (sample.status === 'failed' || sample.status === 'discarded') {
+        return fail(422, 'rule_violation', `Sample is ${sample.status}; it cannot be extracted`, [
+          { field: 'sample_id', message: `sample is ${sample.status}` },
+        ]);
+      }
+      const extraction_id = state.nextExtractionId++; // used up even when the insert fails
+      if (!state.batches.some((b) => b.batch_id === input.batch_id)) {
+        return missingKey('batch_id', input.batch_id, 'extraction_batches');
+      }
+      const now = new Date().toISOString();
+      const extraction: StoredExtraction = {
+        extraction_id,
+        sample_id: sample.sample_id,
+        batch_id: input.batch_id as number,
+        attempt_number:
+          Math.max(
+            0,
+            ...state.extractions
+              .filter((x) => x.sample_id === sample.sample_id)
+              .map((x) => x.attempt_number),
+          ) + 1,
+        concentration_ng_ul: present(input.concentration_ng_ul)
+          ? round(input.concentration_ng_ul as number, 3)
+          : null,
+        purity_a260_280: present(input.purity_a260_280)
+          ? round(input.purity_a260_280 as number, 2)
+          : null,
+        qc_status: 'pending',
+        created_at: now,
+      };
+      state.extractions.push(extraction);
+      writeAudit(user.user_id, 'dna_extractions', extraction_id, 'insert', null, {
+        ...extraction,
+        created_at: jsonbTime(now),
+      });
+      // trg_dna_extractions_sample_status: stored -> extracted, with a history row.
+      if (sample.status === 'stored') {
+        state.history.push({
+          sample_id: sample.sample_id,
+          old_status: 'stored',
+          new_status: 'extracted',
+          changed_at: now,
+          changed_by: user.user_id,
+          note: null,
+        });
+        writeAudit(
+          user.user_id,
+          'samples',
+          sample.sample_id,
+          'update',
+          { status: 'stored' },
+          {
+            status: 'extracted',
+          },
+        );
+        sample.status = 'extracted';
+      }
+      return ok(extractionView(extraction), undefined, 201);
+    },
+  },
+  {
+    // The QC verdict is final (pending -> pass | fail, trg_dna_extractions_qc_status);
+    // measurements stay editable.
+    method: 'PATCH',
+    path: '/extractions/:id',
+    roles: ['principal_investigator', 'lab_technician'],
+    handler: ({ params, body, user }) => {
+      const input = (body ?? {}) as Record<string, unknown>;
+      const fieldIssues = [
+        ...(input.qc_status === undefined
+          ? []
+          : checkEnum(input.qc_status, 'qc_status', ['pass', 'fail'])),
+        ...(input.concentration_ng_ul === undefined || input.concentration_ng_ul === null
+          ? []
+          : checkNumber(input.concentration_ng_ul, 'concentration_ng_ul', {
+              min: 0,
+              minMessage: 'must be 0 or more',
+              max: 9999999.999,
+            })),
+        ...(input.purity_a260_280 === undefined || input.purity_a260_280 === null
+          ? []
+          : checkNumber(input.purity_a260_280, 'purity_a260_280', {
+              min: 0,
+              minMessage: 'must be 0 or more',
+              max: 999.99,
+            })),
+      ];
+      const keyIssues = unknownKeys(input, ['qc_status', 'concentration_ng_ul', 'purity_a260_280']);
+      const empty =
+        fieldIssues.length === 0 && Object.keys(input).length === 0
+          ? [
+              {
+                field: 'root',
+                message:
+                  'at least one of qc_status, concentration_ng_ul, purity_a260_280 is required',
+              },
+            ]
+          : [];
+      const bad = [...checkIdString(params.id, 'id'), ...fieldIssues, ...keyIssues, ...empty];
+      if (bad.length) return validationError(bad);
+      const extraction = extractionById(Number(params.id));
+      if (!extraction) return notFound('Extraction');
+      const denied = projectAccess(user, projectOfSample(extraction.sample_id)!, {
+        write: true,
+        what: 'Extraction',
+      });
+      if (denied) return denied;
+      const next = { ...extraction };
+      if (input.qc_status !== undefined) next.qc_status = input.qc_status as QcStatus;
+      if (input.concentration_ng_ul !== undefined) {
+        next.concentration_ng_ul =
+          input.concentration_ng_ul === null ? null : round(input.concentration_ng_ul as number, 3);
+      }
+      if (input.purity_a260_280 !== undefined) {
+        next.purity_a260_280 =
+          input.purity_a260_280 === null ? null : round(input.purity_a260_280 as number, 2);
+      }
+      if (next.qc_status !== extraction.qc_status && extraction.qc_status !== 'pending') {
+        return fail(
+          409,
+          'invalid_transition',
+          `Extraction ${extraction.extraction_id} cannot move from QC status ${extraction.qc_status} to ${next.qc_status}`,
+          [
+            {
+              message:
+                'Allowed: pending -> pass or fail. A QC verdict is final; record a new extraction attempt instead.',
+            },
+          ],
+        );
+      }
+      writeAudit(
+        user.user_id,
+        'dna_extractions',
+        extraction.extraction_id,
+        'update',
+        { ...extraction },
+        {
+          ...next,
+        },
       );
-      return paginate(rows, query);
+      Object.assign(extraction, next);
+      return ok(extractionView(extraction));
     },
   },
   {
     method: 'GET',
     path: '/qc-results',
-    handler: ({ query }) => {
+    handler: ({ query, user }) => {
+      const result = query.get('result');
+      const bad = [
+        ...checkIdString(query.get('sample_id'), 'sample_id'),
+        ...checkIdString(query.get('analysis_id'), 'analysis_id'),
+        ...(result === null ? [] : checkEnum(result, 'result', QC_RESULTS)),
+      ];
+      if (bad.length) return validationError(bad);
       const sampleId = num(query, 'sample_id');
       const analysisId = num(query, 'analysis_id');
-      const result = query.get('result');
-      const rows = mockQcResults.filter(
-        (r) =>
-          (sampleId === null || r.sample_id === sampleId) &&
-          (analysisId === null || r.analysis_id === analysisId) &&
-          (!result || r.result === result),
-      );
-      return paginate(rows, query);
+      if (sampleId !== null) {
+        const projectId = projectOfSample(sampleId);
+        if (projectId === null) return notFound('Sample');
+        const denied = projectAccess(user, projectId, { what: 'Sample' });
+        if (denied) return denied;
+      }
+      if (analysisId !== null) {
+        const analysis = mockAnalyses.find((a) => a.analysis_id === analysisId);
+        if (!analysis) return notFound('Analysis');
+        const denied = anyProjectAccess(user, projectsOfRun(analysis.run_id) ?? [], {
+          what: 'Analysis',
+        });
+        if (denied) return denied;
+      }
+      const visible = visibleProjectIds(user);
+      const seen = (q: StoredQcResult) => {
+        if (isAdmin(user)) return true;
+        if (q.sample_id !== null) return visible.includes(projectOfSample(q.sample_id)!);
+        const analysis = mockAnalyses.find((a) => a.analysis_id === q.analysis_id)!;
+        return (projectsOfRun(analysis.run_id) ?? []).some((id) => visible.includes(id));
+      };
+      const rows = state.qcResults
+        .filter(
+          (q) =>
+            seen(q) &&
+            (sampleId === null || q.sample_id === sampleId) &&
+            (analysisId === null || q.analysis_id === analysisId) &&
+            (!result || q.result === result),
+        )
+        // Newest first unless ?sort is given (recorded_at DESC, qc_id DESC).
+        .sort((a, b) => Date.parse(b.recorded_at) - Date.parse(a.recorded_at) || b.qc_id - a.qc_id);
+      if (query.get('sort')) rows.sort((a, b) => a.qc_id - b.qc_id);
+      return paginate(rows.map(qcView), query, ['qc_id', 'recorded_at'], 'qc_id');
+    },
+  },
+  {
+    method: 'POST',
+    path: '/qc-results',
+    roles: ['principal_investigator', 'lab_technician'],
+    handler: ({ body, user }) => {
+      const input = (body ?? {}) as Record<string, unknown>;
+      const fieldIssues = [
+        ...(present(input.sample_id) ? checkId(input.sample_id, 'sample_id') : []),
+        ...(present(input.analysis_id) ? checkId(input.analysis_id, 'analysis_id') : []),
+        ...checkEnum(input.qc_type, 'qc_type', QC_TYPES),
+        ...checkEnum(input.result, 'result', QC_RESULTS),
+        ...(present(input.metric_value) ? checkNumber(input.metric_value, 'metric_value') : []),
+        ...(present(input.notes) ? checkText(input.notes, 'notes', 2000, false) : []),
+      ];
+      const keyIssues = unknownKeys(input, [
+        'sample_id',
+        'analysis_id',
+        'qc_type',
+        'result',
+        'metric_value',
+        'notes',
+      ]);
+      // The refine runs only on a body whose fields are valid.
+      const parent =
+        fieldIssues.length === 0 && !present(input.sample_id) && !present(input.analysis_id)
+          ? [{ field: 'sample_id', message: 'sample_id or analysis_id is required' }]
+          : [];
+      const bad = [...fieldIssues, ...keyIssues, ...parent];
+      if (bad.length) return validationError(bad);
+      if (present(input.sample_id)) {
+        const projectId = projectOfSample(input.sample_id as number);
+        if (projectId === null) return notFound('Sample');
+        const denied = projectAccess(user, projectId, { write: true, what: 'Sample' });
+        if (denied) return denied;
+      }
+      if (present(input.analysis_id)) {
+        const analysis = mockAnalyses.find((a) => a.analysis_id === input.analysis_id);
+        if (!analysis) return notFound('Analysis');
+        const denied = anyProjectAccess(user, projectsOfRun(analysis.run_id) ?? [], {
+          write: true,
+          what: 'Analysis',
+        });
+        if (denied) return denied;
+      }
+      const now = new Date().toISOString();
+      const row: StoredQcResult = {
+        qc_id: state.nextQcId++,
+        sample_id: present(input.sample_id) ? (input.sample_id as number) : null,
+        analysis_id: present(input.analysis_id) ? (input.analysis_id as number) : null,
+        qc_type: input.qc_type as QcType,
+        result: input.result as QcResult,
+        metric_value: present(input.metric_value) ? (input.metric_value as number) : null,
+        notes: present(input.notes) ? (input.notes as string).trim() : null,
+        recorded_by: user.user_id,
+        recorded_at: now,
+      };
+      state.qcResults.push(row);
+      writeAudit(user.user_id, 'quality_control_results', row.qc_id, 'insert', null, {
+        ...row,
+        recorded_at: jsonbTime(now),
+      });
+      return ok(qcView(row), undefined, 201);
     },
   },
   {
     method: 'GET',
     path: '/sequencing-runs',
-    handler: ({ query }) => {
-      const labId = num(query, 'lab_id');
+    handler: ({ query, user }) => {
       const status = query.get('status');
-      const rows = mockRuns.filter(
-        (r) => (labId === null || r.lab_id === labId) && (!status || r.status === status),
-      );
-      return paginate(rows, query);
+      const bad = [
+        ...checkIdString(query.get('lab_id'), 'lab_id'),
+        ...(status === null ? [] : checkEnum(status, 'status', RUN_STATUSES)),
+      ];
+      if (bad.length) return validationError(bad);
+      const labId = num(query, 'lab_id');
+      const visible = visibleProjectIds(user);
+      const rows = state.runs
+        .filter(
+          (r) =>
+            (isAdmin(user) || (projectsOfRun(r.run_id) ?? []).some((id) => visible.includes(id))) &&
+            (labId === null || r.lab_id === labId) &&
+            (!status || r.status === status),
+        )
+        .sort((a, b) => a.run_id - b.run_id);
+      return paginate(rows, query, ['run_id', 'created_at'], 'run_id');
     },
   },
   {
     method: 'GET',
     path: '/sequencing-runs/:id',
-    handler: ({ params }) => {
-      const run = mockRuns.find((r) => r.run_id === Number(params.id));
-      if (!run) return notFound('Sequencing run');
-      const libraries = mockLibraries
-        .filter((l) => l.run_id === run.run_id)
-        .map((l) => {
-          const extraction = mockExtractions.find((x) => x.extraction_id === l.extraction_id)!;
-          const sample = allSamples().find((s) => s.sample_id === extraction.sample_id)!;
-          return { ...l, sample_id: sample.sample_id, sample_code: sample.sample_code };
+    handler: ({ params, user }) => {
+      const bad = checkIdString(params.id, 'id');
+      if (bad.length) return validationError(bad);
+      const projects = projectsOfRun(Number(params.id));
+      if (projects === null) return notFound('Sequencing run');
+      const denied = anyProjectAccess(user, projects, { what: 'Sequencing run' });
+      if (denied) return denied;
+      return ok(
+        runDetail(
+          state.runs.find((r) => r.run_id === Number(params.id))!,
+          user,
+        ),
+      );
+    },
+  },
+  {
+    // services/sequencing.service.js createRun + create_sequencing_run(): every extraction must be
+    // writable for the caller, then each (in id order) must have passed QC and be free; the run
+    // gets RUN-<id> and one LIB-<id> per extraction. All or nothing.
+    method: 'POST',
+    path: '/sequencing-runs',
+    roles: ['principal_investigator', 'lab_technician'],
+    handler: ({ body, user }) => {
+      const input = (body ?? {}) as Record<string, unknown>;
+      const details = [
+        ...checkId(input.lab_id, 'lab_id'),
+        ...checkText(input.platform, 'platform', 100, true),
+        ...(typeof input.run_date === 'string'
+          ? checkDate(input.run_date, 'run_date')
+          : [
+              {
+                field: 'run_date',
+                message: `Invalid input: expected string, received ${typeName(input.run_date)}`,
+              },
+            ]),
+      ];
+      const ids = input.extraction_ids;
+      if (!Array.isArray(ids)) {
+        details.push({
+          field: 'extraction_ids',
+          message: `Invalid input: expected array, received ${typeName(ids)}`,
         });
-      return ok({ ...run, libraries });
+      } else {
+        const itemIssues = ids.flatMap((id, i) => checkId(id, `extraction_ids[${i}]`));
+        details.push(...itemIssues);
+        if (ids.length === 0) {
+          details.push({ field: 'extraction_ids', message: 'at least one extraction is required' });
+        } else if (ids.length > MAX_EXTRACTIONS_PER_RUN) {
+          details.push({
+            field: 'extraction_ids',
+            message: `Too big: expected array to have <=${MAX_EXTRACTIONS_PER_RUN} items`,
+          });
+        } else if (itemIssues.length === 0 && new Set(ids).size !== ids.length) {
+          details.push({ field: 'extraction_ids', message: 'extraction_ids must be distinct' });
+        }
+      }
+      details.push(...unknownKeys(input, ['lab_id', 'platform', 'run_date', 'extraction_ids']));
+      if (details.length) return validationError(details);
+
+      const extractionIds = ids as number[];
+      for (const id of extractionIds) {
+        const extraction = extractionById(id);
+        if (!extraction) return notFound('Extraction');
+        const denied = projectAccess(user, projectOfSample(extraction.sample_id)!, {
+          write: true,
+          what: 'Extraction',
+        });
+        if (denied) return denied;
+      }
+      const ordered = [...extractionIds].sort((a, b) => a - b);
+      for (const id of ordered) {
+        const problem = bookingProblem(extractionById(id)!);
+        if (problem) return problem;
+      }
+      const run_id = state.nextRunId++; // used up even when the insert fails
+      if (!mockLabs.some((l) => l.lab_id === input.lab_id)) {
+        return missingKey('lab_id', input.lab_id, 'laboratories');
+      }
+      const now = new Date().toISOString();
+      const run: SequencingRun = {
+        run_id,
+        run_code: labCode('RUN-', run_id, 3),
+        lab_id: input.lab_id as number,
+        platform: (input.platform as string).trim(),
+        run_date: input.run_date as string,
+        status: 'planned',
+        created_at: now,
+      };
+      state.runs.push(run);
+      writeAudit(user.user_id, 'sequencing_runs', run_id, 'insert', null, {
+        ...run,
+        created_at: jsonbTime(now),
+      });
+      for (const id of ordered) addLibraryRow(run_id, id, user.user_id, now);
+      return ok(runDetail(run, user), undefined, 201);
+    },
+  },
+  {
+    // assign_extraction_to_run(): only a planned run takes new libraries.
+    method: 'POST',
+    path: '/sequencing-runs/:id/libraries',
+    roles: ['principal_investigator', 'lab_technician'],
+    handler: ({ params, body, user }) => {
+      const input = (body ?? {}) as Record<string, unknown>;
+      const bad = [
+        ...checkIdString(params.id, 'id'),
+        ...checkId(input.extraction_id, 'extraction_id'),
+        ...unknownKeys(input, ['extraction_id']),
+      ];
+      if (bad.length) return validationError(bad);
+      const runId = Number(params.id);
+      const projects = projectsOfRun(runId);
+      if (projects === null) return notFound('Sequencing run');
+      const extraction = extractionById(input.extraction_id as number);
+      if (!extraction) return notFound('Extraction');
+      const denied = projectAccess(user, projectOfSample(extraction.sample_id)!, {
+        write: true,
+        what: 'Extraction',
+      });
+      if (denied) return denied;
+      // A run with libraries only in other projects is not the caller's to extend.
+      if (projects.length > 0) {
+        const hidden = anyProjectAccess(user, projects, { write: true, what: 'Sequencing run' });
+        if (hidden) return hidden;
+      }
+      const run = state.runs.find((r) => r.run_id === runId)!;
+      if (run.status !== 'planned') {
+        return fail(
+          409,
+          'invalid_transition',
+          `Run ${run.run_code} is ${run.status}; libraries can only be added to a planned run`,
+          [],
+        );
+      }
+      const problem = bookingProblem(extraction);
+      if (problem) return problem;
+      const library = addLibraryRow(
+        runId,
+        extraction.extraction_id,
+        user.user_id,
+        new Date().toISOString(),
+      );
+      return ok(library, undefined, 201);
+    },
+  },
+  {
+    method: 'PATCH',
+    path: '/sequencing-runs/:id',
+    roles: ['principal_investigator', 'lab_technician'],
+    handler: ({ params, body, user }) => {
+      const input = (body ?? {}) as Record<string, unknown>;
+      const bad = [
+        ...checkIdString(params.id, 'id'),
+        ...checkEnum(input.status, 'status', RUN_STATUSES),
+        ...unknownKeys(input, ['status']),
+      ];
+      if (bad.length) return validationError(bad);
+      const runId = Number(params.id);
+      const projects = projectsOfRun(runId);
+      if (projects === null) return notFound('Sequencing run');
+      const denied = anyProjectAccess(user, projects, { write: true, what: 'Sequencing run' });
+      if (denied) return denied;
+      const run = state.runs.find((r) => r.run_id === runId)!;
+      const next = input.status as RunStatus;
+      if (run.status === next) {
+        return fail(409, 'invalid_transition', `Run is already ${run.status}`, []);
+      }
+      if (!RUN_TRANSITIONS[run.status].includes(next)) {
+        return fail(
+          409,
+          'invalid_transition',
+          `Run ${run.run_code} cannot move from ${run.status} to ${next}`,
+          [
+            {
+              message:
+                'Allowed: planned -> running, running -> completed or failed, planned -> failed.',
+            },
+          ],
+        );
+      }
+      writeAudit(
+        user.user_id,
+        'sequencing_runs',
+        run.run_id,
+        'update',
+        { status: run.status },
+        {
+          status: next,
+        },
+      );
+      run.status = next;
+      return ok({ ...run });
     },
   },
 

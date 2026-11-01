@@ -7,6 +7,10 @@
 // samples in its run). Batches, labs and markers carry no project.
 // numeric columns are cast to float8 so the client gets JSON numbers; `date` is formatted in SQL
 // as YYYY-MM-DD so no time-zone conversion can shift it.
+// Rows also name what their ids point to (CONTRACT 1.7), so every role can show them without
+// calling administrator-only lists: operator_name, recorded_by_name, sample_code, an extraction's
+// project_id (so the page can tell where the caller may write), and the planned or running run it
+// is booked on (active_run_id / active_run_code, null when none).
 // The attempt number is the one lab rule computed here (no SQL object owns it): inside the
 // transaction that holds the sample row lock.
 import { query, queryOne, withTransaction } from '../db/query.js';
@@ -25,15 +29,29 @@ const extractionNotFound = () => new AppError(404, 'not_found', 'Extraction not 
 const analysisNotFound = () => new AppError(404, 'not_found', 'Analysis not found');
 
 const BATCH_COLUMNS = `
-  b.batch_id, b.lab_id, b.operator_id, to_char(b.extraction_date, 'YYYY-MM-DD') AS extraction_date,
-  b.kit_name, b.notes, b.created_at`;
+  b.batch_id, b.lab_id, b.operator_id,
+  (SELECT u.full_name FROM users u WHERE u.user_id = b.operator_id) AS operator_name,
+  to_char(b.extraction_date, 'YYYY-MM-DD') AS extraction_date, b.kit_name, b.notes, b.created_at`;
+// The booking rule allows at most one planned or running run per extraction (CONTRACT 4.3).
+const ACTIVE_RUN = (column) => `
+  (SELECT r.${column} FROM sequencing_libraries l JOIN sequencing_runs r ON r.run_id = l.run_id
+    WHERE l.extraction_id = x.extraction_id AND r.status IN ('planned', 'running')
+    ORDER BY r.run_id LIMIT 1)`;
 const EXTRACTION_COLUMNS = `
-  x.extraction_id, x.sample_id, x.batch_id, x.attempt_number,
+  x.extraction_id, x.sample_id,
+  (SELECT sc.sample_code FROM samples sc WHERE sc.sample_id = x.sample_id) AS sample_code,
+  (SELECT ec.project_id FROM samples sc JOIN collection_events ec ON ec.event_id = sc.event_id
+    WHERE sc.sample_id = x.sample_id) AS project_id,
+  x.batch_id, x.attempt_number,
   x.concentration_ng_ul::float8 AS concentration_ng_ul, x.purity_a260_280::float8 AS purity_a260_280,
-  x.qc_status, x.created_at`;
+  x.qc_status, x.created_at,
+  ${ACTIVE_RUN('run_id')} AS active_run_id, ${ACTIVE_RUN('run_code')} AS active_run_code`;
 const QC_COLUMNS = `
-  q.qc_id, q.sample_id, q.analysis_id, q.qc_type, q.result, q.metric_value::float8 AS metric_value,
-  q.notes, q.recorded_by, q.recorded_at`;
+  q.qc_id, q.sample_id,
+  (SELECT sc.sample_code FROM samples sc WHERE sc.sample_id = q.sample_id) AS sample_code,
+  q.analysis_id, q.qc_type, q.result, q.metric_value::float8 AS metric_value, q.notes,
+  q.recorded_by, (SELECT u.full_name FROM users u WHERE u.user_id = q.recorded_by) AS recorded_by_name,
+  q.recorded_at`;
 
 const BATCH_SORT = { batch_id: 'b.batch_id', extraction_date: 'b.extraction_date' };
 const EXTRACTION_SORT = { extraction_id: 'x.extraction_id', created_at: 'x.created_at' };

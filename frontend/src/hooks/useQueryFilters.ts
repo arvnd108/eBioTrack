@@ -23,10 +23,12 @@ export function useQueryFilters<K extends string>(keys: readonly K[]) {
   );
 
   const setFilters = useCallback(
-    (changes: Partial<Record<K, string>>) => {
+    (changes: Partial<Record<K, string>>, { keepOthers = true }: { keepOthers?: boolean } = {}) => {
       setParams(
         (current) => {
-          const next = new URLSearchParams(current);
+          // keepOthers: false starts from an empty query (for example a new tab drops the old
+          // tab's filters).
+          const next = new URLSearchParams(keepOthers ? current : undefined);
           for (const [key, value] of Object.entries(changes) as [K, string | undefined][]) {
             if (value) next.set(key, value);
             else next.delete(key);

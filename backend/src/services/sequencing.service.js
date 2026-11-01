@@ -6,7 +6,8 @@
 // calls them and maps their errors (EB001 -> 409, EB002 -> 422, 23503 -> 422).
 // A run has no project of its own: it is visible to a non-administrator when at least one of its
 // libraries belongs to a sample in one of their projects (a run with no libraries is invisible to
-// them), and its libraries are listed only for the projects they can see.
+// them), and its libraries are listed only for the projects they can see. Each library names its
+// sample and project (CONTRACT 1.7), so the page can tell where the caller may write.
 import { callProcedure, query, queryOne, withTransaction } from '../db/query.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { accessibleProjectIds } from '../middleware/authorize.js';
@@ -40,10 +41,11 @@ async function readRun(runId, visible, executor) {
   if (!run) return null;
   const libraries = await query(
     `SELECT l.library_id, l.library_code, l.extraction_id, l.run_id, l.created_at,
-            x.sample_id, s.sample_code
+            x.sample_id, s.sample_code, ev.project_id
        FROM sequencing_libraries l
        JOIN dna_extractions x ON x.extraction_id = l.extraction_id
        JOIN samples s ON s.sample_id = x.sample_id
+       JOIN collection_events ev ON ev.event_id = s.event_id
       WHERE l.run_id = $1 AND ($2::bigint[] IS NULL OR ${VISIBLE_LIBRARY})
       ORDER BY l.library_id`,
     [runId, visible],

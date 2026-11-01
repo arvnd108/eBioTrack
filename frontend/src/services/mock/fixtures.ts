@@ -398,7 +398,15 @@ export const mockLabs: Laboratory[] = [
   { lab_id: 2, name: 'Kolkata Estuarine Genomics Laboratory', location: 'Kolkata, West Bengal' },
 ];
 
-export const mockBatches: ExtractionBatch[] = [
+/** Stored rows: the API adds the names and codes they point to (CONTRACT 1.7, see mockApi). */
+export type StoredBatch = Omit<ExtractionBatch, 'operator_name'>;
+export type StoredExtraction = Omit<
+  DnaExtraction,
+  'sample_code' | 'project_id' | 'active_run_id' | 'active_run_code'
+>;
+export type StoredQcResult = Omit<QualityControlResult, 'sample_code' | 'recorded_by_name'>;
+
+export const mockBatches: StoredBatch[] = [
   {
     batch_id: 1,
     lab_id: 1,
@@ -429,7 +437,7 @@ export const mockBatches: ExtractionBatch[] = [
 ];
 
 /** Extraction n for sample n (seed 030); 1–16 pass, 17 fails. */
-export const mockExtractions: DnaExtraction[] = [
+export const mockExtractions: StoredExtraction[] = [
   {
     extraction_id: 1,
     sample_id: 1,
@@ -633,7 +641,7 @@ export const mockLibraries: SequencingLibrary[] = Array.from({ length: 16 }, (_,
 }));
 
 /** Seed 030: all linked by sample_id; analysis-linked QC rows are not seeded. */
-export const mockQcResults: QualityControlResult[] = [
+export const mockQcResults: StoredQcResult[] = [
   {
     qc_id: 1,
     sample_id: 1,

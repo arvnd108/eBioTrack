@@ -35,7 +35,7 @@ Seed rows: `database/seeds/030_seed_lab.sql` (2 labs, 3 batches, 17 extractions,
 
 ### `v_lab_pipeline_status`
 
-One row per sample (every sample, including ones not yet extracted). Collapses a sample's history to its latest extraction attempt and, for that extraction, the library on its most recent run (latest `run_date`, then newest `created_at`). Used by the Lab processing page (T27), the lab routes (T22), and the dashboard.
+One row per sample (every sample, including ones not yet extracted). Collapses a sample's history to its latest extraction attempt and, for that extraction, the library on its most recent run (latest `run_date`, then newest `created_at`). Written for the Lab processing page, the lab routes and the dashboard; no API route reads it yet (the T22 routes and the T27 page work from the tables directly), so it serves ad hoc queries and reports for now.
 
 | Column | Type | Meaning |
 | --- | --- | --- |
