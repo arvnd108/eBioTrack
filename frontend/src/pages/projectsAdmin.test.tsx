@@ -237,6 +237,8 @@ describe('Administration page', () => {
     const rows = await rowsOf('Audit entries');
     expect(rows.some((r) => r.textContent?.includes('Users #'))).toBe(false);
     expect(within(table('Audit entries')).queryByText('Asha Admin')).toBeNull();
+    // The PI's own ID is shown as "You", not "User 2".
+    expect(rows.some((r) => /User 2\b/.test(r.textContent ?? ''))).toBe(false);
   });
 
   it('filters the audit log and rejects a reversed day range', async () => {
