@@ -35,19 +35,15 @@ import type {
 // ---------------------------------------------------------------------------
 
 export const mockRoles: Role[] = [
-  { role_id: 1, role_name: 'administrator', description: 'Manages users, roles, and settings' },
+  { role_id: 1, role_name: 'administrator', description: 'Manages users, roles, and all projects' },
   {
     role_id: 2,
     role_name: 'principal_investigator',
-    description: 'Leads projects and approves analyses',
+    description: 'Leads projects; approves analyses',
   },
-  { role_id: 3, role_name: 'field_researcher', description: 'Records sites, events, and samples' },
-  {
-    role_id: 4,
-    role_name: 'lab_technician',
-    description: 'Records extractions, QC, and sequencing',
-  },
-  { role_id: 5, role_name: 'analyst', description: 'Imports and reviews taxonomic assignments' },
+  { role_id: 3, role_name: 'field_researcher', description: 'Collects field samples' },
+  { role_id: 4, role_name: 'lab_technician', description: 'Processes samples in the lab' },
+  { role_id: 5, role_name: 'analyst', description: 'Imports and reviews detections' },
   { role_id: 6, role_name: 'viewer', description: 'Read-only access' },
 ];
 
@@ -96,11 +92,21 @@ export const mockProjects: Omit<Project, 'your_role'>[] = [
   },
 ];
 
-/** project_members: project_id -> user_id -> project role (user 1 is admin by global role). */
-export const mockMemberships: Record<number, Record<number, ProjectRole>> = {
-  1: { 2: 'owner', 3: 'contributor', 4: 'contributor', 5: 'contributor', 6: 'viewer' },
-  2: { 2: 'owner', 3: 'contributor' },
-};
+/** project_members, as seeded (user 1 is an administrator by global role, a member of nothing). */
+export const mockProjectMembers: {
+  project_id: number;
+  user_id: number;
+  project_role: ProjectRole;
+  joined_at: string;
+}[] = [
+  { project_id: 1, user_id: 2, project_role: 'owner', joined_at: '2025-01-10T09:30:00Z' },
+  { project_id: 1, user_id: 3, project_role: 'contributor', joined_at: '2025-01-10T10:00:00Z' },
+  { project_id: 1, user_id: 4, project_role: 'contributor', joined_at: '2025-01-10T10:00:00Z' },
+  { project_id: 1, user_id: 5, project_role: 'contributor', joined_at: '2025-01-10T10:00:00Z' },
+  { project_id: 1, user_id: 6, project_role: 'viewer', joined_at: '2025-01-10T10:00:00Z' },
+  { project_id: 2, user_id: 2, project_role: 'owner', joined_at: '2025-12-01T09:30:00Z' },
+  { project_id: 2, user_id: 3, project_role: 'contributor', joined_at: '2025-12-01T10:00:00Z' },
+];
 
 // ---------------------------------------------------------------------------
 // Field & Samples (seed 020)

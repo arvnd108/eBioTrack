@@ -7,6 +7,8 @@ import { resetMockState, setMockDelay } from './mockApi';
 import { DEV_PASSWORD } from './fixtures';
 import {
   EDNA_CAVEAT,
+  type AuditEntry,
+  type User,
   type CaveatMeta,
   type CollectionEventDetail,
   type ImportDryRunResult,
@@ -305,6 +307,240 @@ describe('auth answers match the real API (backend auth.routes.js and auth.contr
       status: 403,
       code: 'forbidden',
       message: 'You do not have permission to do this',
+    });
+  });
+});
+
+describe('T20 write rules match the real API (values checked against backend PR #137)', () => {
+  const as = async (role: string) => {
+    await api.post('/auth/logout').catch(() => undefined);
+    await signIn(role);
+  };
+  const failure = (promise: Promise<unknown>) =>
+    promise.catch((e: unknown) => e) as Promise<ApiError>;
+
+  it('creates a project with the caller as owner, and refuses a taken title', async () => {
+    await as('principal_investigator');
+    const created = await api.post<{ project_id: number; your_role: string; status: string }>(
+      '/projects',
+      { title: 'New survey', start_date: '2026-01-15' },
+    );
+    expect(created.data).toMatchObject({ your_role: 'owner', status: 'planned' });
+    expect(created.data.project_id).toBeGreaterThanOrEqual(1000);
+
+    const taken = await failure(api.post('/projects', { title: 'Yamuna Biodiversity Survey' }));
+    expect(taken).toMatchObject({
+      status: 409,
+      code: 'duplicate',
+      message: 'Project titles are unique.',
+    });
+
+    await as('viewer');
+    expect(await failure(api.post('/projects', { title: 'x' }))).toMatchObject({ status: 403 });
+  });
+
+  it('applies the edit_project gate: role 403, non-member 404, project viewer 403', async () => {
+    await as('lab_technician');
+    expect(await failure(api.patch('/projects/1', { status: 'active' }))).toMatchObject({
+      status: 403,
+    });
+
+    // A second principal investigator who is not on project 1 gets 404, as the API hides it.
+    await as('administrator');
+    const pi = await api.post<User>('/users', {
+      full_name: 'Second PI',
+      email: 'pi2@ebiotrack.test',
+      password: 'long-enough-pw',
+      role_ids: [2],
+    });
+    await api.post('/auth/logout');
+    await api.post('/auth/login', { email: 'pi2@ebiotrack.test', password: 'long-enough-pw' });
+    expect(await failure(api.patch('/projects/1', { status: 'active' }))).toMatchObject({
+      status: 404,
+    });
+
+    // Added as a project viewer, the same person may read but not edit.
+    await as('principal_investigator');
+    await api.post('/projects/1/members', { user_id: pi.data.user_id, project_role: 'viewer' });
+    await api.post('/auth/logout');
+    await api.post('/auth/login', { email: 'pi2@ebiotrack.test', password: 'long-enough-pw' });
+    await expect(api.get('/projects/1')).resolves.toBeDefined();
+    expect(await failure(api.patch('/projects/1', { status: 'active' }))).toMatchObject({
+      status: 403,
+    });
+
+    // An administrator passes every gate.
+    await as('administrator');
+    await expect(api.patch('/projects/1', { objectives: 'Admin edit' })).resolves.toBeDefined();
+  });
+
+  it('validates project edits like the API', async () => {
+    await as('principal_investigator');
+    expect(await failure(api.patch('/projects/1', {}))).toMatchObject({
+      status: 422,
+      details: [
+        {
+          field: 'root',
+          message: 'at least one of title, objectives, status, end_date is required',
+        },
+      ],
+    });
+    expect(await failure(api.patch('/projects/1', { end_date: '2024-12-31' }))).toMatchObject({
+      status: 422,
+      message: 'end_date must not be before start_date',
+      details: [{ field: 'end_date', message: 'must be on or after 2025-01-15' }],
+    });
+    expect(
+      await failure(api.patch('/projects/1', { title: 'Coastal Estuary Pilot' })),
+    ).toMatchObject({
+      status: 409,
+      message: 'Key (title)=(Coastal Estuary Pilot) already exists.',
+    });
+    const saved = await api.patch<{ status: string; end_date: string }>('/projects/1', {
+      status: 'completed',
+      end_date: '2026-12-31',
+    });
+    expect(saved.data).toMatchObject({ status: 'completed', end_date: '2026-12-31' });
+  });
+
+  it('keeps the member rules: one owner, active users only, no duplicates', async () => {
+    await as('principal_investigator');
+    expect(
+      await failure(api.post('/projects/1/members', { user_id: 1, project_role: 'owner' })),
+    ).toMatchObject({
+      status: 422,
+      code: 'rule_violation',
+      message: 'A project has one owner, set when it is created; owner cannot be assigned here',
+    });
+    expect(
+      await failure(api.post('/projects/1/members', { user_id: 99, project_role: 'viewer' })),
+    ).toMatchObject({
+      status: 422,
+      code: 'invalid_reference',
+      message: 'User 99 does not exist',
+    });
+    expect(
+      await failure(api.post('/projects/1/members', { user_id: 3, project_role: 'viewer' })),
+    ).toMatchObject({
+      status: 409,
+      code: 'duplicate',
+    });
+    expect(await failure(api.delete('/projects/1/members/2'))).toMatchObject({
+      status: 422,
+      message: 'The project owner cannot be removed',
+    });
+    await api.post('/projects/2/members', { user_id: 4, project_role: 'manager' });
+    await api.delete('/projects/2/members/4');
+    expect(await failure(api.delete('/projects/2/members/4'))).toMatchObject({
+      status: 404,
+      message: 'Membership not found',
+    });
+  });
+
+  it('refuses to unlink a site that events in the project use', async () => {
+    await as('principal_investigator');
+    expect(await failure(api.delete('/projects/1/sites/1'))).toMatchObject({
+      status: 409,
+      code: 'conflict',
+      message: 'Site has collection events in this project and cannot be removed',
+    });
+    expect(await failure(api.delete('/projects/1/sites/5'))).toMatchObject({
+      status: 404,
+      message: 'Site is not linked to this project',
+    });
+    expect(await failure(api.post('/projects/1/sites', { site_id: 999 }))).toMatchObject({
+      status: 422,
+      code: 'invalid_reference',
+      message: 'Site 999 does not exist',
+    });
+  });
+
+  it('creates users and enforces the administrator lock-out rules', async () => {
+    await as('administrator');
+    const bad = await failure(
+      api.post('/users', {
+        full_name: 'P',
+        email: 'p@ebiotrack.test',
+        password: 'short',
+        role_ids: [],
+      }),
+    );
+    expect(bad.details).toEqual([
+      { field: 'password', message: 'must be at least 8 characters' },
+      { field: 'role_ids', message: 'at least one role is required' },
+    ]);
+    const created = await api.post<User>('/users', {
+      full_name: 'New Person',
+      email: 'New@EBioTrack.test',
+      password: 'long-enough-pw',
+      role_ids: [6],
+    });
+    expect(created.data).toMatchObject({
+      email: 'new@ebiotrack.test',
+      roles: ['viewer'],
+      active: true,
+    });
+
+    expect(await failure(api.patch('/users/1', { active: false }))).toMatchObject({
+      status: 422,
+      code: 'rule_violation',
+      message: 'You cannot deactivate your own account',
+    });
+    expect(await failure(api.patch('/users/1', { role_ids: [2] }))).toMatchObject({
+      message: 'You cannot remove your own administrator role',
+    });
+
+    // The new user can sign in with the password set for them.
+    await api.post('/auth/logout');
+    await expect(
+      api.post('/auth/login', { email: 'new@ebiotrack.test', password: 'long-enough-pw' }),
+    ).resolves.toBeDefined();
+  });
+
+  it('writes audit entries like the trigger and scopes them for a principal investigator', async () => {
+    await as('principal_investigator');
+    await api.patch('/projects/1', { status: 'completed' });
+    const audit = await api.get<AuditEntry[]>('/audit', { entity_type: 'projects' });
+    expect(audit.data[0]).toMatchObject({
+      actor_id: 2,
+      entity_type: 'projects',
+      entity_id: 1,
+      action: 'update',
+      details: { status: { old: 'active', new: 'completed' } },
+    });
+    // A PI sees nothing about users (not project data); an administrator does.
+    expect((await api.get<AuditEntry[]>('/audit', { entity_type: 'users' })).data).toEqual([]);
+    await as('administrator');
+    const logins = await api.get<AuditEntry[]>('/audit', { entity_type: 'users' });
+    expect(logins.data[0]).toMatchObject({ action: 'login', actor_id: 1, entity_id: 1 });
+  });
+
+  it('lists sites by name for anyone, and checks project access when filtering', async () => {
+    await as('lab_technician');
+    const sites = await api.get<{ name: string }[]>('/sites', { limit: 100, sort: 'name' });
+    const names = sites.data.map((s) => s.name);
+    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
+    expect(await failure(api.get('/sites', { project_id: 2 }))).toMatchObject({
+      status: 404,
+      message: 'Project not found',
+    });
+    expect(await failure(api.get('/sites', { sort: 'habitat_type' }))).toMatchObject({
+      status: 422,
+      message: 'Invalid sort field: habitat_type',
+    });
+  });
+
+  it('sorts lists through ?sort and rejects fields the API does not allow', async () => {
+    await as('administrator');
+    const users = await api.get<User[]>('/users', { sort: '-full_name', limit: 3 });
+    expect(users.data.map((u) => u.full_name)).toEqual([
+      'Vikram Viewer',
+      'Pranav Investigator',
+      'Lakshmi Lab',
+    ]);
+    expect(await failure(api.get('/users', { sort: 'role' }))).toMatchObject({
+      status: 422,
+      message: 'Invalid sort field: role',
     });
   });
 });

@@ -67,8 +67,13 @@ export interface ApiResponse<T, M = undefined> {
 
 export type ListResponse<T> = ApiResponse<T[], PageMeta>;
 
+/**
+ * One entry of `error.details`. `field` names the request field for validation errors; database
+ * errors (duplicates, EB00x rules) carry only the database's `message` (backend
+ * middleware/errorHandler.js), so `field` is optional.
+ */
 export interface ApiErrorDetail {
-  field: string;
+  field?: string;
   message: string;
 }
 
@@ -121,6 +126,21 @@ export interface User {
   active: boolean;
 }
 
+/** `POST /api/users` body (administrator). */
+export interface CreateUserRequest {
+  full_name: string;
+  email: string;
+  password: string;
+  role_ids: number[];
+}
+
+/** `PATCH /api/users/:id` body (administrator); at least one key. */
+export interface UpdateUserRequest {
+  active?: boolean;
+  full_name?: string;
+  role_ids?: number[];
+}
+
 export interface LoginRequest {
   email: string;
   password: string;
@@ -158,10 +178,49 @@ export interface ProjectMember {
   joined_at: string;
 }
 
-/** `GET /api/projects/:id`: project with members and sites. */
+/**
+ * `GET /api/projects/:id`: project with members and sites. The owner and count fields come from
+ * `v_project_summary` (T20, PR #137): additive to CONTRACT 10, present on every response.
+ */
 export interface ProjectDetail extends Project {
   members: ProjectMember[];
   sites: Site[];
+  owner_id: number | null;
+  owner_name: string | null;
+  member_count: number;
+  manager_count: number;
+  contributor_count: number;
+  viewer_count: number;
+  site_count: number;
+  event_count: number;
+  sample_count: number;
+}
+
+/** `POST /api/projects` body. The caller becomes the owner. */
+export interface CreateProjectRequest {
+  title: string;
+  objectives?: string | null;
+  start_date?: string | null;
+}
+
+/** `PATCH /api/projects/:id` body; at least one key. */
+export interface UpdateProjectRequest {
+  title?: string;
+  objectives?: string | null;
+  status?: ProjectStatus;
+  end_date?: string | null;
+}
+
+/** `POST /api/projects/:id/members` body. `owner` is refused (one owner, set at creation). */
+export interface AddMemberRequest {
+  user_id: number;
+  project_role: Exclude<ProjectRole, 'owner'>;
+}
+
+/** `POST /api/projects/:id/sites` response. */
+export interface ProjectSiteLink {
+  project_id: number;
+  site_id: number;
 }
 
 // Sites and regions -----------------------------------------------------------
