@@ -1,6 +1,6 @@
 # eBioTrack — Project Contract (T00)
 
-**Version:** 1.7 (approved, G0 passed; 1.1 adds the not-blank CHECKs to 4.3; 1.2 names two response fields in section 10; 1.3 links a correction run to the run it supersedes and settles all-`fail` approval; 1.4 exposes `supersedes_analysis_id` in the analysis routes and adds the `413` status; 1.5 adds the `429` status, `too_many_attempts` error code and `Retry-After` header for login lockout; 1.6 stores the status-change `note` and adds `collector_name` and `changed_by_name` to the event and sample responses; 1.7 names the people, samples and active run in the lab responses)
+**Version:** 1.8 (approved, G0 passed; 1.1 adds the not-blank CHECKs to 4.3; 1.2 names two response fields in section 10; 1.3 links a correction run to the run it supersedes and settles all-`fail` approval; 1.4 exposes `supersedes_analysis_id` in the analysis routes and adds the `413` status; 1.5 adds the `429` status, `too_many_attempts` error code and `Retry-After` header for login lockout; 1.6 stores the status-change `note` and adds `collector_name` and `changed_by_name` to the event and sample responses; 1.7 names the people, samples and active run in the lab responses; 1.8 names the run, marker and people on analyses, returns the rejection reason, and adds `sample_id` to taxon detections)
 
 This is the output of task **T00** in [WORKFLOW.md](WORKFLOW.md). It fixes the names, types, values, and shapes that all four members build against, so the database, API, frontend, tests, and docs line up without anyone guessing.
 
@@ -613,13 +613,15 @@ Lab rows name what their ids point to, so a role that cannot call `GET /api/user
 | POST | `/api/analyses/:id/approve` | principal_investigator | — | analysis (status `approved`) |
 | POST | `/api/analyses/:id/reject` | principal_investigator | `{ reason }` | analysis (status `rejected`) |
 
+Analysis rows name what their ids point to, so a role that cannot call `GET /api/users` can still show them: every analysis (list, detail, and the create, approve and reject responses) carries `run_code`, `marker_name`, `imported_by_name` and `approved_by_name` (null while the id is null), and `rejection`: for a `rejected` analysis `{ reason, rejected_by, rejected_by_name, rejected_at }` from its latest reject (the reason `reject_analysis()` keeps in the audit entry), `null` for every other status.
+
 ### Taxa
 
 | Method | Path | Min role | Request | Response `data` |
 |---|---|---|---|---|
 | GET | `/api/taxa` | any | `?q&rank&parent_taxon_id` | taxa |
 | GET | `/api/taxa/:id` | any | — | taxon with lineage |
-| GET | `/api/taxa/:id/detections` | any | `?project_id&site_id&from&to` | approved, passing detections with site, sample code, collection date, analysis |
+| GET | `/api/taxa/:id/detections` | any | `?project_id&site_id&from&to` | approved, passing detections with site, sample id and code, collection date, analysis |
 
 ### Analytics, dashboard, exports, audit
 
@@ -699,7 +701,7 @@ B builds the frontend mock API from these; A returns exactly these shapes; C ass
 **Taxon detections** (`GET /api/taxa/:id/detections`)
 
 ```json
-{ "data": [ { "site_id": 1, "site_name": "Upstream gauge", "sample_code": "EB-20260312-0004-002", "collected_at": "2026-03-12T09:30:00Z", "analysis_id": 1, "read_count": 1450, "confidence": 0.9731, "qc_flag": "pass" } ],
+{ "data": [ { "site_id": 1, "site_name": "Upstream gauge", "sample_id": 7, "sample_code": "EB-20260312-0004-002", "collected_at": "2026-03-12T09:30:00Z", "analysis_id": 1, "read_count": 1450, "confidence": 0.9731, "qc_flag": "pass" } ],
   "meta": { "page": 1, "limit": 25, "total": 1 } }
 ```
 
@@ -759,6 +761,7 @@ The backend resolves `scientific_name` and `taxon_rank` to `taxon_id` before cal
 | 1.5 | Section 7 and 8: add status `429` with error code `too_many_attempts` and the `Retry-After` header (seconds) for `POST /api/auth/login` after repeated failed sign-ins, matching T13; the new API-only error-code table in section 7 also lists `413 payload_too_large`. Affects T13 (already implemented), T24 (frontend, already handles it), T33 (authorization/auth tests), T42 (`api.md`). | Arvind |
 | 1.6 | Section 10: `PATCH /api/samples/:id/status` now stores `note` on the history row (the trigger reads the transaction-local setting `app.status_note`; none stores NULL), `GET /api/samples/:id` history entries gain `changed_by_name` (and always carry `note`), and every event object gains `collector_name`, so roles that cannot list users can show names. Additive: existing fields are unchanged. Affects T17-D (`record_sample_status_history()` reads `app.status_note`), T21 (sample and event routes), T26 (frontend: note field, names in timeline and collector column), T33 (tests), T42 (`api.md`). | Arvind |
 | 1.7 | Section 10, Laboratory: batches gain `operator_name`; QC results gain `recorded_by_name` and `sample_code`; extractions gain `sample_code`, `project_id`, `active_run_id` and `active_run_code` (the planned or running run they are booked on, null when none); run libraries gain `project_id`. Additive: existing fields are unchanged. Affects T22 (lab routes), T27 (frontend: names and codes in the lab tables, write controls only where the caller may write, booked extractions shown in the new-run picker), T33 (tests), T42 (`api.md`). | Arvind (on merge of the T27 PR) |
+| 1.8 | Section 10, Analyses and Taxa: every analysis row gains `run_code`, `marker_name`, `imported_by_name`, `approved_by_name` and `rejection` (`{ reason, rejected_by, rejected_by_name, rejected_at }` for a `rejected` analysis, read from its latest `reject` audit entry; null otherwise); `GET /api/taxa/:id/detections` rows gain `sample_id`. Additive: existing fields are unchanged. Affects T23 (analysis and taxa routes), T28 (frontend: names in the analysis list and detail, the rejection reason shown to the analyst, detections linking to their sample), T33 (tests), T42 (`api.md`). | Arvind (on merge of the T28 PR) |
 
 ---
 

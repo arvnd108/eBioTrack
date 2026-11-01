@@ -2,16 +2,16 @@
 // Purpose: In-browser mock of the REST API, answering with CONTRACT section 10/11 shapes
 //
 // Used when VITE_USE_MOCK=true (see apiClient.ts). Each handler returns what the real server
-// would: an HTTP status and a JSON body (`{ data, meta? }` or `{ error }`). Covers every GET
-// endpoint in section 10 and the writes the pages use so far (auth, users, projects, sites,
-// events, samples, import dry run, export). Pages that need more writes add a handler here.
+// would: an HTTP status and a JSON body (`{ data, meta? }` or `{ error }`; an export download is
+// CSV text with its headers). Covers every endpoint in section 10 except the optional ML route.
 //
 // Rules copied from the contract so pages see realistic behaviour:
 //   - lists are paginated (?page, ?limit; default 25, max 100) with meta { page, limit, total }
 //   - project data the user is not a member of is hidden (404 for a single item)
 //   - analytics and detections use only approved analyses and qc_flag = 'pass', and analytics
 //     responses carry meta.caveat
-//   - the T20 routes (users, projects, audit) and T21 routes (regions, sites, events, samples)
+//   - the T20 routes (users, projects, audit), T21 routes (regions, sites, events, samples), T22
+//     routes (lab) and T23 routes (analyses, CSV import, taxa, analytics, dashboard, exports)
 //     follow the real API scenario by scenario: same checks, order, status codes and messages
 //
 // To mock a new endpoint, add one entry to `routes` below. Paths are relative to /api and may
@@ -19,6 +19,12 @@
 
 import {
   EDNA_CAVEAT,
+  type AnalysisRejection,
+  type AnalysisRun,
+  type AnalysisRunRow,
+  type ExportType,
+  type RichnessRow,
+  type Taxon,
   type AuditAction,
   type AuditEntry,
   type Project,
@@ -46,6 +52,14 @@ import {
   type Site,
   type User,
 } from '../../types';
+import {
+  checkDetectionCsv,
+  csvLine,
+  MAX_IMPORT_BYTES,
+  TAXON_RANKS,
+  type CsvRowError,
+  type DetectionCsvRow,
+} from '../../utils/detectionCsv';
 import type { HttpMethod } from '../apiClient';
 import {
   hasAnyRole,
@@ -78,6 +92,7 @@ import {
   type StoredBatch,
   type StoredExtraction,
   type StoredQcResult,
+  type MockAssignment,
 } from './fixtures';
 
 export interface MockResponse {
@@ -92,6 +107,37 @@ interface MockContext {
   body: unknown;
   /** Signed-in user; always set unless the route has `auth: false`. */
   user: User;
+  /** A multipart body (CSV import), read before the handler runs; null for any other body. */
+  upload: MockUpload | null;
+}
+
+interface MockUpload {
+  /** Text fields; a repeated name keeps its last value. */
+  fields: Record<string, string>;
+  /** The part named `file`; `text` is null when its bytes are not UTF-8. */
+  file: { name: string; size: number; text: string | null } | null;
+}
+
+/** multer + TextDecoder('utf-8', { fatal: true }) in the API, done ahead because files read async. */
+async function readUpload(body: unknown): Promise<MockUpload | null> {
+  if (!(body instanceof FormData)) return null;
+  const fields: Record<string, string> = {};
+  let file: MockUpload['file'] = null;
+  for (const [name, value] of body.entries()) {
+    if (typeof value === 'string') {
+      fields[name] = value;
+    } else if (name === 'file') {
+      const bytes = new Uint8Array(await value.arrayBuffer());
+      let text: string | null;
+      try {
+        text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      } catch {
+        text = null;
+      }
+      file = { name: value.name, size: bytes.byteLength, text };
+    }
+  }
+  return { fields, file };
 }
 
 interface MockRoute {
@@ -160,6 +206,9 @@ interface MockState {
   qcResults: StoredQcResult[];
   runs: SequencingRun[];
   libraries: SequencingLibrary[];
+  analyses: AnalysisRunRow[];
+  assignments: MockAssignment[];
+  exports: StoredExport[];
   nextUserId: number;
   nextProjectId: number;
   nextAuditId: number;
@@ -172,6 +221,9 @@ interface MockState {
   nextQcId: number;
   nextRunId: number;
   nextLibraryId: number;
+  nextAnalysisId: number;
+  nextAssignmentId: number;
+  nextExportId: number;
 }
 
 function freshState(): MockState {
@@ -194,6 +246,9 @@ function freshState(): MockState {
     qcResults: mockQcResults.map((x) => ({ ...x })),
     runs: mockRuns.map((x) => ({ ...x })),
     libraries: mockLibraries.map((x) => ({ ...x })),
+    analyses: mockAnalyses.map((x) => ({ ...x, parameters: { ...x.parameters } })),
+    assignments: mockAssignments.map((x) => ({ ...x })),
+    exports: [],
     // Application-generated IDs start at 1000 (CONTRACT D6). Like a PostgreSQL sequence, an
     // insert the database refuses (unknown region, duplicate name) still uses up its id.
     nextUserId: 1000,
@@ -208,6 +263,9 @@ function freshState(): MockState {
     nextQcId: 1000,
     nextRunId: 1000,
     nextLibraryId: 1000,
+    nextAnalysisId: 1000,
+    nextAssignmentId: 1000,
+    nextExportId: 1000,
   };
 }
 
@@ -269,9 +327,6 @@ export function setMockDelay(ms: number): void {
   delayMs = ms;
 }
 
-/** Exports created through the mock during this page load (cleared by resetMockState). */
-const created = { exports: 0 };
-
 /**
  * Failed sign-ins per email, mirroring backend/src/utils/loginAttempts.js: 5 failures within
  * 15 minutes lock that email out (429 too_many_attempts with Retry-After) until the window ends.
@@ -303,7 +358,6 @@ export function resetMockState(): void {
   storeSession(null);
   loginFailures.clear();
   state = freshState();
-  created.exports = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -414,13 +468,6 @@ function num(query: URLSearchParams, key: string): number | null {
   return v === null || v === '' ? null : Number(v);
 }
 
-/** `from`/`to` date filters on an ISO timestamp (dates compare as strings). */
-function inRange(iso: string, query: URLSearchParams): boolean {
-  const from = query.get('from');
-  const to = query.get('to');
-  return (!from || iso.slice(0, 10) >= from) && (!to || iso.slice(0, 10) <= to);
-}
-
 // ---------------------------------------------------------------------------
 // Data access with the contract's visibility rules
 // ---------------------------------------------------------------------------
@@ -443,50 +490,48 @@ function projectsFor(user: User): Project[] {
 const allEvents = () => state.events;
 const allSamples = () => state.samples;
 
-function eventsFor(user: User, query?: URLSearchParams): CollectionEvent[] {
-  const ids = visibleProjectIds(user);
-  const projectId = query ? num(query, 'project_id') : null;
-  const siteId = query ? num(query, 'site_id') : null;
-  return allEvents().filter(
-    (e) =>
-      ids.includes(e.project_id) &&
-      (projectId === null || e.project_id === projectId) &&
-      (siteId === null || e.site_id === siteId) &&
-      (!query || inRange(e.collected_at, query)),
-  );
+/**
+ * v_approved_detections: passing rows of approved analyses joined to their library, sample,
+ * event and site, in every project (exports scope them to one project themselves).
+ */
+function detectionRows() {
+  return passingAssignments().map((a) => {
+    const library = state.libraries.find((l) => l.library_id === a.library_id)!;
+    const extraction = state.extractions.find((x) => x.extraction_id === library.extraction_id)!;
+    const sample = allSamples().find((s) => s.sample_id === extraction.sample_id)!;
+    const event = allEvents().find((e) => e.event_id === sample.event_id)!;
+    const site = state.sites.find((s) => s.site_id === event.site_id)!;
+    return { assignment: a, sample, event, site };
+  });
 }
 
-/** Approved analyses + passing rows, joined to their library, sample, event, and site. */
+/** The approved detections in the user's projects. */
 function approvedDetections(user: User) {
-  const events = eventsFor(user);
-  return mockAssignments
-    .filter((a) => a.qc_flag === 'pass')
-    .filter((a) => mockAnalyses.find((x) => x.analysis_id === a.analysis_id)?.status === 'approved')
-    .flatMap((a) => {
-      const library = state.libraries.find((l) => l.library_id === a.library_id)!;
-      const extraction = state.extractions.find((x) => x.extraction_id === library.extraction_id)!;
-      const sample = allSamples().find((s) => s.sample_id === extraction.sample_id)!;
-      const event = events.find((e) => e.event_id === sample.event_id);
-      if (!event) return [];
-      const site = state.sites.find((s) => s.site_id === event.site_id)!;
-      return [{ assignment: a, sample, event, site }];
-    });
+  const visible = visibleProjectIds(user);
+  return detectionRows().filter((d) => visible.includes(d.event.project_id));
 }
 
 /**
  * Audit entries the user may read, newest first (backend services/audit.service.js): an
  * administrator sees everything; a principal investigator sees entries about entities in a
  * project they belong to (the project and its members and sites, its events, samples,
- * extractions, libraries, the runs and analyses those libraries are in, and their QC results);
- * other roles see nothing.
+ * extractions, libraries, the runs and analyses those libraries are in, their QC results, and the
+ * project's exports); other roles see nothing. `projectId` narrows to one project (the dashboard),
+ * for the administrator too.
  */
-function auditFor(user: User): AuditEntry[] {
+function auditFor(user: User, projectId: number | null = null): AuditEntry[] {
   let visible: AuditEntry[];
-  if (isAdmin(user)) {
+  if (isAdmin(user) && projectId === null) {
     visible = state.audit;
-  } else if (hasAnyRole(user, ['principal_investigator'])) {
+  } else if (isAdmin(user) || hasAnyRole(user, ['principal_investigator'])) {
     const projects = new Set(
-      state.members.filter((m) => m.user_id === user.user_id).map((m) => m.project_id),
+      state.projects
+        .map((p) => p.project_id)
+        .filter(
+          (id) =>
+            (isAdmin(user) || roleIn(id, user.user_id) !== null) &&
+            (projectId === null || id === projectId),
+        ),
     );
     const events = allEvents().filter((e) => projects.has(e.project_id));
     const samples = new Set(
@@ -500,7 +545,7 @@ function auditFor(user: User): AuditEntry[] {
     );
     const runs = new Set(libraries.map((l) => l.run_id));
     const analyses = new Set(
-      mockAnalyses.filter((a) => runs.has(a.run_id)).map((a) => a.analysis_id),
+      state.analyses.filter((a) => runs.has(a.run_id)).map((a) => a.analysis_id),
     );
     const scope: Record<string, Set<number>> = {
       projects,
@@ -520,6 +565,9 @@ function auditFor(user: User): AuditEntry[] {
               (q.analysis_id !== null && analyses.has(q.analysis_id)),
           )
           .map((q) => q.qc_id),
+      ),
+      data_exports: new Set(
+        state.exports.filter((x) => projects.has(x.project_id)).map((x) => x.export_id),
       ),
     };
     visible = state.audit.filter((a) => scope[a.entity_type]?.has(a.entity_id) ?? false);
@@ -1244,6 +1292,527 @@ function addLibraryRow(runId: number, extractionId: number, actorId: number, now
     created_at: jsonbTime(now),
   });
   return library;
+}
+
+// ---------------------------------------------------------------------------
+// T23 helpers: analyses, CSV import, analytics and exports (backend services/analyses.service.js,
+// taxa.service.js, analytics.service.js, exports.service.js and the analysis procedures)
+// ---------------------------------------------------------------------------
+
+const ANALYSIS_STATUSES = ['draft', 'imported', 'approved', 'rejected', 'superseded'];
+const ANALYSIS_FIELDS = [
+  'run_id',
+  'marker_id',
+  'pipeline_name',
+  'pipeline_version',
+  'reference_db',
+  'reference_db_version',
+  'parameters',
+  'supersedes_analysis_id',
+];
+/** Most row errors listed in one import response; the total is always reported. */
+const MAX_REPORTED_ERRORS = 100;
+type GroupBy = 'year' | 'month' | 'site';
+const GROUP_BYS: GroupBy[] = ['year', 'month', 'site'];
+const RICHNESS_KEYS = ['project_id', 'site_id', 'group_by', 'from', 'to'];
+
+/** Text order of the database (collation C.UTF-8: by code point, not by locale). */
+const compareText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+
+const fromAfterTo = () =>
+  fail(422, 'validation_error', 'must not be after to', [
+    { field: 'from', message: 'must not be after to' },
+  ]);
+
+/** z.record(z.string(), z.unknown()) with the 10 000-character refine. */
+function checkParameters(value: unknown): ApiErrorDetail[] {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return [
+      {
+        field: 'parameters',
+        message: `Invalid input: expected record, received ${typeName(value)}`,
+      },
+    ];
+  }
+  return JSON.stringify(value).length > 10000
+    ? [{ field: 'parameters', message: 'must be 10 000 characters or less' }]
+    : [];
+}
+
+/** Administrator, PI and analyst may read draft, imported and rejected analyses (CONTRACT 9). */
+const canSeeUnapproved = (user: User) =>
+  hasAnyRole(user, ['administrator', 'principal_investigator', 'analyst']);
+
+/** An analysis is visible through any visible project of its run, and its status (above). */
+function analysisVisible(user: User, analysis: AnalysisRunRow): boolean {
+  if (!canSeeUnapproved(user) && !['approved', 'superseded'].includes(analysis.status)) {
+    return false;
+  }
+  if (isAdmin(user)) return true;
+  const visible = visibleProjectIds(user);
+  return (projectsOfRun(analysis.run_id) ?? []).some((id) => visible.includes(id));
+}
+
+/** analyses.service.js authorizeAnalysis: the analysis, or the shared 404 (403 for a viewer write). */
+function authorizeAnalysis(
+  user: User,
+  analysisId: number,
+  { write = false }: { write?: boolean } = {},
+): AnalysisRunRow | MockResponse {
+  const analysis = state.analyses.find((a) => a.analysis_id === analysisId);
+  if (!analysis) return notFound('Analysis');
+  const denied = anyProjectAccess(user, projectsOfRun(analysis.run_id) ?? [], {
+    write,
+    what: 'Analysis',
+  });
+  if (denied) return denied;
+  if (!canSeeUnapproved(user) && !['approved', 'superseded'].includes(analysis.status)) {
+    return notFound('Analysis');
+  }
+  return analysis;
+}
+
+/** The row with the names its ids point to and, while rejected, the latest rejection (1.8). */
+function analysisView(a: AnalysisRunRow): AnalysisRun {
+  let rejection: AnalysisRejection | null = null;
+  if (a.status === 'rejected') {
+    const entry = state.audit
+      .filter(
+        (x) =>
+          x.entity_type === 'analysis_runs' &&
+          x.entity_id === a.analysis_id &&
+          x.action === 'reject',
+      )
+      .sort(
+        (x, y) => Date.parse(y.created_at) - Date.parse(x.created_at) || y.audit_id - x.audit_id,
+      )[0];
+    if (entry) {
+      rejection = {
+        reason: String(entry.details?.reason ?? ''),
+        rejected_by: entry.actor_id,
+        rejected_by_name: userName(entry.actor_id),
+        rejected_at: new Date(entry.created_at).toISOString(),
+      };
+    }
+  }
+  return {
+    ...a,
+    parameters: { ...a.parameters },
+    run_code: state.runs.find((r) => r.run_id === a.run_id)!.run_code,
+    marker_name: mockMarkers.find((m) => m.marker_id === a.marker_id)!.marker_name,
+    imported_by_name: userName(a.imported_by),
+    approved_by_name: userName(a.approved_by),
+    rejection,
+  };
+}
+
+/** import_detections() refuses any analysis that is not a draft (asked before the file is read). */
+function importBlocked(analysis: AnalysisRunRow): MockResponse | null {
+  const id = analysis.analysis_id;
+  if (analysis.status === 'imported' || analysis.status === 'approved') {
+    return fail(409, 'conflict', `Analysis ${id} is already ${analysis.status}`, [
+      { message: 'Detections can only be imported into a draft analysis.' },
+    ]);
+  }
+  if (analysis.status !== 'draft') {
+    return fail(
+      409,
+      'invalid_transition',
+      `Analysis ${id} is ${analysis.status}; detections can only be imported into a draft analysis`,
+      [],
+    );
+  }
+  return null;
+}
+
+/**
+ * analyses.service.js resolveRows: names to ids, plus the errors a format check cannot see: an
+ * unknown taxon (never created, D16), an unknown library or one of another run, a repeated
+ * library + taxon. Per row the taxon is checked before the library; a repeat only when both exist.
+ */
+function resolveImportRows(rows: DetectionCsvRow[], analysis: AnalysisRunRow) {
+  const errors: CsvRowError[] = [];
+  const resolved: (Omit<DetectionCsvRow, 'row' | 'scientific_name' | 'taxon_rank'> & {
+    library_id: number;
+    taxon_id: number;
+  })[] = [];
+  const firstRow = new Map<string, number>();
+  for (const row of rows) {
+    const before = errors.length;
+    const taxon = mockTaxa.find(
+      (t) => t.scientific_name === row.scientific_name && t.rank === row.taxon_rank,
+    );
+    if (!taxon) {
+      errors.push({
+        row: row.row,
+        field: 'scientific_name',
+        message: `no taxon "${row.scientific_name}" with rank ${row.taxon_rank} (taxa are never created by an import)`,
+      });
+    }
+    const library = state.libraries.find((l) => l.library_code === row.library_code);
+    if (!library) {
+      errors.push({
+        row: row.row,
+        field: 'library_code',
+        message: `library ${row.library_code} does not exist`,
+      });
+    } else if (library.run_id !== analysis.run_id) {
+      errors.push({
+        row: row.row,
+        field: 'library_code',
+        message: `library ${row.library_code} belongs to another sequencing run (analysis ${analysis.analysis_id} uses run ${analysis.run_id})`,
+      });
+    }
+    if (errors.length === before) {
+      const key = `${row.library_code}\u0000${taxon!.taxon_id}`;
+      if (firstRow.has(key)) {
+        errors.push({
+          row: row.row,
+          field: 'library_code',
+          message: `library ${row.library_code} with this taxon already appears in row ${firstRow.get(key)}`,
+        });
+      } else {
+        firstRow.set(key, row.row);
+        resolved.push({
+          library_code: row.library_code,
+          library_id: library!.library_id,
+          taxon_id: taxon!.taxon_id,
+          read_count: row.read_count,
+          confidence: row.confidence,
+          qc_flag: row.qc_flag,
+        });
+      }
+    }
+  }
+  return { resolved, errors };
+}
+
+/** An audit row a procedure writes itself (approve, reject): its own details, not a column diff. */
+function pushAudit(
+  actorId: number,
+  entityType: string,
+  entityId: number,
+  action: AuditAction,
+  details: Record<string, unknown>,
+): void {
+  state.audit.push({
+    audit_id: state.nextAuditId++,
+    actor_id: actorId,
+    entity_type: entityType,
+    entity_id: entityId,
+    action,
+    details,
+    created_at: new Date().toISOString(),
+  });
+}
+
+/** analytics.service.js scopeProjects: the project asked for (checked), else all the caller's. */
+function scopeProjects(user: User, projectId: number | null): number[] | MockResponse {
+  if (projectId !== null) {
+    const denied = projectAccess(user, projectId);
+    return denied ?? [projectId];
+  }
+  return visibleProjectIds(user);
+}
+
+/** Passing rows of approved analyses: the only rows analytics, detections and exports count. */
+const passingAssignments = () =>
+  state.assignments.filter(
+    (a) =>
+      a.qc_flag === 'pass' &&
+      state.analyses.find((x) => x.analysis_id === a.analysis_id)?.status === 'approved',
+  );
+
+const librariesOfSample = (sampleId: number) => {
+  const extractions = state.extractions
+    .filter((x) => x.sample_id === sampleId)
+    .map((x) => x.extraction_id);
+  return state.libraries.filter((l) => extractions.includes(l.extraction_id));
+};
+
+/**
+ * analytics.service.js queryRichness: one row per (group, site) that has samples in the scope.
+ * observed_taxa = distinct SPECIES with an approved, passing detection; sample_count = all samples
+ * of the group at the site (sampling effort), with or without a detection, in any status.
+ */
+function richnessRows({
+  projectIds,
+  siteId,
+  groupBy,
+  from,
+  to,
+}: {
+  projectIds: number[];
+  siteId: number | null;
+  groupBy: GroupBy;
+  from: number | null;
+  to: number | null;
+}): RichnessRow[] {
+  const groupOf = (e: CollectionEvent) =>
+    groupBy === 'site'
+      ? state.sites.find((s) => s.site_id === e.site_id)!.name
+      : new Date(e.collected_at).toISOString().slice(0, groupBy === 'year' ? 4 : 7);
+  const species = new Set(mockTaxa.filter((t) => t.rank === 'species').map((t) => t.taxon_id));
+  const passing = passingAssignments().filter((a) => species.has(a.taxon_id));
+  const groups = new Map<
+    string,
+    { group: string; site_id: number; samples: Set<number>; taxa: Set<number> }
+  >();
+  for (const e of state.events) {
+    const at = Date.parse(e.collected_at);
+    if (
+      !projectIds.includes(e.project_id) ||
+      (siteId !== null && e.site_id !== siteId) ||
+      (from !== null && at < from) ||
+      (to !== null && at > to)
+    ) {
+      continue;
+    }
+    const samples = state.samples.filter((s) => s.event_id === e.event_id);
+    if (samples.length === 0) continue;
+    const group = groupOf(e);
+    const key = `${group}\u0000${e.site_id}`;
+    const row = groups.get(key) ?? {
+      group,
+      site_id: e.site_id,
+      samples: new Set(),
+      taxa: new Set(),
+    };
+    for (const s of samples) {
+      row.samples.add(s.sample_id);
+      const libraries = librariesOfSample(s.sample_id).map((l) => l.library_id);
+      for (const a of passing) if (libraries.includes(a.library_id)) row.taxa.add(a.taxon_id);
+    }
+    groups.set(key, row);
+  }
+  return [...groups.values()]
+    .sort((a, b) => compareText(a.group, b.group) || a.site_id - b.site_id)
+    .map((g) => ({
+      group: g.group,
+      site_id: g.site_id,
+      observed_taxa: g.taxa.size,
+      sample_count: g.samples.size,
+    }));
+}
+
+interface StoredExport {
+  export_id: number;
+  requested_by: number;
+  project_id: number;
+  export_type: ExportType;
+  /** As stored: a `from`/`to` date is kept as the instant it means (start or end of the day). */
+  filters: Record<string, unknown>;
+  row_count: number;
+  created_at: string;
+}
+
+const SAMPLE_STATUS_VALUES = [
+  'collected',
+  'stored',
+  'extracted',
+  'sequenced',
+  'analyzed',
+  'failed',
+  'discarded',
+];
+const EXPORT_FILTERS: Record<ExportType, string[]> = {
+  samples_csv: ['site_id', 'status', 'from', 'to'],
+  detections_csv: ['site_id', 'taxon_id', 'from', 'to'],
+  richness_csv: ['site_id', 'group_by', 'from', 'to'],
+};
+
+/** exports.routes.js: a discriminated union on export_type, each with its own strict filters. */
+function checkExportBody(
+  input: Record<string, unknown>,
+):
+  | { export_type: ExportType; project_id: number; filters: Record<string, unknown> }
+  | ApiErrorDetail[] {
+  const type = input.export_type;
+  if (typeof type !== 'string' || !(type in EXPORT_FILTERS)) {
+    const message =
+      "Invalid discriminator value. Expected 'samples_csv' | 'detections_csv' | 'richness_csv'";
+    return [{ field: 'export_type', message }];
+  }
+  const exportType = type as ExportType;
+  const details: ApiErrorDetail[] = [...checkId(input.project_id, 'project_id')];
+  const stored: Record<string, unknown> = {};
+  if (input.filters !== undefined) {
+    const filters = input.filters;
+    if (typeof filters !== 'object' || filters === null || Array.isArray(filters)) {
+      details.push({
+        field: 'filters',
+        message: `Invalid input: expected object, received ${typeName(filters)}`,
+      });
+    } else {
+      const f = filters as Record<string, unknown>;
+      const own: ApiErrorDetail[] = [];
+      for (const key of EXPORT_FILTERS[exportType]) {
+        const value = f[key];
+        if (value === undefined) continue;
+        const field = `filters.${key}`;
+        if (key === 'site_id' || key === 'taxon_id') {
+          own.push(...checkId(value, field));
+          stored[key] = value;
+        } else if (key === 'status') {
+          own.push(...checkEnum(value, field, SAMPLE_STATUS_VALUES));
+          stored[key] = value;
+        } else if (key === 'group_by') {
+          own.push(...checkEnum(value, field, GROUP_BYS));
+          stored[key] = value;
+        } else {
+          const bound =
+            typeof value === 'string' ? rangeOf(new URLSearchParams({ [key]: value })) : null;
+          if (bound === null || Array.isArray(bound)) {
+            own.push({ field, message: 'Invalid input' });
+          } else {
+            const at = key === 'from' ? bound.from! : bound.to!;
+            stored[key] = /^\d{4}-\d{2}-\d{2}$/.test(value as string)
+              ? new Date(at).toISOString()
+              : value;
+          }
+        }
+      }
+      const extra = Object.keys(f).filter((k) => !EXPORT_FILTERS[exportType].includes(k));
+      if (extra.length > 0) {
+        own.push({
+          field: 'filters',
+          message: `Unrecognized key${extra.length > 1 ? 's' : ''}: ${extra.map((k) => `"${k}"`).join(', ')}`,
+        });
+      }
+      const fieldIssues = own.filter((d) => d.field !== 'filters');
+      if (
+        fieldIssues.length === 0 &&
+        stored.from !== undefined &&
+        stored.to !== undefined &&
+        Date.parse(stored.from as string) > Date.parse(stored.to as string)
+      ) {
+        own.push({ field: 'filters.from', message: 'must not be after to' });
+      }
+      details.push(...own);
+    }
+  }
+  details.push(...unknownKeys(input, ['export_type', 'project_id', 'filters']));
+  if (details.length) return details;
+  return { export_type: exportType, project_id: input.project_id as number, filters: stored };
+}
+
+const EXPORT_COLUMNS: Record<ExportType, string[]> = {
+  samples_csv: [
+    'sample_id',
+    'sample_code',
+    'status',
+    'sample_type',
+    'event_id',
+    'site_id',
+    'site_name',
+    'project_id',
+    'project_title',
+    'collected_at',
+    'volume_ml',
+    'depth_m',
+    'storage_location',
+  ],
+  detections_csv: [
+    'sample_code',
+    'site_name',
+    'collected_at',
+    'scientific_name',
+    'rank',
+    'read_count',
+    'confidence',
+    'qc_flag',
+    'analysis_id',
+    'marker_name',
+    'pipeline_name',
+    'pipeline_version',
+    'reference_db',
+    'reference_db_version',
+  ],
+  richness_csv: ['group', 'site_id', 'observed_taxa', 'sample_count'],
+};
+
+/** exports.service.js: the data rows of an export, regenerated from its type, project and filters. */
+function exportRows(
+  type: ExportType,
+  projectId: number,
+  filters: Record<string, unknown>,
+): unknown[][] {
+  const from = filters.from === undefined ? null : Date.parse(filters.from as string);
+  const to = filters.to === undefined ? null : Date.parse(filters.to as string);
+  const siteId = (filters.site_id as number | undefined) ?? null;
+  const inWindow = (iso: string) =>
+    (from === null || Date.parse(iso) >= from) && (to === null || Date.parse(iso) <= to);
+  const iso = (value: string) => new Date(value).toISOString();
+  if (type === 'richness_csv') {
+    return richnessRows({
+      projectIds: [projectId],
+      siteId,
+      groupBy: (filters.group_by as GroupBy | undefined) ?? 'year',
+      from,
+      to,
+    }).map((r) => [r.group, r.site_id, r.observed_taxa, r.sample_count]);
+  }
+  if (type === 'samples_csv') {
+    return state.samples
+      .filter((s) => {
+        const e = eventById(s.event_id)!;
+        return (
+          e.project_id === projectId &&
+          (siteId === null || e.site_id === siteId) &&
+          inWindow(e.collected_at) &&
+          (filters.status === undefined || s.status === filters.status)
+        );
+      })
+      .sort((a, b) => a.sample_id - b.sample_id)
+      .map((s) => {
+        const e = eventById(s.event_id)!;
+        return [
+          s.sample_id,
+          s.sample_code,
+          s.status,
+          mockSampleTypes.find((t) => t.sample_type_id === s.sample_type_id)!.type_name,
+          e.event_id,
+          e.site_id,
+          state.sites.find((x) => x.site_id === e.site_id)!.name,
+          e.project_id,
+          state.projects.find((p) => p.project_id === e.project_id)!.title,
+          iso(e.collected_at),
+          s.volume_ml,
+          s.depth_m,
+          s.storage_location,
+        ];
+      });
+  }
+  const taxonId = (filters.taxon_id as number | undefined) ?? null;
+  return detectionRows()
+    .filter(
+      (d) =>
+        d.event.project_id === projectId &&
+        (siteId === null || d.site.site_id === siteId) &&
+        inWindow(d.event.collected_at) &&
+        (taxonId === null || d.assignment.taxon_id === taxonId),
+    )
+    .sort((a, b) => a.assignment.assignment_id - b.assignment.assignment_id)
+    .map(({ assignment, sample, event, site }) => {
+      const analysis = state.analyses.find((a) => a.analysis_id === assignment.analysis_id)!;
+      const taxon = mockTaxa.find((t) => t.taxon_id === assignment.taxon_id)!;
+      return [
+        sample.sample_code,
+        site.name,
+        iso(event.collected_at),
+        taxon.scientific_name,
+        taxon.rank,
+        assignment.read_count,
+        assignment.confidence,
+        assignment.qc_flag,
+        analysis.analysis_id,
+        mockMarkers.find((m) => m.marker_id === analysis.marker_id)!.marker_name,
+        analysis.pipeline_name,
+        analysis.pipeline_version,
+        analysis.reference_db,
+        analysis.reference_db_version,
+      ];
+    });
 }
 
 function memberView(row: MemberRow) {
@@ -2435,7 +3004,7 @@ const routes: MockRoute[] = [
         if (denied) return denied;
       }
       if (analysisId !== null) {
-        const analysis = mockAnalyses.find((a) => a.analysis_id === analysisId);
+        const analysis = state.analyses.find((a) => a.analysis_id === analysisId);
         if (!analysis) return notFound('Analysis');
         const denied = anyProjectAccess(user, projectsOfRun(analysis.run_id) ?? [], {
           what: 'Analysis',
@@ -2446,7 +3015,7 @@ const routes: MockRoute[] = [
       const seen = (q: StoredQcResult) => {
         if (isAdmin(user)) return true;
         if (q.sample_id !== null) return visible.includes(projectOfSample(q.sample_id)!);
-        const analysis = mockAnalyses.find((a) => a.analysis_id === q.analysis_id)!;
+        const analysis = state.analyses.find((a) => a.analysis_id === q.analysis_id)!;
         return (projectsOfRun(analysis.run_id) ?? []).some((id) => visible.includes(id));
       };
       const rows = state.qcResults
@@ -2499,7 +3068,7 @@ const routes: MockRoute[] = [
         if (denied) return denied;
       }
       if (present(input.analysis_id)) {
-        const analysis = mockAnalyses.find((a) => a.analysis_id === input.analysis_id);
+        const analysis = state.analyses.find((a) => a.analysis_id === input.analysis_id);
         if (!analysis) return notFound('Analysis');
         const denied = anyProjectAccess(user, projectsOfRun(analysis.run_id) ?? [], {
           write: true,
@@ -2748,58 +3317,375 @@ const routes: MockRoute[] = [
     },
   },
 
-  // Analyses and detections ------------------------------------------------------------------------
+  // Analyses and detections (T23, CONTRACT 1.8) -----------------------------------------------------
   {
     method: 'GET',
     path: '/analyses',
-    handler: ({ query }) => {
+    handler: ({ query, user }) => {
+      const status = query.get('status');
+      const bad = [
+        ...checkIdString(query.get('run_id'), 'run_id'),
+        ...(status === null ? [] : checkEnum(status, 'status', ANALYSIS_STATUSES)),
+        ...checkIdString(query.get('marker_id'), 'marker_id'),
+      ];
+      if (bad.length) return validationError(bad);
       const runId = num(query, 'run_id');
       const markerId = num(query, 'marker_id');
-      const status = query.get('status');
-      const rows = mockAnalyses.filter(
-        (a) =>
-          (runId === null || a.run_id === runId) &&
-          (markerId === null || a.marker_id === markerId) &&
-          (!status || a.status === status),
-      );
-      return paginate(rows, query);
+      const rows = state.analyses
+        .filter(
+          (a) =>
+            analysisVisible(user, a) &&
+            (runId === null || a.run_id === runId) &&
+            (!status || a.status === status) &&
+            (markerId === null || a.marker_id === markerId),
+        )
+        .sort((a, b) => a.analysis_id - b.analysis_id)
+        .map(analysisView);
+      return paginate(rows, query, ['analysis_id', 'created_at'], 'analysis_id');
     },
   },
   {
     method: 'GET',
     path: '/analyses/:id',
-    handler: ({ params }) => {
-      const analysis = mockAnalyses.find((a) => a.analysis_id === Number(params.id));
-      if (!analysis) return notFound('Analysis');
+    handler: ({ params, user }) => {
+      const bad = checkIdString(params.id, 'id');
+      if (bad.length) return validationError(bad);
+      const found = authorizeAnalysis(user, Number(params.id));
+      if ('status' in found && 'body' in found) return found;
+      const analysis = found as AnalysisRunRow;
       const counts = { pass: 0, warn: 0, fail: 0 };
-      for (const a of mockAssignments) {
+      for (const a of state.assignments) {
         if (a.analysis_id === analysis.analysis_id) counts[a.qc_flag] += 1;
       }
-      return ok({ ...analysis, assignment_counts: counts });
+      return ok({ ...analysisView(analysis), assignment_counts: counts });
     },
   },
   {
-    // Section 11 example. Body is multipart (analysis_id, file); ?dry_run=true validates only.
+    method: 'POST',
+    path: '/analyses',
+    roles: ['principal_investigator', 'analyst'],
+    handler: ({ body, user }) => {
+      const input = (body ?? {}) as Record<string, unknown>;
+      const details = [
+        ...checkId(input.run_id, 'run_id'),
+        ...checkId(input.marker_id, 'marker_id'),
+        ...checkText(input.pipeline_name, 'pipeline_name', 200, true),
+        ...checkText(input.pipeline_version, 'pipeline_version', 100, true),
+        ...checkText(input.reference_db, 'reference_db', 200, true),
+        ...(present(input.reference_db_version)
+          ? checkText(input.reference_db_version, 'reference_db_version', 100, true)
+          : []),
+        ...(input.parameters === undefined ? [] : checkParameters(input.parameters)),
+        ...(present(input.supersedes_analysis_id)
+          ? checkId(input.supersedes_analysis_id, 'supersedes_analysis_id')
+          : []),
+        ...unknownKeys(input, ANALYSIS_FIELDS),
+      ];
+      if (details.length) return validationError(details);
+      const runId = input.run_id as number;
+      const projectIds = projectsOfRun(runId);
+      if (projectIds === null) return notFound('Sequencing run');
+      const denied = anyProjectAccess(user, projectIds, { write: true, what: 'Sequencing run' });
+      if (denied) return denied;
+      const supersedes = present(input.supersedes_analysis_id)
+        ? (input.supersedes_analysis_id as number)
+        : null;
+      if (supersedes !== null) {
+        const found = authorizeAnalysis(user, supersedes);
+        if ('status' in found && 'body' in found) return found;
+        const replaced = found as AnalysisRunRow;
+        if (replaced.status !== 'approved') {
+          return fail(
+            422,
+            'rule_violation',
+            `Analysis ${replaced.analysis_id} is ${replaced.status}; only an approved analysis can be corrected`,
+            [{ field: 'supersedes_analysis_id', message: 'must name an approved analysis' }],
+          );
+        }
+      }
+      // The insert uses up an id even when the database refuses it (unique, then foreign key).
+      const id = state.nextAnalysisId++;
+      if (
+        supersedes !== null &&
+        state.analyses.some((a) => a.supersedes_analysis_id === supersedes)
+      ) {
+        const detail = `Key (supersedes_analysis_id)=(${supersedes}) already exists.`;
+        return fail(409, 'duplicate', detail, [{ message: detail }]);
+      }
+      if (!mockMarkers.some((m) => m.marker_id === input.marker_id)) {
+        return missingKey('marker_id', input.marker_id, 'dna_markers');
+      }
+      const now = new Date().toISOString();
+      const analysis: AnalysisRunRow = {
+        analysis_id: id,
+        run_id: runId,
+        marker_id: input.marker_id as number,
+        pipeline_name: (input.pipeline_name as string).trim(),
+        pipeline_version: (input.pipeline_version as string).trim(),
+        reference_db: (input.reference_db as string).trim(),
+        reference_db_version: present(input.reference_db_version)
+          ? (input.reference_db_version as string).trim()
+          : null,
+        parameters: (input.parameters as Record<string, unknown> | undefined) ?? {},
+        status: 'draft',
+        imported_by: null,
+        approved_by: null,
+        approved_at: null,
+        created_at: now,
+        supersedes_analysis_id: supersedes,
+      };
+      state.analyses.push(analysis);
+      writeAudit(user.user_id, 'analysis_runs', id, 'insert', null, {
+        ...analysis,
+        created_at: jsonbTime(now),
+      });
+      return ok(analysisView(analysis), undefined, 201);
+    },
+  },
+  {
+    // Multipart: analysis_id and file (CONTRACT 12); ?dry_run=true validates only.
     method: 'POST',
     path: '/analyses/import',
     roles: ['principal_investigator', 'analyst'],
-    handler: ({ query, body }) => {
-      const analysisId =
-        body instanceof FormData
-          ? Number(body.get('analysis_id'))
-          : Number((body as { analysis_id?: unknown } | undefined)?.analysis_id);
-      if (!mockAnalyses.some((a) => a.analysis_id === analysisId)) {
-        return fail(422, 'validation_error', 'Choose an analysis to import into', [
-          { field: 'analysis_id', message: 'Unknown analysis' },
+    handler: ({ query, user, upload }) => {
+      const file = upload?.file ?? null;
+      if (file && file.size > MAX_IMPORT_BYTES) {
+        return fail(413, 'payload_too_large', 'The upload is too large', [
+          { field: 'file', message: 'maximum size is 10 MB' },
         ]);
       }
-      if (query.get('dry_run') === 'true') {
-        return ok({
-          valid_rows: 38,
-          errors: [{ row: 12, field: 'confidence', message: 'must be between 0 and 1' }],
+      if (!file) {
+        return fail(422, 'validation_error', 'The upload was rejected', [
+          { field: 'file', message: 'is required' },
+        ]);
+      }
+      const fields = upload!.fields;
+      const dryRun = query.get('dry_run');
+      const details = [
+        ...(dryRun === null ? [] : checkEnum(dryRun, 'dry_run', ['true', 'false'])),
+        ...(fields.analysis_id === undefined
+          ? [
+              {
+                field: 'analysis_id',
+                message: 'Invalid input: expected string, received undefined',
+              },
+            ]
+          : checkIdString(fields.analysis_id, 'analysis_id')),
+        ...unknownKeys(fields, ['analysis_id']),
+      ];
+      if (details.length) return validationError(details);
+      const found = authorizeAnalysis(user, Number(fields.analysis_id), { write: true });
+      if ('status' in found && 'body' in found) return found;
+      const analysis = found as AnalysisRunRow;
+      const blocked = importBlocked(analysis);
+      if (blocked) return blocked;
+
+      const fileProblem = (message: string) =>
+        fail(422, 'validation_error', 'The file is not a valid CSV', [{ field: 'file', message }]);
+      if (file.text === null) return fileProblem('must be UTF-8 text');
+      const checked = checkDetectionCsv(file.text);
+      if (checked.fileProblem) return fileProblem(checked.fileProblem);
+      const lookups = resolveImportRows(checked.rows, analysis);
+      const errors = [...checked.errors, ...lookups.errors].sort((a, b) => a.row - b.row);
+      const listed = errors.slice(0, MAX_REPORTED_ERRORS);
+      if (dryRun === 'true') {
+        return ok(
+          { valid_rows: lookups.resolved.length, errors: listed },
+          errors.length > listed.length
+            ? { total_errors: errors.length, errors_shown: listed.length }
+            : undefined,
+        );
+      }
+      if (errors.length > 0) {
+        const capped = errors.length > listed.length ? ` (first ${listed.length} shown)` : '';
+        return fail(
+          422,
+          'validation_error',
+          `The file has ${errors.length} error${errors.length === 1 ? '' : 's'}${capped}`,
+          listed,
+        );
+      }
+      // import_detections(): every row, then the status change the trigger audits. Its INSERT ...
+      // SELECT has no ORDER BY; the plan PostgreSQL picks for it (a hash join on the libraries)
+      // numbers the rows library by library, the rows of one library last-in-file first. Copied so
+      // ties (same sample and date) list in the same order; the API does not promise this order.
+      const insertOrder = lookups.resolved
+        .map((row, position) => ({ row, position }))
+        .sort((a, b) => a.row.library_id - b.row.library_id || b.position - a.position)
+        .map(({ row }) => row);
+      for (const row of insertOrder) {
+        state.assignments.push({
+          assignment_id: state.nextAssignmentId++,
+          analysis_id: analysis.analysis_id,
+          library_id: row.library_id,
+          taxon_id: row.taxon_id,
+          read_count: row.read_count,
+          confidence: row.confidence,
+          qc_flag: row.qc_flag,
         });
       }
-      return ok({ inserted: 38 }, undefined, 201);
+      const before = { status: analysis.status, imported_by: analysis.imported_by };
+      analysis.status = 'imported';
+      analysis.imported_by = user.user_id;
+      writeAudit(user.user_id, 'analysis_runs', analysis.analysis_id, 'update', before, {
+        status: analysis.status,
+        imported_by: analysis.imported_by,
+      });
+      return ok({ inserted: lookups.resolved.length }, undefined, 201);
+    },
+  },
+  {
+    method: 'POST',
+    path: '/analyses/:id/approve',
+    roles: ['principal_investigator'],
+    handler: ({ params, user }) => {
+      const bad = checkIdString(params.id, 'id');
+      if (bad.length) return validationError(bad);
+      const found = authorizeAnalysis(user, Number(params.id), { write: true });
+      if ('status' in found && 'body' in found) return found;
+      const analysis = found as AnalysisRunRow;
+      const id = analysis.analysis_id;
+      // approve_analysis(): status, importer, detections, the run a correction replaces.
+      if (analysis.status === 'approved') {
+        return fail(409, 'conflict', `Analysis ${id} is already approved`, [
+          { message: 'An analysis can be approved only once.' },
+        ]);
+      }
+      if (analysis.status !== 'imported') {
+        return fail(
+          409,
+          'invalid_transition',
+          `Analysis ${id} is ${analysis.status}; only an imported analysis can be approved`,
+          [],
+        );
+      }
+      if (analysis.imported_by === null) {
+        return fail(
+          422,
+          'rule_violation',
+          `Analysis ${id} has no recorded importer and cannot be approved`,
+          [],
+        );
+      }
+      if (analysis.imported_by === user.user_id) {
+        return fail(422, 'rule_violation', 'The importer may not approve their own analysis', [
+          { message: `User ${user.user_id} imported analysis ${id}.` },
+        ]);
+      }
+      const count = state.assignments.filter((a) => a.analysis_id === id).length;
+      if (count === 0) {
+        return fail(
+          422,
+          'rule_violation',
+          `Analysis ${id} has no detections and cannot be approved`,
+          [],
+        );
+      }
+      const old =
+        analysis.supersedes_analysis_id === null
+          ? null
+          : state.analyses.find((a) => a.analysis_id === analysis.supersedes_analysis_id)!;
+      if (old && old.status !== 'approved') {
+        return fail(
+          409,
+          'invalid_transition',
+          `Analysis ${old.analysis_id} cannot be superseded: it is ${old.status}, not approved`,
+          [
+            {
+              message: `Analysis ${id} is a correction of analysis ${old.analysis_id}, which must still be approved.`,
+            },
+          ],
+        );
+      }
+      const now = new Date().toISOString();
+      const before = {
+        status: analysis.status,
+        approved_at: analysis.approved_at,
+        approved_by: analysis.approved_by,
+      };
+      analysis.status = 'approved';
+      analysis.approved_by = user.user_id;
+      analysis.approved_at = now;
+      writeAudit(user.user_id, 'analysis_runs', id, 'update', before, {
+        status: 'approved',
+        approved_at: jsonbTime(now),
+        approved_by: user.user_id,
+      });
+      pushAudit(user.user_id, 'analysis_runs', id, 'approve', {
+        from_status: 'imported',
+        to_status: 'approved',
+        detection_count: count,
+        importer_id: analysis.imported_by,
+        ...(old ? { supersedes_analysis_id: old.analysis_id } : {}),
+      });
+      if (old) {
+        old.status = 'superseded';
+        writeAudit(
+          user.user_id,
+          'analysis_runs',
+          old.analysis_id,
+          'update',
+          {
+            status: 'approved',
+          },
+          { status: 'superseded' },
+        );
+        pushAudit(user.user_id, 'analysis_runs', old.analysis_id, 'update', {
+          from_status: 'approved',
+          to_status: 'superseded',
+          superseded_by: id,
+        });
+      }
+      return ok(analysisView(analysis));
+    },
+  },
+  {
+    method: 'POST',
+    path: '/analyses/:id/reject',
+    roles: ['principal_investigator'],
+    handler: ({ params, body, user }) => {
+      const input = (body ?? {}) as Record<string, unknown>;
+      const bad = [
+        ...checkIdString(params.id, 'id'),
+        ...checkText(input.reason, 'reason', 1000, true),
+        ...unknownKeys(input, ['reason']),
+      ];
+      if (bad.length) return validationError(bad);
+      const found = authorizeAnalysis(user, Number(params.id), { write: true });
+      if ('status' in found && 'body' in found) return found;
+      const analysis = found as AnalysisRunRow;
+      const id = analysis.analysis_id;
+      if (analysis.status === 'rejected') {
+        return fail(409, 'conflict', `Analysis ${id} is already rejected`, [
+          { message: 'An analysis can be rejected only once.' },
+        ]);
+      }
+      if (analysis.status !== 'draft' && analysis.status !== 'imported') {
+        return fail(
+          409,
+          'invalid_transition',
+          `Analysis ${id} is ${analysis.status}; only a draft or imported analysis can be rejected`,
+          [{ message: 'An approved result is corrected by a new run, never rejected.' }],
+        );
+      }
+      const from = analysis.status;
+      analysis.status = 'rejected';
+      writeAudit(
+        user.user_id,
+        'analysis_runs',
+        id,
+        'update',
+        { status: from },
+        {
+          status: 'rejected',
+        },
+      );
+      pushAudit(user.user_id, 'analysis_runs', id, 'reject', {
+        from_status: from,
+        to_status: 'rejected',
+        reason: (input.reason as string).trim(),
+      });
+      return ok(analysisView(analysis));
     },
   },
 
@@ -2808,28 +3694,45 @@ const routes: MockRoute[] = [
     method: 'GET',
     path: '/taxa',
     handler: ({ query }) => {
-      const q = query.get('q')?.toLowerCase();
+      const q = query.get('q');
       const rank = query.get('rank');
+      const bad = [
+        ...(q === null ? [] : checkText(q, 'q', 200, true)),
+        ...(rank === null ? [] : checkEnum(rank, 'rank', TAXON_RANKS)),
+        ...checkIdString(query.get('parent_taxon_id'), 'parent_taxon_id'),
+      ];
+      if (bad.length) return validationError(bad);
+      // ILIKE 'q%' OR ILIKE '% q%': the name, or a word in it, starts with q (taxa.service.js).
+      const needle = q?.trim().toLowerCase() ?? null;
       const parentId = num(query, 'parent_taxon_id');
-      const rows = mockTaxa.filter(
-        (t) =>
-          (!q || t.scientific_name.toLowerCase().includes(q)) &&
-          (!rank || t.rank === rank) &&
-          (parentId === null || t.parent_taxon_id === parentId),
-      );
-      return paginate(rows, query);
+      const rows = mockTaxa
+        .filter((t) => {
+          const name = t.scientific_name.toLowerCase();
+          return (
+            (needle === null || name.startsWith(needle) || name.includes(` ${needle}`)) &&
+            (!rank || t.rank === rank) &&
+            (parentId === null || t.parent_taxon_id === parentId)
+          );
+        })
+        .sort(
+          (a, b) => compareText(a.scientific_name, b.scientific_name) || a.taxon_id - b.taxon_id,
+        );
+      return paginate(rows, query, ['scientific_name', 'taxon_id'], 'taxon_id');
     },
   },
   {
     method: 'GET',
     path: '/taxa/:id',
     handler: ({ params }) => {
+      const bad = checkIdString(params.id, 'id');
+      if (bad.length) return validationError(bad);
       const taxon = mockTaxa.find((t) => t.taxon_id === Number(params.id));
       if (!taxon) return notFound('Taxon');
       const lineage = [];
-      for (let t = taxon; t; t = mockTaxa.find((x) => x.taxon_id === t.parent_taxon_id)!) {
+      for (let t: Taxon | undefined = taxon; t;) {
         lineage.unshift({ taxon_id: t.taxon_id, scientific_name: t.scientific_name, rank: t.rank });
-        if (t.parent_taxon_id === null) break;
+        const parentId: number | null = t.parent_taxon_id;
+        t = parentId === null ? undefined : mockTaxa.find((x) => x.taxon_id === parentId);
       }
       return ok({ ...taxon, lineage });
     },
@@ -2838,21 +3741,49 @@ const routes: MockRoute[] = [
     method: 'GET',
     path: '/taxa/:id/detections',
     handler: ({ user, params, query }) => {
+      const range = rangeOf(query);
+      const bad = [
+        ...checkIdString(params.id, 'id'),
+        ...checkIdString(query.get('project_id'), 'project_id'),
+        ...checkIdString(query.get('site_id'), 'site_id'),
+        ...(Array.isArray(range) ? range : []),
+      ];
+      if (bad.length) return validationError(bad);
+      const { from, to } = range as { from: number | null; to: number | null };
+      if (from !== null && to !== null && from > to) return fromAfterTo();
+      const sort = query.get('sort')?.trim();
+      if (sort && sort.replace(/^-/, '') !== 'collected_at') {
+        return fail(422, 'validation_error', `Invalid sort field: ${sort.replace(/^-/, '')}`, [
+          { field: 'sort', message: 'Must be one of: collected_at' },
+        ]);
+      }
       const taxonId = Number(params.id);
       if (!mockTaxa.some((t) => t.taxon_id === taxonId)) return notFound('Taxon');
       const projectId = num(query, 'project_id');
+      if (projectId !== null) {
+        const denied = projectAccess(user, projectId);
+        if (denied) return denied;
+      }
       const siteId = num(query, 'site_id');
+      const ascending = sort === 'collected_at';
       const rows = approvedDetections(user)
         .filter(
-          ({ assignment, event, site }) =>
-            assignment.taxon_id === taxonId &&
-            (projectId === null || event.project_id === projectId) &&
-            (siteId === null || site.site_id === siteId) &&
-            inRange(event.collected_at, query),
+          (d) =>
+            d.assignment.taxon_id === taxonId &&
+            (projectId === null || d.event.project_id === projectId) &&
+            (siteId === null || d.site.site_id === siteId) &&
+            (from === null || Date.parse(d.event.collected_at) >= from) &&
+            (to === null || Date.parse(d.event.collected_at) <= to),
+        )
+        .sort(
+          (a, b) =>
+            (Date.parse(a.event.collected_at) - Date.parse(b.event.collected_at)) *
+              (ascending ? 1 : -1) || a.assignment.assignment_id - b.assignment.assignment_id,
         )
         .map(({ assignment, sample, event, site }) => ({
           site_id: site.site_id,
           site_name: site.name,
+          sample_id: sample.sample_id,
           sample_code: sample.sample_code,
           collected_at: event.collected_at,
           analysis_id: assignment.analysis_id,
@@ -2860,7 +3791,9 @@ const routes: MockRoute[] = [
           confidence: assignment.confidence,
           qc_flag: assignment.qc_flag,
         }));
-      return paginate(rows, query);
+      const pageQuery = new URLSearchParams(query);
+      pageQuery.delete('sort');
+      return paginate(rows, pageQuery);
     },
   },
 
@@ -2869,54 +3802,32 @@ const routes: MockRoute[] = [
     method: 'GET',
     path: '/analytics/richness',
     handler: ({ user, query }) => {
-      const projectId = num(query, 'project_id');
-      const siteId = num(query, 'site_id');
       const groupBy = query.get('group_by') ?? 'year';
-      if (!['year', 'month', 'site'].includes(groupBy)) {
-        return fail(422, 'validation_error', 'group_by must be year, month, or site', [
-          { field: 'group_by', message: 'must be year, month, or site' },
-        ]);
+      const range = rangeOf(query);
+      const bad = [
+        ...checkIdString(query.get('project_id'), 'project_id'),
+        ...checkIdString(query.get('site_id'), 'site_id'),
+        ...checkEnum(groupBy, 'group_by', GROUP_BYS),
+        ...(Array.isArray(range) ? range : []),
+      ];
+      // An unknown key does not stop the from/to refine; a field issue does.
+      const extra = unknownKeys(Object.fromEntries(query), RICHNESS_KEYS);
+      if (bad.length === 0 && !Array.isArray(range)) {
+        if (range.from !== null && range.to !== null && range.from > range.to) {
+          extra.push({ field: 'from', message: 'must not be after to' });
+        }
       }
-      const keyOf = (e: CollectionEvent) =>
-        groupBy === 'site'
-          ? state.sites.find((s) => s.site_id === e.site_id)!.name
-          : e.collected_at.slice(0, groupBy === 'year' ? 4 : 7);
-      const events = eventsFor(user, query).filter(
-        (e) =>
-          (projectId === null || e.project_id === projectId) &&
-          (siteId === null || e.site_id === siteId),
-      );
-      const detections = approvedDetections(user);
-      const groups = new Map<
-        string,
-        { group: string; site_id: number; taxa: Set<number>; samples: Set<number> }
-      >();
-      for (const e of events) {
-        const key = `${keyOf(e)}|${e.site_id}`;
-        const g = groups.get(key) ?? {
-          group: keyOf(e),
-          site_id: e.site_id,
-          taxa: new Set(),
-          samples: new Set(),
-        };
-        allSamples()
-          .filter(
-            (s) => s.event_id === e.event_id && s.status !== 'failed' && s.status !== 'discarded',
-          )
-          .forEach((s) => g.samples.add(s.sample_id));
-        detections
-          .filter((d) => d.event.event_id === e.event_id)
-          .forEach((d) => g.taxa.add(d.assignment.taxon_id));
-        groups.set(key, g);
-      }
-      const rows = [...groups.values()]
-        .sort((a, b) => a.group.localeCompare(b.group) || a.site_id - b.site_id)
-        .map((g) => ({
-          group: g.group,
-          site_id: g.site_id,
-          observed_taxa: g.taxa.size,
-          sample_count: g.samples.size,
-        }));
+      if (bad.length || extra.length) return validationError([...bad, ...extra]);
+      const { from, to } = range as { from: number | null; to: number | null };
+      const scope = scopeProjects(user, num(query, 'project_id'));
+      if (!Array.isArray(scope)) return scope;
+      const rows = richnessRows({
+        projectIds: scope,
+        siteId: num(query, 'site_id'),
+        groupBy: groupBy as GroupBy,
+        from,
+        to,
+      });
       return ok(rows, { caveat: EDNA_CAVEAT });
     },
   },
@@ -2924,30 +3835,40 @@ const routes: MockRoute[] = [
     method: 'GET',
     path: '/analytics/detection-frequency',
     handler: ({ user, query }) => {
-      const taxonId = num(query, 'taxon_id');
-      const projectId = num(query, 'project_id');
-      const events = eventsFor(user).filter(
-        (e) => projectId === null || e.project_id === projectId,
+      const taxonRaw = query.get('taxon_id');
+      const bad = [
+        ...(taxonRaw === null
+          ? [{ field: 'taxon_id', message: 'Invalid input: expected string, received undefined' }]
+          : checkIdString(taxonRaw, 'taxon_id')),
+        ...checkIdString(query.get('project_id'), 'project_id'),
+        ...unknownKeys(Object.fromEntries(query), ['taxon_id', 'project_id']),
+      ];
+      if (bad.length) return validationError(bad);
+      const taxonId = Number(taxonRaw);
+      if (!mockTaxa.some((t) => t.taxon_id === taxonId)) return notFound('Taxon');
+      const scope = scopeProjects(user, num(query, 'project_id'));
+      if (!Array.isArray(scope)) return scope;
+      const samples = state.samples.filter((s) =>
+        scope.includes(eventById(s.event_id)!.project_id),
       );
-      const detections = approvedDetections(user);
-      const siteIds = [...new Set(events.map((e) => e.site_id))].sort((a, b) => a - b);
-      const rows = siteIds.map((site_id) => {
-        const siteEvents = events.filter((e) => e.site_id === site_id).map((e) => e.event_id);
-        const samplesTotal = allSamples().filter(
-          (s) => siteEvents.includes(s.event_id) && s.status === 'analyzed',
-        ).length;
-        const detected = new Set(
-          detections
-            .filter(
-              (d) =>
-                d.site.site_id === site_id &&
-                siteEvents.includes(d.event.event_id) &&
-                (taxonId === null || d.assignment.taxon_id === taxonId),
-            )
-            .map((d) => d.sample.sample_id),
-        );
-        return { site_id, detections: detected.size, samples_total: samplesTotal };
-      });
+      const approvedRuns = new Set(
+        state.analyses.filter((a) => a.status === 'approved').map((a) => a.run_id),
+      );
+      const passing = passingAssignments().filter((a) => a.taxon_id === taxonId);
+      const bySite = new Map<number, { detections: number; samples_total: number }>();
+      for (const s of samples) {
+        const siteId = eventById(s.event_id)!.site_id;
+        const row = bySite.get(siteId) ?? { detections: 0, samples_total: 0 };
+        const libraries = librariesOfSample(s.sample_id);
+        if (libraries.some((l) => approvedRuns.has(l.run_id))) row.samples_total += 1;
+        if (passing.some((a) => libraries.some((l) => l.library_id === a.library_id))) {
+          row.detections += 1;
+        }
+        bySite.set(siteId, row);
+      }
+      const rows = [...bySite.entries()]
+        .sort(([a], [b]) => a - b)
+        .map(([site_id, row]) => ({ site_id, ...row }));
       return ok(rows, { caveat: EDNA_CAVEAT });
     },
   },
@@ -2955,22 +3876,24 @@ const routes: MockRoute[] = [
     method: 'GET',
     path: '/dashboard/summary',
     handler: ({ user, query }) => {
+      const bad = [
+        ...checkIdString(query.get('project_id'), 'project_id'),
+        ...unknownKeys(Object.fromEntries(query), ['project_id']),
+      ];
+      if (bad.length) return validationError(bad);
       const projectId = num(query, 'project_id');
-      const projectIds = visibleProjectIds(user).filter(
-        (id) => projectId === null || id === projectId,
-      );
-      const events = eventsFor(user).filter((e) => projectIds.includes(e.project_id));
-      const siteIds = new Set(projectIds.flatMap((id) => siteIdsOf(id)));
+      const scope = scopeProjects(user, projectId);
+      if (!Array.isArray(scope)) return scope;
+      const everything = isAdmin(user) && projectId === null;
+      const events = state.events.filter((e) => scope.includes(e.project_id));
       return ok({
-        projects: projectIds.length,
-        sites: siteIds.size,
-        samples: allSamples().filter((s) => events.some((e) => e.event_id === s.event_id)).length,
+        projects: scope.length,
+        sites: everything ? state.sites.length : new Set(scope.flatMap((id) => siteIdsOf(id))).size,
+        samples: state.samples.filter((s) => events.some((e) => e.event_id === s.event_id)).length,
         approved_detections: approvedDetections(user).filter((d) =>
-          projectIds.includes(d.event.project_id),
+          scope.includes(d.event.project_id),
         ).length,
-        recent_activity: hasAnyRole(user, ['administrator', 'principal_investigator'])
-          ? auditFor(user).slice(0, 5)
-          : [],
+        recent_activity: auditFor(user, projectId).slice(0, 5),
       });
     },
   },
@@ -2978,16 +3901,56 @@ const routes: MockRoute[] = [
     method: 'POST',
     path: '/exports',
     handler: ({ user, body }) => {
-      const req = (body ?? {}) as { export_type?: string; project_id?: number };
-      if (!req.export_type || !req.project_id) {
-        return fail(422, 'validation_error', 'Choose an export type and a project', [
-          ...(req.export_type ? [] : [{ field: 'export_type', message: 'required' }]),
-          ...(req.project_id ? [] : [{ field: 'project_id', message: 'required' }]),
-        ]);
-      }
-      if (!visibleProjectIds(user).includes(req.project_id)) return notFound('Project');
-      created.exports += 1;
-      return ok({ export_id: 1000 + created.exports, row_count: 16 }, undefined, 201);
+      const input = (body ?? {}) as Record<string, unknown>;
+      const checked = checkExportBody(input);
+      if (Array.isArray(checked)) return validationError(checked);
+      const denied = projectAccess(user, checked.project_id);
+      if (denied) return denied;
+      const rowCount = exportRows(checked.export_type, checked.project_id, checked.filters).length;
+      const id = state.nextExportId++;
+      const now = new Date().toISOString();
+      const record: StoredExport = {
+        export_id: id,
+        requested_by: user.user_id,
+        project_id: checked.project_id,
+        export_type: checked.export_type,
+        filters: checked.filters,
+        row_count: rowCount,
+        created_at: now,
+      };
+      state.exports.push(record);
+      writeAudit(user.user_id, 'data_exports', id, 'insert', null, {
+        ...record,
+        created_at: jsonbTime(now),
+      });
+      return ok({ export_id: id, row_count: rowCount }, undefined, 201);
+    },
+  },
+  {
+    // A CSV file, not JSON: the body is the text, the headers carry the name, count and caveat.
+    method: 'GET',
+    path: '/exports/:id/download',
+    handler: ({ params, user }) => {
+      const bad = checkIdString(params.id, 'id');
+      if (bad.length) return validationError(bad);
+      const record = state.exports.find(
+        (x) => x.export_id === Number(params.id) && x.requested_by === user.user_id,
+      );
+      if (!record) return notFound('Export');
+      const denied = projectAccess(user, record.project_id, { what: 'Export' });
+      if (denied) return denied;
+      const rows = exportRows(record.export_type, record.project_id, record.filters);
+      const text = [csvLine(EXPORT_COLUMNS[record.export_type]), ...rows.map(csvLine)].join('');
+      return {
+        status: 200,
+        body: text,
+        headers: {
+          'Content-Type': 'text/csv; charset=utf-8',
+          'Content-Disposition': `attachment; filename="ebiotrack-${record.export_type}-${record.export_id}.csv"`,
+          'X-Row-Count': String(rows.length),
+          'X-Caveat': EDNA_CAVEAT,
+        },
+      };
     },
   },
   {
@@ -3081,5 +4044,6 @@ export async function handleMockRequest(
     query: new URLSearchParams(search),
     body: copyBody(body),
     user: user as User,
+    upload: await readUpload(body),
   });
 }

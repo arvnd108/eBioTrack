@@ -84,7 +84,24 @@ describe.skipIf(!available)('taxa, analytics, dashboard and exports', () => {
       );
       expect(res.body.data.map((d) => d.sample_code)).toEqual(oracle.map((o) => o.sample_code));
       expect(res.body.meta.total).toBe(oracle.length);
+      expect(Object.keys(res.body.data[0]).sort()).toEqual([
+        'analysis_id',
+        'collected_at',
+        'confidence',
+        'qc_flag',
+        'read_count',
+        'sample_code',
+        'sample_id',
+        'site_id',
+        'site_name',
+      ]);
+      const ids = await query(
+        'SELECT sample_id, sample_code FROM samples WHERE sample_code = ANY($1::text[])',
+        [res.body.data.map((d) => d.sample_code)],
+      );
       for (const d of res.body.data) {
+        // sample_id is the sample the code names, so a page can link to it (CONTRACT 1.8)
+        expect(ids.find((x) => x.sample_code === d.sample_code).sample_id).toBe(d.sample_id);
         expect(d.qc_flag).toBe('pass');
         expect(typeof d.confidence).toBe('number');
       }

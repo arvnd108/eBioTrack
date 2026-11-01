@@ -88,7 +88,7 @@ export async function listDetections(user, taxonId, filters, { limit, offset, so
     filters.to ?? null,
   ];
   const rows = await query(
-    `SELECT d.site_id, d.site_name, d.sample_code, d.collected_at, d.analysis_id, d.read_count,
+    `SELECT d.site_id, d.site_name, d.sample_id, d.sample_code, d.collected_at, d.analysis_id, d.read_count,
             d.confidence::float8 AS confidence, d.qc_flag
        ${from} ORDER BY d.collected_at ${sort?.direction === 'ASC' ? 'ASC' : 'DESC'}, d.assignment_id LIMIT $7 OFFSET $8`,
     [...params, limit, offset],

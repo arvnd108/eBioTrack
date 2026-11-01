@@ -60,5 +60,8 @@ Use these on every page so all pages look and behave the same.
 | `hooks/useLookups`                                           | Names for ids (projects, sites, regions, sample types; people by the name the API sends, "You" for yourself)                     |
 | `src/domain.ts`                                              | CONTRACT section 3 values the pages offer: habitat and region types, sample statuses and their allowed transitions               |
 | `components/maps/SiteMap`                                    | The Leaflet site map (OpenStreetMap tiles); import it with `lazy()` so Leaflet loads only where a map is shown                   |
+| `components/charts/*` + `chartPalette.ts`                    | Recharts charts in the fixed, colour-blind-checked series order; always show the same numbers in a table next to the chart       |
+| `components/common/ExportButton`                             | "Download CSV" for one `POST /api/exports` request, showing the caveat beside the file (`api.download` reads the CSV)            |
+| `utils/detectionCsv.ts`                                      | The detection CSV format (CONTRACT 12), a port of the backend's `utils/csv.js`: the import page and the mock both use it         |
 
 `src/permissions.ts` copies the API's permission matrix (`backend/src/middleware/permissions.js`, CONTRACT 9) with the same action names. A test compares the two files, so update both together. Hiding something in the UI is only a convenience: the API still refuses what a role cannot do.

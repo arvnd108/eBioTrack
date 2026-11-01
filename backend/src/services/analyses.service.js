@@ -26,10 +26,30 @@ const runNotFound = () => new AppError(404, 'not_found', 'Sequencing run not fou
 /** Most errors listed in one response; the total is always reported. */
 export const MAX_REPORTED_ERRORS = 100;
 
+// Every row also names what its ids point to (CONTRACT 1.8), so roles that cannot list users or
+// runs can still show them: the run code, the marker name, the importer's and approver's names,
+// and for a `rejected` analysis the rejection (the reason is kept only in the audit entry that
+// reject_analysis() writes, so it is read back from the latest one; null for any other status).
 const COLUMNS = `
   a.analysis_id, a.run_id, a.marker_id, a.pipeline_name, a.pipeline_version, a.reference_db,
   a.reference_db_version, COALESCE(a.parameters, '{}'::jsonb) AS parameters, a.status,
-  a.imported_by, a.approved_by, a.approved_at, a.created_at, a.supersedes_analysis_id`;
+  a.imported_by, a.approved_by, a.approved_at, a.created_at, a.supersedes_analysis_id,
+  (SELECT r.run_code FROM sequencing_runs r WHERE r.run_id = a.run_id) AS run_code,
+  (SELECT m.marker_name FROM dna_markers m WHERE m.marker_id = a.marker_id) AS marker_name,
+  (SELECT u.full_name FROM users u WHERE u.user_id = a.imported_by) AS imported_by_name,
+  (SELECT u.full_name FROM users u WHERE u.user_id = a.approved_by) AS approved_by_name,
+  CASE WHEN a.status = 'rejected' THEN (
+    SELECT jsonb_build_object(
+             'reason', al.details ->> 'reason',
+             'rejected_by', al.actor_id,
+             'rejected_by_name', u.full_name,
+             'rejected_at', to_char(al.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
+      FROM audit_logs al
+      LEFT JOIN users u ON u.user_id = al.actor_id
+     WHERE al.entity_type = 'analysis_runs' AND al.entity_id = a.analysis_id
+       AND al.action = 'reject'
+     ORDER BY al.created_at DESC, al.audit_id DESC
+     LIMIT 1) END AS rejection`;
 const SORT = { analysis_id: 'a.analysis_id', created_at: 'a.created_at' };
 
 const hasRole = (user, ...names) => names.some((name) => user.roles.includes(name));

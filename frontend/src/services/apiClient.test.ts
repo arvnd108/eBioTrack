@@ -95,6 +95,52 @@ describe('real mode', () => {
     expect((init.headers as Record<string, string>)['Content-Type']).toBeUndefined();
   });
 
+  it('downloads a file with its name, row count and caveat (export download)', async () => {
+    fetchMock.mockResolvedValue(
+      new Response('group,site_id\r\n2025,1\r\n', {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/csv; charset=utf-8',
+          'Content-Disposition': 'attachment; filename="ebiotrack-richness_csv-7.csv"',
+          'X-Row-Count': '1',
+          'X-Caveat': 'Detection does not indicate abundance.',
+        },
+      }),
+    );
+    await expect(api.download('/exports/7/download')).resolves.toEqual({
+      text: 'group,site_id\r\n2025,1\r\n',
+      filename: 'ebiotrack-richness_csv-7.csv',
+      rowCount: 1,
+      caveat: 'Detection does not indicate abundance.',
+    });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/exports/7/download');
+    expect(init.credentials).toBe('include');
+  });
+
+  it('turns a refused download into an ApiError, and an expired session into a sign-out', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(404, { error: { code: 'not_found', message: 'Export not found' } }),
+    );
+    await expect(api.download('/exports/9/download')).rejects.toMatchObject({
+      status: 404,
+      message: 'Export not found',
+    });
+    const signedOut = vi.fn();
+    const remove = setUnauthenticatedHandler(signedOut);
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(401, { error: { code: 'unauthenticated', message: 'Authentication required' } }),
+    );
+    await expect(api.download('/exports/9/download')).rejects.toMatchObject({ status: 401 });
+    expect(signedOut).toHaveBeenCalledTimes(1);
+    remove();
+    fetchMock.mockRejectedValueOnce(new TypeError('offline'));
+    await expect(api.download('/exports/9/download')).rejects.toMatchObject({
+      status: 0,
+      code: 'network_error',
+    });
+  });
+
   it('returns undefined data for 204 No Content', async () => {
     fetchMock.mockResolvedValue(new Response(null, { status: 204 }));
     await expect(api.post('/auth/logout')).resolves.toEqual({ data: undefined });

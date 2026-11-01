@@ -75,6 +75,8 @@ export type ListResponse<T> = ApiResponse<T[], PageMeta>;
 export interface ApiErrorDetail {
   field?: string;
   message: string;
+  /** CSV import errors name the file row (header = 1). */
+  row?: number;
 }
 
 /** Error codes the API sends (section 7 SQLSTATE mapping plus auth and HTTP basics). */
@@ -432,8 +434,8 @@ export interface SequencingRunDetail extends SequencingRun {
 
 // Analyses and detections ---------------------------------------------------------
 
-/** `GET/POST /api/analyses`, `POST /api/analyses/:id/approve|reject`. */
-export interface AnalysisRun {
+/** The `analysis_runs` columns (section 4.4) as the API returns them. */
+export interface AnalysisRunRow {
   analysis_id: number;
   run_id: number;
   marker_id: number;
@@ -447,6 +449,29 @@ export interface AnalysisRun {
   approved_by: number | null;
   approved_at: string | null;
   created_at: string;
+  /** The approved analysis this one corrects (CONTRACT 1.3/1.4); null for ordinary runs. */
+  supersedes_analysis_id: number | null;
+}
+
+/** Why and by whom a `rejected` analysis was rejected (CONTRACT 1.8, from its latest reject). */
+export interface AnalysisRejection {
+  reason: string;
+  rejected_by: number | null;
+  rejected_by_name: string | null;
+  rejected_at: string;
+}
+
+/**
+ * `GET/POST /api/analyses`, `POST /api/analyses/:id/approve|reject`: the row plus the names its
+ * ids point to (CONTRACT 1.8), so roles that cannot list users or runs can show them.
+ */
+export interface AnalysisRun extends AnalysisRunRow {
+  run_code: string;
+  marker_name: string;
+  imported_by_name: string | null;
+  approved_by_name: string | null;
+  /** Set only while the status is `rejected`. */
+  rejection: AnalysisRejection | null;
 }
 
 /** `GET /api/analyses/:id`: analysis with assignment counts by `qc_flag`. */
@@ -491,6 +516,8 @@ export interface TaxonDetail extends Taxon {
 export interface TaxonDetection {
   site_id: number;
   site_name: string;
+  /** CONTRACT 1.8: the sample the code names, for a link to its page. */
+  sample_id: number;
   sample_code: string;
   collected_at: string;
   analysis_id: number;
@@ -503,8 +530,10 @@ export interface TaxonDetection {
 
 /** `GET /api/analytics/richness` rows (section 11 example). Response meta: `CaveatMeta`. */
 export interface RichnessRow {
+  /** The year (`2026`), month (`2026-03`) or site name, by `group_by`. */
   group: string;
-  site_id?: number;
+  /** Always present: one row per group and site (CONTRACT 1.4). */
+  site_id: number;
   observed_taxa: number;
   sample_count: number;
 }

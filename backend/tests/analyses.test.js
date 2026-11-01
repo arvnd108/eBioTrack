@@ -16,14 +16,19 @@ const ANALYSIS_KEYS = [
   'analysis_id',
   'approved_at',
   'approved_by',
+  'approved_by_name',
   'created_at',
   'imported_by',
+  'imported_by_name',
   'marker_id',
+  'marker_name',
   'parameters',
   'pipeline_name',
   'pipeline_version',
   'reference_db',
   'reference_db_version',
+  'rejection',
+  'run_code',
   'run_id',
   'status',
   'supersedes_analysis_id',
@@ -125,6 +130,43 @@ describe.skipIf(!available)('analyses', () => {
       });
       const list = await as.analyst.get('/api/analyses');
       expect(Object.keys(list.body.data[0]).sort()).toEqual(ANALYSIS_KEYS);
+    });
+    it('names the run, marker, importer and approver on every row (CONTRACT 1.8)', async () => {
+      // The viewer cannot list users or markers, yet reads the names from the analysis itself.
+      const viewer = await as.viewer.get('/api/analyses/1');
+      expect(viewer.body.data).toMatchObject({
+        run_code: 'RUN-001',
+        marker_name: '12S',
+        imported_by: 5,
+        imported_by_name: 'Anil Analyst',
+        approved_by: 2,
+        approved_by_name: 'Pranav Investigator',
+        rejection: null,
+      });
+      const oracle = await query(
+        `SELECT a.analysis_id, r.run_code, m.marker_name, ui.full_name AS imported_by_name,
+                ua.full_name AS approved_by_name
+           FROM analysis_runs a
+           JOIN sequencing_runs r ON r.run_id = a.run_id
+           JOIN dna_markers m ON m.marker_id = a.marker_id
+           LEFT JOIN users ui ON ui.user_id = a.imported_by
+           LEFT JOIN users ua ON ua.user_id = a.approved_by
+          ORDER BY a.analysis_id`,
+      );
+      const list = await as.analyst.get('/api/analyses?limit=100');
+      expect(
+        list.body.data.map(
+          ({ analysis_id, run_code, marker_name, imported_by_name, approved_by_name }) => ({
+            analysis_id,
+            run_code,
+            marker_name,
+            imported_by_name,
+            approved_by_name,
+          }),
+        ),
+      ).toEqual(oracle);
+      const draft = list.body.data.find((a) => a.analysis_id === 4);
+      expect(draft).toMatchObject({ imported_by_name: null, approved_by_name: null });
     });
   });
 
@@ -428,6 +470,20 @@ describe.skipIf(!available)('analyses', () => {
         .send({ reason: 'Wrong reference database' });
       expect(ok.status).toBe(200);
       expect(ok.body.data.status).toBe('rejected');
+      // The reason is kept in the audit entry and read back on the analysis (CONTRACT 1.8).
+      expect(ok.body.data.rejection).toEqual({
+        reason: 'Wrong reference database',
+        rejected_by: 2,
+        rejected_by_name: 'Pranav Investigator',
+        rejected_at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/),
+      });
+      expect(Date.now() - Date.parse(ok.body.data.rejection.rejected_at)).toBeLessThan(60000);
+      const read = await as.analyst.get(`/api/analyses/${id}`);
+      expect(read.body.data.rejection).toEqual(ok.body.data.rejection);
+      const listed = await as.analyst.get('/api/analyses?status=rejected&limit=100');
+      expect(listed.body.data.find((a) => a.analysis_id === id).rejection.reason).toBe(
+        'Wrong reference database',
+      );
       const twice = await as.principal_investigator
         .post(`/api/analyses/${id}/reject`)
         .send({ reason: 'again' });

@@ -6,7 +6,7 @@
 // until seeds 030 and 040 exist; update them to match those seeds when they land.
 
 import type {
-  AnalysisRun,
+  AnalysisRunRow,
   AuditEntry,
   CollectionEvent,
   DnaExtraction,
@@ -911,9 +911,9 @@ export const mockMarkers: DnaMarker[] = [
 ];
 
 const analysisRow = (
-  fields: Pick<AnalysisRun, 'analysis_id' | 'run_id' | 'marker_id' | 'status' | 'created_at'> &
-    Partial<AnalysisRun>,
-): AnalysisRun => {
+  fields: Pick<AnalysisRunRow, 'analysis_id' | 'run_id' | 'marker_id' | 'status' | 'created_at'> &
+    Partial<AnalysisRunRow>,
+): AnalysisRunRow => {
   const twelveS = fields.marker_id === 1;
   return {
     pipeline_name: 'OBITools3',
@@ -926,12 +926,13 @@ const analysisRow = (
     imported_by: 5,
     approved_by: null,
     approved_at: null,
+    supersedes_analysis_id: null,
     ...fields,
   };
 };
 
 /** 1, 2: 12S approved. 3: COI imported (awaiting approval). 4: COI draft (empty, no importer). */
-export const mockAnalyses: AnalysisRun[] = [
+export const mockAnalyses: AnalysisRunRow[] = [
   analysisRow({
     analysis_id: 1,
     run_id: 1,
