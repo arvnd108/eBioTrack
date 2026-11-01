@@ -17,6 +17,7 @@ import DashboardPage from './pages/DashboardPage';
 import LabProcessingPage from './pages/LabProcessingPage';
 import LoginPage from './pages/LoginPage';
 import MlInsightsPage from './pages/MlInsightsPage';
+import ProjectDetailPage from './pages/ProjectDetailPage';
 import ProjectsPage from './pages/ProjectsPage';
 import SampleDetailPage from './pages/SampleDetailPage';
 import SamplesPage from './pages/SamplesPage';
@@ -47,6 +48,7 @@ export const routes: RouteObject[] = [
         children: [
           { index: true, element: <DashboardPage /> },
           { path: 'projects', element: <ProjectsPage /> },
+          { path: 'projects/:projectId', element: <ProjectDetailPage /> },
           { path: 'map', element: <SamplingMapPage /> },
           { path: 'events', element: <CollectionEventsPage /> },
           { path: 'samples', element: <SamplesPage /> },

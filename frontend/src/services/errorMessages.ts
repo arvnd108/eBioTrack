@@ -40,3 +40,30 @@ export function errorMessage(error: unknown): string {
       return error.message || 'Something went wrong. Please try again.';
   }
 }
+
+/**
+ * Splits a failed form submit into messages per field and one message for the whole form.
+ * `fields` are the form's field names; a server detail for one of them goes on that field.
+ * `overrides` replaces the text for an error code (for example `duplicate`, whose server text is
+ * the database's "Key (title)=(…) already exists."), optionally on a field.
+ */
+export function formErrors<F extends string>(
+  error: unknown,
+  fields: readonly F[],
+  overrides: Partial<Record<string, { field?: F; message: string }>> = {},
+): { fieldErrors: Partial<Record<F, string>>; formError: string | null } {
+  const fieldErrors: Partial<Record<F, string>> = {};
+  if (!isApiError(error)) return { fieldErrors, formError: errorMessage(error) };
+
+  const override = overrides[error.code];
+  if (override) {
+    if (override.field) fieldErrors[override.field] = override.message;
+    return { fieldErrors, formError: override.field ? null : override.message };
+  }
+  for (const detail of error.details) {
+    const field = fields.find((f) => detail.field === f || detail.field?.startsWith(`${f}[`));
+    if (field && !fieldErrors[field]) fieldErrors[field] = detail.message;
+  }
+  const placed = Object.keys(fieldErrors).length > 0;
+  return { fieldErrors, formError: placed ? null : errorMessage(error) };
+}
