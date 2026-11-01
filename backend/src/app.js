@@ -7,7 +7,10 @@ import { originCheck } from './middleware/originCheck.js';
 import { sessionMiddleware } from './middleware/session.js';
 import auditRoutes from './routes/audit.routes.js';
 import authRoutes from './routes/auth.routes.js';
+import eventsRoutes from './routes/events.routes.js';
 import projectsRoutes from './routes/projects.routes.js';
+import samplesRoutes, { sampleTypesRouter } from './routes/samples.routes.js';
+import sitesRoutes, { regionsRouter } from './routes/sites.routes.js';
 import { rolesRouter, usersRouter } from './routes/users.routes.js';
 
 export const app = express();
@@ -35,6 +38,11 @@ app.use('/api/users', usersRouter);
 app.use('/api/roles', rolesRouter);
 app.use('/api/projects', projectsRoutes);
 app.use('/api/audit', auditRoutes);
+app.use('/api/regions', regionsRouter);
+app.use('/api/sites', sitesRoutes);
+app.use('/api/events', eventsRoutes);
+app.use('/api/sample-types', sampleTypesRouter);
+app.use('/api/samples', samplesRoutes);
 
 // Catch-all 404 handler for unmatched routes
 app.use(notFoundHandler);

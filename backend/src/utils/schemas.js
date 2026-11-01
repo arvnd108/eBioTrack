@@ -32,3 +32,20 @@ export const booleanString = z.enum(['true', 'false']).transform((value) => valu
 
 /** At least one key must be present (PATCH bodies). */
 export const atLeastOneKey = (value) => Object.keys(value).length > 0;
+
+/**
+ * Lower bound of a `from` filter: an ISO timestamp, or a date meaning the start of that UTC day.
+ * Both bounds are inclusive.
+ */
+export const rangeFrom = z
+  .union([z.iso.datetime({ offset: true }), calendarDate])
+  .transform((value) => (value.length === 10 ? `${value}T00:00:00.000Z` : value));
+
+/** Upper bound of a `to` filter: an ISO timestamp, or a date meaning the end of that UTC day. */
+export const rangeTo = z
+  .union([z.iso.datetime({ offset: true }), calendarDate])
+  .transform((value) => (value.length === 10 ? `${value}T23:59:59.999Z` : value));
+
+/** `from` must not be after `to` (use as `.refine(fromNotAfterTo, fromNotAfterToIssue)`). */
+export const fromNotAfterTo = (q) => !q.from || !q.to || new Date(q.from) <= new Date(q.to);
+export const fromNotAfterToIssue = { path: ['from'], message: 'must not be after to' };
