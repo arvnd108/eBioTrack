@@ -1,6 +1,6 @@
 # eBioTrack — Project Contract (T00)
 
-**Version:** 1.5 (approved, G0 passed; 1.1 adds the not-blank CHECKs to 4.3; 1.2 names two response fields in section 10; 1.3 links a correction run to the run it supersedes and settles all-`fail` approval; 1.4 exposes `supersedes_analysis_id` in the analysis routes and adds the `413` status; 1.5 adds the `429` status, `too_many_attempts` error code and `Retry-After` header for login lockout; 1.6 stores the status-change `note` and adds `collector_name` and `changed_by_name` to the event and sample responses)
+**Version:** 1.7 (approved, G0 passed; 1.1 adds the not-blank CHECKs to 4.3; 1.2 names two response fields in section 10; 1.3 links a correction run to the run it supersedes and settles all-`fail` approval; 1.4 exposes `supersedes_analysis_id` in the analysis routes and adds the `413` status; 1.5 adds the `429` status, `too_many_attempts` error code and `Retry-After` header for login lockout; 1.6 stores the status-change `note` and adds `collector_name` and `changed_by_name` to the event and sample responses; 1.7 names the people, samples and active run in the lab responses)
 
 This is the output of task **T00** in [WORKFLOW.md](WORKFLOW.md). It fixes the names, types, values, and shapes that all four members build against, so the database, API, frontend, tests, and docs line up without anyone guessing.
 
@@ -600,6 +600,8 @@ Every event object carries `collector_name` (the collector's `full_name`) next t
 | POST | `/api/sequencing-runs/:id/libraries` | lab_technician | `{ extraction_id }` | library (via `assign_extraction_to_run()`) |
 | PATCH | `/api/sequencing-runs/:id` | lab_technician | `{ status }` | run |
 
+Lab rows name what their ids point to, so a role that cannot call `GET /api/users` can still show them: every batch carries `operator_name`; every QC result carries `recorded_by_name` and `sample_code` (null for a result that names only an analysis); every extraction carries `sample_code`, `project_id` (its sample's project) and `active_run_id` / `active_run_code`, the `planned` or `running` run it is booked on (null when none; the booking rule in 4.3 allows at most one); every library in `GET /api/sequencing-runs/:id` carries `project_id` next to `sample_id` and `sample_code`.
+
 ### Analyses and detections
 
 | Method | Path | Min role | Request | Response `data` |
@@ -756,6 +758,7 @@ The backend resolves `scientific_name` and `taxon_rank` to `taxon_id` before cal
 | 1.4 | Section 10: `supersedes_analysis_id` is accepted by `POST /api/analyses` and returned on every analysis row; richness rows always carry `site_id` (one row per group and site) and `sample_count` counts all samples of the group and site. Status-code list: `413 payload_too_large` for a CSV upload over 10 MB. Affects T23, T24 to T29 (the `AnalysisRun` type gains `supersedes_analysis_id: number \| null`), T40-A. | Arvind |
 | 1.5 | Section 7 and 8: add status `429` with error code `too_many_attempts` and the `Retry-After` header (seconds) for `POST /api/auth/login` after repeated failed sign-ins, matching T13; the new API-only error-code table in section 7 also lists `413 payload_too_large`. Affects T13 (already implemented), T24 (frontend, already handles it), T33 (authorization/auth tests), T42 (`api.md`). | Arvind |
 | 1.6 | Section 10: `PATCH /api/samples/:id/status` now stores `note` on the history row (the trigger reads the transaction-local setting `app.status_note`; none stores NULL), `GET /api/samples/:id` history entries gain `changed_by_name` (and always carry `note`), and every event object gains `collector_name`, so roles that cannot list users can show names. Additive: existing fields are unchanged. Affects T17-D (`record_sample_status_history()` reads `app.status_note`), T21 (sample and event routes), T26 (frontend: note field, names in timeline and collector column), T33 (tests), T42 (`api.md`). | Arvind |
+| 1.7 | Section 10, Laboratory: batches gain `operator_name`; QC results gain `recorded_by_name` and `sample_code`; extractions gain `sample_code`, `project_id`, `active_run_id` and `active_run_code` (the planned or running run they are booked on, null when none); run libraries gain `project_id`. Additive: existing fields are unchanged. Affects T22 (lab routes), T27 (frontend: names and codes in the lab tables, write controls only where the caller may write, booked extractions shown in the new-run picker), T33 (tests), T42 (`api.md`). | Arvind (on merge of the T27 PR) |
 
 ---
 

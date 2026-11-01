@@ -4,7 +4,15 @@
 // The database enforces all of this (enums, the samples status trigger); the pages use it to
 // offer only valid choices. If section 3 changes, change this file in the same PR.
 
-import type { HabitatType, RegionType, SampleStatus } from './types';
+import type {
+  HabitatType,
+  QcResult,
+  QcStatus,
+  QcType,
+  RegionType,
+  RunStatus,
+  SampleStatus,
+} from './types';
 
 export const HABITAT_TYPES: HabitatType[] = [
   'river',
@@ -49,3 +57,27 @@ export const STANDARD_PARAMETERS: readonly { parameter: string; unit: string; la
   { parameter: 'conductivity_us_cm', unit: 'µS/cm', label: 'Conductivity' },
   { parameter: 'salinity_ppt', unit: 'ppt', label: 'Salinity' },
 ];
+
+/** `dna_extractions.qc_status`: decided once, pending -> pass or fail (trg_dna_extractions_qc_status). */
+export const QC_STATUSES: QcStatus[] = ['pending', 'pass', 'fail'];
+
+/** `quality_control_results.qc_type` and `.result`. */
+export const QC_TYPES: QcType[] = [
+  'extraction_blank',
+  'negative_control',
+  'positive_control',
+  'concentration',
+  'contamination_check',
+  'read_quality',
+];
+export const QC_RESULTS: QcResult[] = ['pass', 'warn', 'fail'];
+
+export const RUN_STATUSES: RunStatus[] = ['planned', 'running', 'completed', 'failed'];
+
+/** `sequencing_runs.status` transitions (CONTRACT section 3); others are 409 invalid_transition. */
+export const RUN_TRANSITIONS: Readonly<Record<RunStatus, readonly RunStatus[]>> = {
+  planned: ['running', 'failed'],
+  running: ['completed', 'failed'],
+  completed: [],
+  failed: [],
+};

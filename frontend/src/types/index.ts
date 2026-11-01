@@ -363,6 +363,8 @@ export interface ExtractionBatch {
   batch_id: number;
   lab_id: number;
   operator_id: number;
+  /** The operator's name, so roles that cannot list users can show it (CONTRACT 1.7). */
+  operator_name: string | null;
   extraction_date: string;
   kit_name: string | null;
   notes: string | null;
@@ -373,24 +375,33 @@ export interface ExtractionBatch {
 export interface DnaExtraction {
   extraction_id: number;
   sample_id: number;
+  sample_code: string;
+  /** The sample's project, for the permission check (CONTRACT 1.7). */
+  project_id: number;
   batch_id: number;
   attempt_number: number;
   concentration_ng_ul: number | null;
   purity_a260_280: number | null;
   qc_status: QcStatus;
   created_at: string;
+  /** The planned or running run this extraction is booked on; null when none (CONTRACT 1.7). */
+  active_run_id: number | null;
+  active_run_code: string | null;
 }
 
 /** `GET/POST /api/qc-results`. */
 export interface QualityControlResult {
   qc_id: number;
   sample_id: number | null;
+  /** Null for a result that names only an analysis (CONTRACT 1.7). */
+  sample_code: string | null;
   analysis_id: number | null;
   qc_type: QcType;
   result: QcResult;
   metric_value: number | null;
   notes: string | null;
   recorded_by: number | null;
+  recorded_by_name: string | null;
   recorded_at: string;
 }
 
@@ -416,7 +427,7 @@ export interface SequencingLibrary {
 
 /** `GET /api/sequencing-runs/:id`, `POST /api/sequencing-runs`: run with libraries and source samples. */
 export interface SequencingRunDetail extends SequencingRun {
-  libraries: (SequencingLibrary & { sample_id: number; sample_code: string })[];
+  libraries: (SequencingLibrary & { sample_id: number; sample_code: string; project_id: number })[];
 }
 
 // Analyses and detections ---------------------------------------------------------

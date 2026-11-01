@@ -605,3 +605,271 @@ describe('T20 write rules match the real API (values checked against backend PR 
     });
   });
 });
+
+describe('T22 lab rules match the real API (values checked against backend PR #140)', () => {
+  const as = async (role: string) => {
+    await api.post('/auth/logout').catch(() => undefined);
+    await signIn(role);
+  };
+  const failure = (promise: Promise<unknown>) =>
+    promise.catch((e: unknown) => e) as Promise<ApiError>;
+  const forbidden = { status: 403, code: 'forbidden' };
+
+  /** A stored sample in project 1, ready to extract (the seeded ones are analyzed or failed). */
+  async function storedSample(): Promise<number> {
+    await as('field_researcher');
+    const event = await api.post<{ samples: { sample_id: number }[] }>('/events', {
+      project_id: 1,
+      site_id: 1,
+      collected_at: '2026-10-30T08:00:00Z',
+      samples: [{ sample_type_id: 1 }],
+    });
+    const id = event.data.samples[0].sample_id;
+    await api.patch(`/samples/${id}/status`, { new_status: 'stored' });
+    await as('lab_technician');
+    return id;
+  }
+
+  it('names operators, recorders and samples for every role (CONTRACT 1.7)', async () => {
+    await as('viewer');
+    const batches = await api.get<{ operator_name: string }[]>('/extraction-batches');
+    expect(batches.data[0]).toMatchObject({ operator_id: 4, operator_name: 'Lakshmi Lab' });
+    const extractions = await api.get<Record<string, unknown>[]>('/extractions', { limit: 1 });
+    expect(extractions.data[0]).toMatchObject({
+      sample_id: 1,
+      sample_code: 'EB-20250515-0001-001',
+      active_run_id: null,
+      active_run_code: null,
+    });
+    const qc = await api.get<Record<string, unknown>[]>('/qc-results', { result: 'warn' });
+    expect(qc.data[0]).toMatchObject({
+      recorded_by_name: 'Lakshmi Lab',
+      sample_code: 'EB-20260315-0006-002',
+    });
+  });
+
+  it('records extractions: role and project checks, failed samples, numbering, stored -> extracted', async () => {
+    const sampleId = await storedSample();
+    await as('field_researcher');
+    expect(
+      await failure(api.post('/extractions', { sample_id: sampleId, batch_id: 1 })),
+    ).toMatchObject(forbidden);
+    await as('lab_technician');
+    expect(await failure(api.post('/extractions', { sample_id: 13, batch_id: 1 }))).toMatchObject({
+      status: 404,
+      message: 'Sample not found',
+    });
+    expect(await failure(api.post('/extractions', { sample_id: 17, batch_id: 1 }))).toMatchObject({
+      status: 422,
+      code: 'rule_violation',
+      message: 'Sample is failed; it cannot be extracted',
+    });
+    expect(
+      await failure(api.post('/extractions', { sample_id: sampleId, batch_id: 999 })),
+    ).toMatchObject({
+      status: 422,
+      code: 'invalid_reference',
+      message: 'Key (batch_id)=(999) is not present in table "extraction_batches".',
+    });
+    const first = await api.post<{
+      extraction_id: number;
+      attempt_number: number;
+      concentration_ng_ul: number;
+    }>('/extractions', { sample_id: sampleId, batch_id: 1, concentration_ng_ul: 12.3456 });
+    // The refused insert used up id 1000, as a PostgreSQL sequence does.
+    expect(first.data).toMatchObject({
+      extraction_id: 1001,
+      attempt_number: 1,
+      concentration_ng_ul: 12.346,
+    });
+    const second = await api.post<{ attempt_number: number }>('/extractions', {
+      sample_id: sampleId,
+      batch_id: 1,
+    });
+    expect(second.data.attempt_number).toBe(2);
+    const sample = await api.get<{
+      status: string;
+      status_history: { new_status: string; changed_by: number }[];
+    }>(`/samples/${sampleId}`);
+    expect(sample.data.status).toBe('extracted');
+    expect(sample.data.status_history.at(-1)).toMatchObject({
+      new_status: 'extracted',
+      changed_by: 4,
+    });
+  });
+
+  it('makes the QC verdict final but keeps measurements editable', async () => {
+    const sampleId = await storedSample();
+    const made = await api.post<{ extraction_id: number }>('/extractions', {
+      sample_id: sampleId,
+      batch_id: 1,
+    });
+    const id = made.data.extraction_id;
+    expect(await failure(api.patch(`/extractions/${id}`, {}))).toMatchObject({
+      status: 422,
+      message: 'at least one of qc_status, concentration_ng_ul, purity_a260_280 is required',
+    });
+    expect(await failure(api.patch(`/extractions/${id}`, { qc_status: 'pending' }))).toMatchObject({
+      status: 422,
+      message: 'Invalid option: expected one of "pass"|"fail"',
+    });
+    await api.patch(`/extractions/${id}`, { qc_status: 'pass' });
+    expect(await failure(api.patch(`/extractions/${id}`, { qc_status: 'fail' }))).toMatchObject({
+      status: 409,
+      code: 'invalid_transition',
+      message: `Extraction ${id} cannot move from QC status pass to fail`,
+    });
+    const edited = await api.patch<{ purity_a260_280: number; qc_status: string }>(
+      `/extractions/${id}`,
+      {
+        qc_status: 'pass',
+        purity_a260_280: 1.876,
+      },
+    );
+    expect(edited.data).toMatchObject({ qc_status: 'pass', purity_a260_280: 1.88 });
+  });
+
+  it('books passed, free extractions into runs, all or nothing, and shows the active run', async () => {
+    const sampleId = await storedSample();
+    const ok1 = (
+      await api.post<{ extraction_id: number }>('/extractions', {
+        sample_id: sampleId,
+        batch_id: 1,
+      })
+    ).data.extraction_id;
+    const failed = (
+      await api.post<{ extraction_id: number }>('/extractions', {
+        sample_id: sampleId,
+        batch_id: 1,
+      })
+    ).data.extraction_id;
+    await api.patch(`/extractions/${ok1}`, { qc_status: 'pass' });
+    await api.patch(`/extractions/${failed}`, { qc_status: 'fail' });
+    const body = { lab_id: 1, platform: ' Illumina NovaSeq ', run_date: '2026-11-01' };
+
+    expect(
+      await failure(api.post('/sequencing-runs', { ...body, extraction_ids: [ok1, failed] })),
+    ).toMatchObject({
+      status: 422,
+      code: 'rule_violation',
+      message: `Extraction ${failed} has not passed QC (qc_status fail)`,
+    });
+    expect(
+      await failure(api.post('/sequencing-runs', { ...body, extraction_ids: [ok1, 13] })),
+    ).toMatchObject({
+      status: 404,
+      message: 'Extraction not found',
+    });
+    const run = await api.post<{
+      run_id: number;
+      run_code: string;
+      platform: string;
+      libraries: { library_code: string }[];
+    }>('/sequencing-runs', { ...body, extraction_ids: [ok1, 1] });
+    expect(run.data).toMatchObject({
+      run_code: 'RUN-1000',
+      platform: 'Illumina NovaSeq',
+      status: 'planned',
+    });
+    expect(run.data.libraries.map((l) => l.library_code)).toEqual(['LIB-1000', 'LIB-1001']);
+    expect(
+      await failure(api.post('/sequencing-runs', { ...body, extraction_ids: [1] })),
+    ).toMatchObject({
+      status: 422,
+      message: 'Extraction 1 is already booked on run RUN-1000 (planned)',
+    });
+    const listed = await api.get<{ extraction_id: number; active_run_code: string | null }[]>(
+      '/extractions',
+      {
+        sample_id: sampleId,
+      },
+    );
+    expect(listed.data.map((x) => [x.extraction_id, x.active_run_code])).toEqual([
+      [ok1, 'RUN-1000'],
+      [failed, null],
+    ]);
+  });
+
+  it('moves runs through planned -> running -> completed, and adds libraries to planned runs only', async () => {
+    await as('lab_technician');
+    const run = await api.post<{ run_id: number }>('/sequencing-runs', {
+      lab_id: 2,
+      platform: 'MiSeq',
+      run_date: '2026-11-01',
+      extraction_ids: [2],
+    });
+    const id = run.data.run_id;
+    expect(
+      await failure(api.patch(`/sequencing-runs/${id}`, { status: 'completed' })),
+    ).toMatchObject({
+      status: 409,
+      message: 'Run RUN-1000 cannot move from planned to completed',
+    });
+    await expect(
+      api.post(`/sequencing-runs/${id}/libraries`, { extraction_id: 3 }),
+    ).resolves.toBeDefined();
+    await api.patch(`/sequencing-runs/${id}`, { status: 'running' });
+    expect(await failure(api.patch(`/sequencing-runs/${id}`, { status: 'running' }))).toMatchObject(
+      {
+        status: 409,
+        message: 'Run is already running',
+      },
+    );
+    expect(
+      await failure(api.post(`/sequencing-runs/${id}/libraries`, { extraction_id: 4 })),
+    ).toMatchObject({
+      status: 409,
+      message: 'Run RUN-1000 is running; libraries can only be added to a planned run',
+    });
+    await api.patch(`/sequencing-runs/${id}`, { status: 'completed' });
+    // A finished run frees its extractions.
+    const freed = await api.get<{ active_run_id: number | null }[]>('/extractions', {
+      sample_id: 2,
+    });
+    expect(freed.data[0].active_run_id).toBeNull();
+    await as('analyst');
+    expect(await failure(api.patch(`/sequencing-runs/${id}`, { status: 'failed' }))).toMatchObject(
+      forbidden,
+    );
+  });
+
+  it('shows a lab technician only the libraries of their projects', async () => {
+    await as('lab_technician'); // project 1 only
+    const run = await api.get<{ libraries: unknown[] }>('/sequencing-runs/2');
+    expect(run.data.libraries).toHaveLength(4);
+    await as('administrator');
+    expect(
+      (await api.get<{ libraries: unknown[] }>('/sequencing-runs/2')).data.libraries,
+    ).toHaveLength(8);
+  });
+
+  it('records QC results for a sample or an analysis, newest first', async () => {
+    await as('lab_technician');
+    expect(
+      await failure(api.post('/qc-results', { qc_type: 'concentration', result: 'pass' })),
+    ).toMatchObject({
+      status: 422,
+      details: [{ field: 'sample_id', message: 'sample_id or analysis_id is required' }],
+    });
+    const made = await api.post<Record<string, unknown>>('/qc-results', {
+      sample_id: 1,
+      qc_type: 'concentration',
+      result: 'warn',
+      metric_value: 3.5,
+      notes: ' Qubit ',
+    });
+    expect(made.data).toMatchObject({
+      qc_id: 1000,
+      notes: 'Qubit',
+      recorded_by_name: 'Lakshmi Lab',
+    });
+    const list = await api.get<{ qc_id: number }[]>('/qc-results', { limit: 1 });
+    expect(list.data[0].qc_id).toBe(1000);
+    await as('analyst');
+    expect(
+      await failure(
+        api.post('/qc-results', { sample_id: 1, qc_type: 'concentration', result: 'pass' }),
+      ),
+    ).toMatchObject(forbidden);
+  });
+});

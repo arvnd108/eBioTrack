@@ -5,25 +5,30 @@
 // Sidebar links live in navigation.ts; keep the two in step when adding a page (a route with
 // `anyOf` here should have the same `anyOf` there).
 
+import { lazy } from 'react';
 import { createBrowserRouter, Link, type RouteObject } from 'react-router-dom';
 import App from './App';
 import { ProtectedRoute } from './components/layout/ProtectedRoute';
 import { ADMIN_ACTIONS, IMPORT_ACTIONS } from './navigation';
-import AdministrationPage from './pages/AdministrationPage';
-import AnalysisImportPage from './pages/AnalysisImportPage';
-import BiodiversityAnalyticsPage from './pages/BiodiversityAnalyticsPage';
-import CollectionEventsPage from './pages/CollectionEventsPage';
-import DashboardPage from './pages/DashboardPage';
-import EventDetailPage from './pages/EventDetailPage';
-import LabProcessingPage from './pages/LabProcessingPage';
 import LoginPage from './pages/LoginPage';
-import MlInsightsPage from './pages/MlInsightsPage';
-import ProjectDetailPage from './pages/ProjectDetailPage';
-import ProjectsPage from './pages/ProjectsPage';
-import SampleDetailPage from './pages/SampleDetailPage';
-import SamplesPage from './pages/SamplesPage';
-import SamplingMapPage from './pages/SamplingMapPage';
-import SpeciesExplorerPage from './pages/SpeciesExplorerPage';
+
+// Each signed-in page is its own chunk, loaded when first opened (App shows a loading state), so
+// the first download stays small as pages are added. The login page is in the main bundle.
+const AdministrationPage = lazy(() => import('./pages/AdministrationPage'));
+const AnalysisImportPage = lazy(() => import('./pages/AnalysisImportPage'));
+const BiodiversityAnalyticsPage = lazy(() => import('./pages/BiodiversityAnalyticsPage'));
+const CollectionEventsPage = lazy(() => import('./pages/CollectionEventsPage'));
+const DashboardPage = lazy(() => import('./pages/DashboardPage'));
+const EventDetailPage = lazy(() => import('./pages/EventDetailPage'));
+const LabProcessingPage = lazy(() => import('./pages/LabProcessingPage'));
+const MlInsightsPage = lazy(() => import('./pages/MlInsightsPage'));
+const ProjectDetailPage = lazy(() => import('./pages/ProjectDetailPage'));
+const ProjectsPage = lazy(() => import('./pages/ProjectsPage'));
+const RunDetailPage = lazy(() => import('./pages/RunDetailPage'));
+const SampleDetailPage = lazy(() => import('./pages/SampleDetailPage'));
+const SamplesPage = lazy(() => import('./pages/SamplesPage'));
+const SamplingMapPage = lazy(() => import('./pages/SamplingMapPage'));
+const SpeciesExplorerPage = lazy(() => import('./pages/SpeciesExplorerPage'));
 
 function NotFound() {
   return (
@@ -56,6 +61,7 @@ export const routes: RouteObject[] = [
           { path: 'samples', element: <SamplesPage /> },
           { path: 'samples/:sampleId', element: <SampleDetailPage /> },
           { path: 'lab', element: <LabProcessingPage /> },
+          { path: 'lab/runs/:runId', element: <RunDetailPage /> },
           {
             element: <ProtectedRoute anyOf={IMPORT_ACTIONS} />,
             children: [{ path: 'analyses/import', element: <AnalysisImportPage /> }],

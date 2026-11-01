@@ -27,6 +27,19 @@ export function formatDate(date: string | null | undefined): string {
   return Number.isNaN(parsed.getTime()) ? date : DATE_FORMAT.format(parsed);
 }
 
+const LOCAL_DATE_FORMAT = new Intl.DateTimeFormat(undefined, {
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+});
+
+/** The local day of an ISO timestamp, "29 Oct 2026" (for narrow columns); empty -> "—". */
+export function formatLocalDate(timestamp: string | null | undefined): string {
+  if (!timestamp) return '—';
+  const parsed = new Date(timestamp);
+  return Number.isNaN(parsed.getTime()) ? timestamp : LOCAL_DATE_FORMAT.format(parsed);
+}
+
 /** An ISO timestamp in the user's local time, "29 Oct 2026, 14:05"; empty -> "—". */
 export function formatDateTime(timestamp: string | null | undefined): string {
   if (!timestamp) return '—';

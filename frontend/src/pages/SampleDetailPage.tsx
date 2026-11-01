@@ -123,9 +123,25 @@ export default function SampleDetailPage() {
         </section>
 
         <section aria-labelledby="extractions-heading" className="space-y-3">
-          <h2 id="extractions-heading" className="text-lg font-semibold">
-            DNA extractions
-          </h2>
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 id="extractions-heading" className="text-lg font-semibold">
+              DNA extractions
+            </h2>
+            <span className="flex gap-3 text-sm">
+              <Link
+                to={`/lab?sample_id=${s.sample_id}`}
+                className="text-emerald-700 hover:underline"
+              >
+                Extractions in Lab processing
+              </Link>
+              <Link
+                to={`/lab?tab=qc&sample_id=${s.sample_id}`}
+                className="text-emerald-700 hover:underline"
+              >
+                QC results
+              </Link>
+            </span>
+          </div>
           <DataTable
             caption="DNA extractions"
             columns={[
@@ -140,7 +156,7 @@ export default function SampleDetailPage() {
             rows={s.extractions}
             rowKey={(x) => x.extraction_id}
             emptyTitle="No extractions yet"
-            emptyDescription="Extractions are recorded on the Lab processing page."
+            emptyDescription="Lab technicians record extractions on the Lab processing page."
           />
         </section>
       </div>
