@@ -384,6 +384,38 @@ describe('Sequencing runs', () => {
     expect(libraries[0].textContent).toContain('EB-20250515-0001-002');
   });
 
+  it('drops a chosen extraction that was booked elsewhere meanwhile and lets the rest go through', async () => {
+    await signInAs('lab_technician');
+    renderApp('/lab?tab=runs');
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'New run' }));
+    const form = screen.getByRole('form', { name: 'New sequencing run' });
+    await screen.findByRole('checkbox', { name: /extraction 3 / });
+    await user.selectOptions(within(form).getByLabelText(/^Lab/), '1');
+    await user.type(within(form).getByLabelText(/Platform/), 'MiSeq');
+    await user.click(within(form).getByRole('checkbox', { name: /extraction 3 / }));
+    await user.click(within(form).getByRole('checkbox', { name: /extraction 2 / }));
+    await api.post('/sequencing-runs', {
+      lab_id: 1,
+      platform: 'MiSeq',
+      run_date: '2026-11-01',
+      extraction_ids: [2],
+    }); // someone books extraction 2 first
+    await user.click(within(form).getByRole('button', { name: 'Create run' }));
+
+    expect(await within(form).findByText(/already booked on run RUN-1000/)).toBeTruthy();
+    await waitFor(() => expect(form.textContent).toContain('(1 chosen,'));
+    const lost = within(form).getByRole('checkbox', { name: /extraction 2 / }) as HTMLInputElement;
+    expect(lost.checked).toBe(false);
+    expect(lost.disabled).toBe(true);
+
+    await user.click(within(form).getByRole('button', { name: 'Create run' }));
+    await screen.findByRole('heading', { name: 'RUN-1001' });
+    const libraries = await rowsOf('Libraries');
+    expect(libraries).toHaveLength(1);
+    expect(libraries[0].textContent).toContain('EB-20250518-0002-001');
+  });
+
   it('adds a library to a planned run and moves it to running and completed', async () => {
     await signInAs('lab_technician');
     await api.post('/sequencing-runs', {

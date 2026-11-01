@@ -64,6 +64,8 @@ function NewRunForm({ onCancel }: { onCancel: () => void }) {
   const projectTitle = (id: number) => lab.projects.byId.get(id)?.title ?? `Project ${id}`;
   const rows = extractions.data ?? [];
   const bookable = rows.filter((x) => !bookingBlock(x, lab.canWrite));
+  // A choice that was booked elsewhere meanwhile is dropped, so it cannot be submitted again.
+  const picked = chosen.filter((id) => bookable.some((x) => x.extraction_id === id));
 
   function toggle(id: number) {
     setChosen((current) =>
@@ -81,8 +83,8 @@ function NewRunForm({ onCancel }: { onCancel: () => void }) {
     else if (name.length > PLATFORM_MAX) found.platform = `At most ${PLATFORM_MAX} characters.`;
     if (!runDate) found.run_date = 'Enter the run date.';
     else if (!isCalendarDate(runDate)) found.run_date = 'Enter a real date.';
-    if (chosen.length === 0) found.extraction_ids = 'Choose at least one extraction.';
-    else if (chosen.length > MAX_EXTRACTIONS_PER_RUN) {
+    if (picked.length === 0) found.extraction_ids = 'Choose at least one extraction.';
+    else if (picked.length > MAX_EXTRACTIONS_PER_RUN) {
       found.extraction_ids = `At most ${MAX_EXTRACTIONS_PER_RUN} extractions in one run.`;
     }
     setErrors(found);
@@ -91,7 +93,7 @@ function NewRunForm({ onCancel }: { onCancel: () => void }) {
       lab_id: Number(labId),
       platform: name,
       run_date: runDate,
-      extraction_ids: [...chosen].sort((a, b) => a - b),
+      extraction_ids: [...picked].sort((a, b) => a - b),
     });
     if (run) {
       navigate(`/lab/runs/${run.run_id}`);
@@ -117,7 +119,7 @@ function NewRunForm({ onCancel }: { onCancel: () => void }) {
           <input
             type="checkbox"
             aria-label={`Choose extraction ${x.extraction_id} (${x.sample_code})`}
-            checked={chosen.includes(x.extraction_id)}
+            checked={picked.includes(x.extraction_id)}
             disabled={!!block}
             onChange={() => toggle(x.extraction_id)}
           />
@@ -202,7 +204,7 @@ function NewRunForm({ onCancel }: { onCancel: () => void }) {
         <legend className="text-sm font-semibold text-slate-800">
           Extractions{' '}
           <span className="font-normal text-slate-500">
-            ({chosen.length} chosen, {bookable.length} available)
+            ({picked.length} chosen, {bookable.length} available)
           </span>
         </legend>
         {fieldError('extraction_ids') && (
