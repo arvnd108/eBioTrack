@@ -51,6 +51,7 @@ import {
   mockSites,
   mockTaxa,
   mockUsers,
+  DEV_PASSWORD,
   sampleCode,
   statusHistoryFor,
 } from './fixtures';
@@ -58,6 +59,7 @@ import {
 export interface MockResponse {
   status: number;
   body?: unknown;
+  headers?: Record<string, string>;
 }
 
 interface MockContext {
@@ -118,9 +120,36 @@ export function setMockDelay(ms: number): void {
 /** Records created through the mock during this page load (cleared by resetMockState). */
 const created = { events: [] as CollectionEvent[], samples: [] as Sample[], exports: 0 };
 
+/**
+ * Failed sign-ins per email, mirroring backend/src/utils/loginAttempts.js: 5 failures within
+ * 15 minutes lock that email out (429 too_many_attempts with Retry-After) until the window ends.
+ * A successful sign-in clears the count.
+ */
+const LOGIN_MAX_FAILURES = 5;
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const loginFailures = new Map<string, { count: number; resetAt: number }>();
+
+function loginRetryAfterSeconds(email: string): number {
+  const entry = loginFailures.get(email);
+  if (!entry) return 0;
+  if (entry.resetAt <= Date.now()) {
+    loginFailures.delete(email);
+    return 0;
+  }
+  if (entry.count < LOGIN_MAX_FAILURES) return 0;
+  return Math.max(1, Math.ceil((entry.resetAt - Date.now()) / 1000));
+}
+
+function recordLoginFailure(email: string): void {
+  const entry = loginFailures.get(email);
+  if (entry && entry.resetAt > Date.now()) entry.count += 1;
+  else loginFailures.set(email, { count: 1, resetAt: Date.now() + LOGIN_WINDOW_MS });
+}
+
 /** Sign out and drop records created through the mock (used by tests). */
 export function resetMockState(): void {
   storeSession(null);
+  loginFailures.clear();
   created.events = [];
   created.samples = [];
   created.exports = 0;
@@ -147,6 +176,43 @@ function fail(
 }
 
 const notFound = (what: string) => fail(404, 'not_found', `${what} not found`);
+
+/** Same check as the backend's `z.email()` for the cases a form can produce. */
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Validates a login body exactly like backend/src/routes/auth.routes.js (zod), with the same
+ * field names and messages, so the login page sees identical 422 responses in both modes.
+ */
+function validateLoginBody(body: unknown): { email: string; password: string } | ApiErrorDetail[] {
+  const { email, password } = (body ?? {}) as { email?: unknown; password?: unknown };
+  const details: ApiErrorDetail[] = [];
+  const missing = (value: unknown) =>
+    `Invalid input: expected string, received ${value === null ? 'null' : typeof value}`;
+
+  let cleanEmail = '';
+  if (typeof email !== 'string') {
+    details.push({ field: 'email', message: missing(email) });
+  } else {
+    cleanEmail = email.trim().toLowerCase();
+    if (!EMAIL_PATTERN.test(cleanEmail) || cleanEmail.length > 254) {
+      details.push({ field: 'email', message: 'Invalid email address' });
+    }
+  }
+
+  if (typeof password !== 'string') {
+    details.push({ field: 'password', message: missing(password) });
+  } else if (password.length === 0) {
+    details.push({
+      field: 'password',
+      message: 'Too small: expected string to have >=1 characters',
+    });
+  } else if (new TextEncoder().encode(password).length > 72) {
+    details.push({ field: 'password', message: 'must be at most 72 bytes' });
+  }
+
+  return details.length ? details : { email: cleanEmail, password: password as string };
+}
 
 /** Pagination per CONTRACT section 8: ?page=1&limit=25, default 25, max 100. */
 function paginate<T>(rows: T[], query: URLSearchParams): MockResponse {
@@ -235,23 +301,29 @@ const routes: MockRoute[] = [
     method: 'POST',
     path: '/auth/login',
     auth: false,
+    // Mirrors backend/src/controllers/auth.controller.js: validation (422), lockout (429 with
+    // Retry-After), wrong email or password (401, same message for both), then a new session.
     handler: ({ body }) => {
-      const { email, password } = (body ?? {}) as { email?: unknown; password?: unknown };
-      const details: ApiErrorDetail[] = [];
-      if (typeof email !== 'string' || !email.trim()) {
-        details.push({ field: 'email', message: 'Email is required' });
+      const parsed = validateLoginBody(body);
+      if (Array.isArray(parsed)) {
+        return fail(422, 'validation_error', parsed[0].message, parsed);
       }
-      if (typeof password !== 'string' || !password) {
-        details.push({ field: 'password', message: 'Password is required' });
+      const { email, password } = parsed;
+
+      const retryAfter = loginRetryAfterSeconds(email);
+      if (retryAfter > 0) {
+        return {
+          ...fail(429, 'too_many_attempts', 'Too many failed sign-in attempts. Try again later.'),
+          headers: { 'Retry-After': String(retryAfter) },
+        };
       }
-      if (details.length) {
-        return fail(422, 'validation_error', 'Check the highlighted fields', details);
+
+      const user = mockUsers.find((u) => u.email === email);
+      if (!user || !user.active || password !== DEV_PASSWORD) {
+        recordLoginFailure(email);
+        return fail(401, 'invalid_credentials', 'Invalid email or password');
       }
-      // Mock mode accepts any non-empty password for the six fixture users.
-      const user = mockUsers.find((u) => u.email === String(email).trim().toLowerCase());
-      if (!user || !user.active) {
-        return fail(401, 'invalid_credentials', 'Email or password is incorrect');
-      }
+      loginFailures.delete(email);
       storeSession(user.user_id);
       return ok(user);
     },
@@ -865,10 +937,10 @@ export async function handleMockRequest(
   const { route, params } = match;
   const user = currentUser();
   if (route.auth !== false && !user) {
-    return fail(401, 'unauthenticated', 'Please sign in to continue');
+    return fail(401, 'unauthenticated', 'Authentication required');
   }
   if (route.roles && user && !isAdmin(user) && !hasAnyRole(user, route.roles)) {
-    return fail(403, 'forbidden', 'Your role is not allowed to do this');
+    return fail(403, 'forbidden', 'You do not have permission to do this');
   }
   return route.handler({
     params,

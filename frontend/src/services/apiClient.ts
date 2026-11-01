@@ -33,13 +33,16 @@ export class ApiError extends Error {
   readonly status: number;
   readonly code: ApiErrorCode;
   readonly details: ApiErrorDetail[];
+  /** Seconds from the `Retry-After` header (for example on 429 too_many_attempts), else null. */
+  readonly retryAfter: number | null;
 
-  constructor(status: number, error: ApiErrorBody['error']) {
+  constructor(status: number, error: ApiErrorBody['error'], retryAfter: number | null = null) {
     super(error.message);
     this.name = 'ApiError';
     this.status = status;
     this.code = error.code;
     this.details = error.details ?? [];
+    this.retryAfter = retryAfter;
   }
 
   /** Message for one form field, from `details` (validation errors). */
@@ -50,6 +53,24 @@ export class ApiError extends Error {
 
 export function isApiError(value: unknown): value is ApiError {
   return value instanceof ApiError;
+}
+
+// ---------------------------------------------------------------------------
+// Session expiry
+// ---------------------------------------------------------------------------
+
+let onUnauthenticated: (() => void) | null = null;
+
+/**
+ * Registers what to do when a request comes back 401 `unauthenticated` (the session expired or
+ * the user was deactivated). AuthContext uses it to sign the user out and show the login page.
+ * Returns a function that removes the handler.
+ */
+export function setUnauthenticatedHandler(handler: (() => void) | null): () => void {
+  onUnauthenticated = handler;
+  return () => {
+    if (onUnauthenticated === handler) onUnauthenticated = null;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -97,20 +118,36 @@ function isErrorBody(value: unknown): value is ApiErrorBody {
   );
 }
 
+/** Parses a `Retry-After` header given in seconds; null when absent or not a number. */
+export function parseRetryAfter(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const seconds = Number(value);
+  return Number.isFinite(seconds) && seconds >= 0 ? Math.ceil(seconds) : null;
+}
+
 /**
  * Turns an HTTP status and parsed JSON body into the success envelope, or throws `ApiError`.
  * Shared by real and mock responses.
  */
-export function toResult<T, M>(status: number, body: unknown, statusText = ''): ApiResponse<T, M> {
+export function toResult<T, M>(
+  status: number,
+  body: unknown,
+  statusText = '',
+  retryAfter: number | null = null,
+): ApiResponse<T, M> {
   if (status === 204) {
     return { data: undefined as T };
   }
   if (status < 200 || status >= 300) {
-    if (isErrorBody(body)) throw new ApiError(status, body.error);
-    throw new ApiError(status, {
-      code: `http_${status}`,
-      message: statusText || `Request failed with status ${status}`,
-    });
+    if (isErrorBody(body)) throw new ApiError(status, body.error, retryAfter);
+    throw new ApiError(
+      status,
+      {
+        code: `http_${status}`,
+        message: statusText || `Request failed with status ${status}`,
+      },
+      retryAfter,
+    );
   }
   if (!isRecord(body) || !('data' in body)) {
     throw new ApiError(status, {
@@ -139,12 +176,30 @@ export async function request<T, M = undefined>(
   path: string,
   options: RequestOptions = {},
 ): Promise<ApiResponse<T, M>> {
+  try {
+    return await send<T, M>(path, options);
+  } catch (err) {
+    // An expired session on any request (except the startup /auth/me check, where 401 simply
+    // means "not signed in yet") signs the user out everywhere.
+    if (isApiError(err) && err.code === 'unauthenticated' && path !== '/auth/me') {
+      onUnauthenticated?.();
+    }
+    throw err;
+  }
+}
+
+async function send<T, M>(path: string, options: RequestOptions): Promise<ApiResponse<T, M>> {
   const method = options.method ?? 'GET';
   const url = buildPath(path, options.query);
 
   if (mockMode) {
     const mock = await handleMockRequest(method, url, options.body);
-    return toResult<T, M>(mock.status, mock.body);
+    return toResult<T, M>(
+      mock.status,
+      mock.body,
+      '',
+      parseRetryAfter(mock.headers?.['Retry-After']),
+    );
   }
 
   const headers: Record<string, string> = { Accept: 'application/json' };
@@ -175,7 +230,12 @@ export async function request<T, M = undefined>(
     });
   }
 
-  return toResult<T, M>(res.status, await readJson(res), res.statusText);
+  return toResult<T, M>(
+    res.status,
+    await readJson(res),
+    res.statusText,
+    parseRetryAfter(res.headers.get('Retry-After')),
+  );
 }
 
 /** Shorthand used by the service files. */

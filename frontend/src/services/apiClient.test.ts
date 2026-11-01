@@ -2,8 +2,16 @@
 // Purpose: Unit tests for the API client (real and mock mode)
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApiError, api, buildPath, setMockMode } from './apiClient';
+import {
+  ApiError,
+  api,
+  buildPath,
+  parseRetryAfter,
+  setMockMode,
+  setUnauthenticatedHandler,
+} from './apiClient';
 import { resetMockState, setMockDelay } from './mock/mockApi';
+import { DEV_PASSWORD } from './mock/fixtures';
 import type { PageMeta, Project, User } from '../types';
 
 function jsonResponse(status: number, body?: unknown): Response {
@@ -12,6 +20,15 @@ function jsonResponse(status: number, body?: unknown): Response {
     headers: { 'Content-Type': 'application/json' },
   });
 }
+
+describe('parseRetryAfter', () => {
+  it('reads seconds and ignores anything else', () => {
+    expect(parseRetryAfter('120')).toBe(120);
+    expect(parseRetryAfter('0.5')).toBe(1);
+    expect(parseRetryAfter(null)).toBeNull();
+    expect(parseRetryAfter('Wed, 21 Oct 2026 07:28:00 GMT')).toBeNull();
+  });
+});
 
 describe('buildPath', () => {
   it('adds query parameters and skips empty values', () => {
@@ -109,6 +126,53 @@ describe('real mode', () => {
     await expect(api.get('/projects')).rejects.toMatchObject({ status: 502, code: 'http_502' });
   });
 
+  it('reads Retry-After into the error (429 too_many_attempts)', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: {
+            code: 'too_many_attempts',
+            message: 'Too many failed sign-in attempts. Try again later.',
+          },
+        }),
+        { status: 429, headers: { 'Retry-After': '120' } },
+      ),
+    );
+    await expect(api.post('/auth/login', {})).rejects.toMatchObject({
+      status: 429,
+      code: 'too_many_attempts',
+      retryAfter: 120,
+    });
+  });
+
+  it('calls the unauthenticated handler on a 401 except for the startup /auth/me check', async () => {
+    const handler = vi.fn();
+    const remove = setUnauthenticatedHandler(handler);
+    const unauthenticated = () =>
+      jsonResponse(401, { error: { code: 'unauthenticated', message: 'Authentication required' } });
+
+    fetchMock.mockResolvedValueOnce(unauthenticated());
+    await expect(api.get('/auth/me')).rejects.toMatchObject({ status: 401 });
+    expect(handler).not.toHaveBeenCalled();
+
+    fetchMock.mockResolvedValueOnce(unauthenticated());
+    await expect(api.get('/projects')).rejects.toMatchObject({ status: 401 });
+    expect(handler).toHaveBeenCalledTimes(1);
+
+    // A wrong password is a 401 too, but not an expired session.
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(401, {
+        error: { code: 'invalid_credentials', message: 'Invalid email or password' },
+      }),
+    );
+    await expect(api.post('/auth/login', {})).rejects.toMatchObject({
+      code: 'invalid_credentials',
+    });
+    expect(handler).toHaveBeenCalledTimes(1);
+
+    remove();
+  });
+
   it('throws network_error when the server cannot be reached', async () => {
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
     await expect(api.get('/projects')).rejects.toMatchObject({ status: 0, code: 'network_error' });
@@ -137,7 +201,7 @@ describe('mock mode', () => {
   it('signs in a fixture user and keeps the session', async () => {
     const login = await api.post<User>('/auth/login', {
       email: 'principal_investigator@ebiotrack.test',
-      password: 'any-dev-password',
+      password: DEV_PASSWORD,
     });
     expect(login.data).toMatchObject({ user_id: 2, roles: ['principal_investigator'] });
 
@@ -162,7 +226,10 @@ describe('mock mode', () => {
   });
 
   it('lists only the projects a user belongs to, with pagination meta', async () => {
-    await api.post('/auth/login', { email: 'lab_technician@ebiotrack.test', password: 'x' });
+    await api.post('/auth/login', {
+      email: 'lab_technician@ebiotrack.test',
+      password: DEV_PASSWORD,
+    });
 
     const res = await api.get<Project[], PageMeta>('/projects');
 
@@ -173,13 +240,13 @@ describe('mock mode', () => {
   });
 
   it('filters sites by project', async () => {
-    await api.post('/auth/login', { email: 'viewer@ebiotrack.test', password: 'x' });
+    await api.post('/auth/login', { email: 'viewer@ebiotrack.test', password: DEV_PASSWORD });
     const res = await api.get<{ site_id: number }[]>('/sites', { project_id: 2 });
     expect(res.data.map((s) => s.site_id)).toEqual([4, 5]);
   });
 
   it('answers 404 for endpoints that have no mock yet', async () => {
-    await api.post('/auth/login', { email: 'viewer@ebiotrack.test', password: 'x' });
+    await api.post('/auth/login', { email: 'viewer@ebiotrack.test', password: DEV_PASSWORD });
     await expect(api.get('/no-such-endpoint')).rejects.toMatchObject({
       status: 404,
       code: 'not_found',
