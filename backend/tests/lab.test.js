@@ -211,6 +211,35 @@ describe.skipIf(!available)('laboratory and sequencing', () => {
         ).status,
       ).toBe(422);
     });
+    it('moves a stored sample to extracted, with a history row; other statuses stay', async () => {
+      const made = await as.field_researcher
+        .post('/api/samples')
+        .send({ event_id: 1, sample_type_id: 1 });
+      expect(made.status).toBe(201);
+      const sampleId = made.body.data.sample_id;
+      // collected: no valid transition to extracted, so it stays collected
+      await lt().post('/api/extractions').send({ sample_id: sampleId, batch_id: 1 });
+      expect((await as.field_researcher.get(`/api/samples/${sampleId}`)).body.data.status).toBe(
+        'collected',
+      );
+      const stored = await as.field_researcher
+        .patch(`/api/samples/${sampleId}/status`)
+        .send({ new_status: 'stored' });
+      expect(stored.status).toBe(200);
+      const second = await lt().post('/api/extractions').send({ sample_id: sampleId, batch_id: 1 });
+      expect(second.body.data.attempt_number).toBe(2);
+      const after = await as.field_researcher.get(`/api/samples/${sampleId}`);
+      expect(after.body.data.status).toBe('extracted');
+      const history = await query(
+        'SELECT old_status, new_status, changed_by FROM sample_status_history WHERE sample_id = $1 ORDER BY history_id',
+        [sampleId],
+      );
+      expect(history.at(-1)).toMatchObject({
+        old_status: 'stored',
+        new_status: 'extracted',
+        changed_by: 4,
+      });
+    });
     it('patches qc_status and measurements; other fields are refused', async () => {
       const id = await newExtraction(2, 1, null);
       const ok = await lt()
@@ -218,8 +247,12 @@ describe.skipIf(!available)('laboratory and sequencing', () => {
         .send({ qc_status: 'pass', concentration_ng_ul: 20 });
       expect(ok.status).toBe(200);
       expect(ok.body.data).toMatchObject({ qc_status: 'pass', concentration_ng_ul: 20 });
+      // the verdict is final: no pass -> fail, and the same value again is a harmless 200
       const back = await lt().patch(`/api/extractions/${id}`).send({ qc_status: 'fail' });
-      expect(back.body.data.qc_status).toBe('fail');
+      expect(back.status).toBe(409);
+      expect(back.body.error.code).toBe('invalid_transition');
+      const same = await lt().patch(`/api/extractions/${id}`).send({ qc_status: 'pass' });
+      expect(same.status).toBe(200);
       expect((await lt().patch(`/api/extractions/${id}`).send({})).status).toBe(422);
       expect(
         (await lt().patch(`/api/extractions/${id}`).send({ qc_status: 'pending' })).status,

@@ -137,8 +137,8 @@ export async function listExtractions(user, filters, { limit, offset, sort }) {
 /**
  * Record an extraction. Backend rules (not in the contract): the sample row is locked first, so two
  * simultaneous requests for one sample serialize and get attempts n and n+1; a sample that is
- * `failed` or `discarded` cannot be extracted (422 rule_violation). The sample's status is NOT
- * changed (no SQL object does it and the contract does not say so).
+ * `failed` or `discarded` cannot be extracted (422 rule_violation). A `stored` sample becomes
+ * `extracted` through the dna_extractions insert trigger.
  */
 export async function createExtraction(body, user) {
   const projectId = await projectIdOfSample(body.sample_id);
@@ -184,9 +184,8 @@ export async function createExtraction(body, user) {
 }
 
 /**
- * qc_status may be corrected in either direction (pass <-> fail): no SQL object restricts it. An
- * extraction already booked on a planned or running run keeps its library if it is later marked
- * `fail` (no rule says otherwise). Setting the value it already has is a harmless 200.
+ * The QC verdict is final (trigger: pending -> pass | fail only, else 409 invalid_transition), so a
+ * booked extraction can never be marked fail. Measurements stay editable.
  */
 export async function updateExtraction(extractionId, body, user) {
   const projectId = await projectIdOfExtraction(extractionId);
