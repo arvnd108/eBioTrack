@@ -330,6 +330,31 @@ describe('Importing detections', () => {
     expect(screen.queryByRole('heading', { name: 'Import detections' })).toBeNull();
   });
 
+  it('ignores a dry run that answers after another file was chosen', async () => {
+    const id = await draft();
+    const realPost = api.post.bind(api);
+    let release: () => void = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    vi.spyOn(api, 'post').mockImplementationOnce(async (...args: Parameters<typeof api.post>) => {
+      await held; // the first dry run answers only after the second file was chosen
+      return realPost(...args);
+    });
+    renderApp(`/analyses/import?analysis_id=${id}`);
+    const user = userEvent.setup();
+    const input = await screen.findByLabelText('Detections CSV');
+    await user.upload(input, csv(VALID, 'first.csv'));
+    await user.click(await screen.findByRole('button', { name: 'Check file' }));
+    await user.upload(input, csv(VALID, 'second.csv'));
+    release();
+    await waitFor(() => expect(screen.queryByText(/Checking/)).toBeNull());
+    expect(screen.queryByText(/All 14 rows are valid/)).toBeNull();
+    expect(
+      (within(panel()).getByRole('button', { name: /^Import/ }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+    await user.click(screen.getByRole('button', { name: 'Check file' }));
+    expect(await screen.findByText(/All 14 rows are valid/)).toBeTruthy();
+  });
+
   it('shows problems found before uploading and blocks a file the API would refuse', async () => {
     const id = await draft();
     renderApp(`/analyses/import?analysis_id=${id}`);
@@ -487,6 +512,17 @@ describe('Approving and rejecting', () => {
 });
 
 describe('Species explorer', () => {
+  it('shows the caveat before any taxon is chosen', async () => {
+    await signInAs('viewer');
+    renderApp('/species');
+    await screen.findByText(
+      'Choose a taxon to see its lineage, where it was detected and how often.',
+    );
+    expect(screen.getByRole('note').textContent).toContain(
+      'Detection does not indicate abundance; non-detection does not indicate absence.',
+    );
+  });
+
   it('finds a species by a word of its name and shows lineage, frequency and detections', async () => {
     await signInAs('viewer');
     renderApp('/species');

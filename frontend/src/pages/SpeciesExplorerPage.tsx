@@ -9,6 +9,7 @@
 
 import { useState, type FormEvent } from 'react';
 import { Badge } from '../components/common/Badge';
+import { CaveatBanner } from '../components/common/CaveatBanner';
 import { DataTable, type Column } from '../components/common/DataTable';
 import { FormField, fieldControlClass } from '../components/common/FormField';
 import { TAXON_RANKS } from '../domain';
@@ -157,9 +158,14 @@ export default function SpeciesExplorerPage() {
             onOpen={(id) => setFilters({ taxon_id: String(id) })}
           />
         ) : (
-          <div className="flex min-h-48 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 p-6 text-center text-sm text-slate-600">
-            <Badge value="species" tone="purple" />
-            <p>Choose a taxon to see its lineage, where it was detected and how often.</p>
+          <div className="space-y-4">
+            <CaveatBanner
+              notes={['Only detections assigned to exactly the taxon you choose are listed.']}
+            />
+            <div className="flex min-h-48 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-slate-300 p-6 text-center text-sm text-slate-600">
+              <Badge value="species" tone="purple" />
+              <p>Choose a taxon to see its lineage, where it was detected and how often.</p>
+            </div>
           </div>
         )}
       </div>
