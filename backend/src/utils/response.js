@@ -34,6 +34,19 @@ export function sendPaginated(res, data, meta = {}, statusCode = 200) {
 }
 
 /**
+ * Sends a collection with extra `meta` keys (no pagination), e.g. the analytics caveat.
+ * Envelope: { "data": [...], "meta": { ...meta } }
+ *
+ * @param {import('express').Response} res
+ * @param {any} data
+ * @param {Record<string, unknown>} meta
+ * @param {number} [statusCode=200]
+ */
+export function sendWithMeta(res, data, meta, statusCode = 200) {
+  return res.status(statusCode).json({ data, meta });
+}
+
+/**
  * Sends a 204 No Content response.
  *
  * @param {import('express').Response} res
@@ -53,6 +66,7 @@ export const noContent = sendNoContent;
 export default {
   sendSuccess,
   sendPaginated,
+  sendWithMeta,
   sendNoContent,
   ok,
   created,
