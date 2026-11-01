@@ -14,6 +14,7 @@ import AnalysisImportPage from './pages/AnalysisImportPage';
 import BiodiversityAnalyticsPage from './pages/BiodiversityAnalyticsPage';
 import CollectionEventsPage from './pages/CollectionEventsPage';
 import DashboardPage from './pages/DashboardPage';
+import EventDetailPage from './pages/EventDetailPage';
 import LabProcessingPage from './pages/LabProcessingPage';
 import LoginPage from './pages/LoginPage';
 import MlInsightsPage from './pages/MlInsightsPage';
@@ -51,6 +52,7 @@ export const routes: RouteObject[] = [
           { path: 'projects/:projectId', element: <ProjectDetailPage /> },
           { path: 'map', element: <SamplingMapPage /> },
           { path: 'events', element: <CollectionEventsPage /> },
+          { path: 'events/:eventId', element: <EventDetailPage /> },
           { path: 'samples', element: <SamplesPage /> },
           { path: 'samples/:sampleId', element: <SampleDetailPage /> },
           { path: 'lab', element: <LabProcessingPage /> },

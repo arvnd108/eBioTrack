@@ -5,6 +5,7 @@
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { api } from '../services/apiClient';
 import { renderApp, resetMock, signInAs } from '../test/renderApp';
 import type { AuditEntry } from '../types';
 import { summarizeChange } from './admin/AuditPanel';
@@ -230,15 +231,18 @@ describe('Administration page', () => {
 
   it('shows a principal investigator only the audit log, with user IDs instead of names', async () => {
     await signInAs('principal_investigator');
+    await api.patch('/projects/1', { status: 'completed' });
     renderApp('/admin');
     await screen.findByText('The audit log for your projects.');
     expect(screen.queryByRole('tab')).toBeNull();
     expect(screen.queryByRole('table', { name: 'Users' })).toBeNull();
     const rows = await rowsOf('Audit entries');
-    expect(rows.some((r) => r.textContent?.includes('Users #'))).toBe(false);
-    expect(within(table('Audit entries')).queryByText('Asha Admin')).toBeNull();
+    expect(rows).toHaveLength(1); // their sign-in is not project data
     // The PI's own ID is shown as "You", not "User 2".
+    expect(rows[0].textContent).toContain('You');
     expect(rows.some((r) => /User 2\b/.test(r.textContent ?? ''))).toBe(false);
+    expect(rows[0].textContent).toContain('Projects #1');
+    expect(rows[0].textContent).toContain('status: active → completed');
   });
 
   it('filters the audit log and rejects a reversed day range', async () => {

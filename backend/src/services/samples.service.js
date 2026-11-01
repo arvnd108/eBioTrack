@@ -92,8 +92,11 @@ export async function getSample(sampleId, user) {
     [sampleId],
   );
   const history = await query(
-    `SELECT old_status, new_status, changed_at, changed_by, note FROM sample_status_history
-      WHERE sample_id = $1 ORDER BY changed_at, history_id`,
+    `SELECT h.old_status, h.new_status, h.changed_at, h.changed_by, u.full_name AS changed_by_name,
+            h.note
+       FROM sample_status_history h
+       LEFT JOIN users u ON u.user_id = h.changed_by
+      WHERE h.sample_id = $1 ORDER BY h.changed_at, h.history_id`,
     [sampleId],
   );
   return {
@@ -146,10 +149,10 @@ export async function createSample(body, user) {
  * two concurrent changes are decided one after the other.
  * Setting the status the sample already has is refused with 409 invalid_transition (the trigger
  * treats it as "not a transition", but a client asking for it has stale data).
- * `note` is accepted by the route but not stored: record_sample_status_history() always writes
- * note = NULL and offers no setting to carry one (reported as a gap for the slice owner).
+ * `note` (optional, up to 1000 characters) is passed to the trigger through the transaction-local
+ * setting app.status_note and stored on the history row; no note stores NULL.
  */
-export async function changeSampleStatus(sampleId, { new_status: newStatus }, user) {
+export async function changeSampleStatus(sampleId, { new_status: newStatus, note }, user) {
   const projectId = await projectIdOfSample(sampleId);
   if (projectId === null) throw sampleNotFound();
   await assertProjectAccess(user, projectId, { write: true, notFound: sampleNotFound });
@@ -165,6 +168,7 @@ export async function changeSampleStatus(sampleId, { new_status: newStatus }, us
       if (current.status === newStatus) {
         throw new AppError(409, 'invalid_transition', `Sample is already ${newStatus}`);
       }
+      await query("SELECT set_config('app.status_note', $1, true)", [note ?? ''], client);
       await query(
         'UPDATE samples SET status = $2 WHERE sample_id = $1',
         [sampleId, newStatus],

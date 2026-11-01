@@ -56,5 +56,9 @@ Use these on every page so all pages look and behave the same.
 | `hooks/useFetch`                                             | Loading one GET endpoint into `data` / `meta` / `status` / `error`, with `reload()`                                              |
 | `hooks/usePagination`                                        | Page, limit and sort state turned into the CONTRACT 8 query                                                                      |
 | `hooks/useAuth`                                              | The signed-in user, `login`, `logout`, `can(action, projectRole?)`                                                               |
+| `hooks/useQueryFilters`                                      | List filters kept in the URL, so other pages can link to a filtered list; change several in one call                             |
+| `hooks/useLookups`                                           | Names for ids (projects, sites, regions, sample types; people by the name the API sends, "You" for yourself)                     |
+| `src/domain.ts`                                              | CONTRACT section 3 values the pages offer: habitat and region types, sample statuses and their allowed transitions               |
+| `components/maps/SiteMap`                                    | The Leaflet site map (OpenStreetMap tiles); import it with `lazy()` so Leaflet loads only where a map is shown                   |
 
 `src/permissions.ts` copies the API's permission matrix (`backend/src/middleware/permissions.js`, CONTRACT 9) with the same action names. A test compares the two files, so update both together. Hiding something in the UI is only a convenience: the API still refuses what a role cannot do.

@@ -34,6 +34,19 @@ const VALUE_TONES: Record<string, Tone> = {
   reject: 'red',
   login: 'grey',
   export: 'amber',
+  // sample_status
+  collected: 'blue',
+  stored: 'blue',
+  extracted: 'purple',
+  sequenced: 'purple',
+  analyzed: 'green',
+  failed: 'red',
+  discarded: 'grey',
+  // qc_status / qc_result
+  pending: 'amber',
+  pass: 'green',
+  warn: 'amber',
+  fail: 'red',
 };
 
 interface BadgeProps {

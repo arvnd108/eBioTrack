@@ -1,6 +1,6 @@
 # eBioTrack — Project Contract (T00)
 
-**Version:** 1.5 (approved, G0 passed; 1.1 adds the not-blank CHECKs to 4.3; 1.2 names two response fields in section 10; 1.3 links a correction run to the run it supersedes and settles all-`fail` approval; 1.4 exposes `supersedes_analysis_id` in the analysis routes and adds the `413` status; 1.5 adds the `429` status, `too_many_attempts` error code and `Retry-After` header for login lockout)
+**Version:** 1.5 (approved, G0 passed; 1.1 adds the not-blank CHECKs to 4.3; 1.2 names two response fields in section 10; 1.3 links a correction run to the run it supersedes and settles all-`fail` approval; 1.4 exposes `supersedes_analysis_id` in the analysis routes and adds the `413` status; 1.5 adds the `429` status, `too_many_attempts` error code and `Retry-After` header for login lockout; 1.6 stores the status-change `note` and adds `collector_name` and `changed_by_name` to the event and sample responses)
 
 This is the output of task **T00** in [WORKFLOW.md](WORKFLOW.md). It fixes the names, types, values, and shapes that all four members build against, so the database, API, frontend, tests, and docs line up without anyone guessing.
 
@@ -569,6 +569,8 @@ Login lockout: after 5 failed sign-ins for the same client IP and email within 1
 | POST | `/api/events` | field_researcher | `{ project_id, site_id, collected_at, notes?, measurements?: [{ parameter, value, unit }], samples?: [{ sample_type_id, volume_ml?, depth_m?, storage_location? }] }` | event with created samples and measurements (one transaction) |
 | GET | `/api/events/:id` | any | — | event with samples and measurements |
 
+Every event object carries `collector_name` (the collector's `full_name`) next to `collector_id`, so a role that cannot call `GET /api/users` can still show who recorded it.
+
 ### Samples
 
 | Method | Path | Min role | Request | Response `data` |
@@ -577,7 +579,7 @@ Login lockout: after 5 failed sign-ins for the same client IP and email within 1
 | GET | `/api/samples` | any | `?project_id&site_id&event_id&status&q` (`q` matches sample code) | samples |
 | POST | `/api/samples` | field_researcher | `{ event_id, sample_type_id, volume_ml?, depth_m?, storage_location? }` | sample (via `register_sample()`) |
 | GET | `/api/samples/:id` | any | — | sample with event, site, extractions, status history |
-| PATCH | `/api/samples/:id/status` | field_researcher / lab_technician | `{ new_status, note? }` | sample (transition rules in section 3) |
+| PATCH | `/api/samples/:id/status` | field_researcher / lab_technician | `{ new_status, note? }` | sample (transition rules in section 3); `note` (up to 1000 characters) is stored on the new `sample_status_history` row, and an empty note stores NULL |
 
 ### Laboratory
 
@@ -675,7 +677,7 @@ B builds the frontend mock API from these; A returns exactly these shapes; C ass
   "event": { "event_id": 4, "collected_at": "2026-03-12T09:30:00Z", "project_id": 1 },
   "site": { "site_id": 1, "name": "Upstream gauge" },
   "extractions": [ { "extraction_id": 7, "attempt_number": 1, "qc_status": "pass" } ],
-  "status_history": [ { "old_status": null, "new_status": "collected", "changed_at": "2026-03-12T10:00:00Z", "changed_by": 3 } ]
+  "status_history": [ { "old_status": null, "new_status": "collected", "changed_at": "2026-03-12T10:00:00Z", "changed_by": 3, "changed_by_name": "Farah Field", "note": null } ]
 } }
 ```
 
@@ -753,6 +755,7 @@ The backend resolves `scientific_name` and `taxon_rank` to `taxon_id` before cal
 | 1.3 | Section 3 and 4.4: add `analysis_runs.supersedes_analysis_id` (self FK, NULL, UNIQUE, not its own id) and the rule that approving a correction moves the run it supersedes to `superseded` in the same transaction; state that an analysis whose detections are all `fail` may be approved. Section 7: `approve_analysis()` description. Affects T05 (migration `040`, a follow-up migration), T16-A (`approve_analysis()`), T17-A (status trigger), T23 (analysis routes), T07 (ER diagram), T40-A. | Arvind |
 | 1.4 | Section 10: `supersedes_analysis_id` is accepted by `POST /api/analyses` and returned on every analysis row; richness rows always carry `site_id` (one row per group and site) and `sample_count` counts all samples of the group and site. Status-code list: `413 payload_too_large` for a CSV upload over 10 MB. Affects T23, T24 to T29 (the `AnalysisRun` type gains `supersedes_analysis_id: number \| null`), T40-A. | Arvind |
 | 1.5 | Section 7 and 8: add status `429` with error code `too_many_attempts` and the `Retry-After` header (seconds) for `POST /api/auth/login` after repeated failed sign-ins, matching T13; the new API-only error-code table in section 7 also lists `413 payload_too_large`. Affects T13 (already implemented), T24 (frontend, already handles it), T33 (authorization/auth tests), T42 (`api.md`). | Arvind |
+| 1.6 | Section 10: `PATCH /api/samples/:id/status` now stores `note` on the history row (the trigger reads the transaction-local setting `app.status_note`; none stores NULL), `GET /api/samples/:id` history entries gain `changed_by_name` (and always carry `note`), and every event object gains `collector_name`, so roles that cannot list users can show names. Additive: existing fields are unchanged. Affects T17-D (`record_sample_status_history()` reads `app.status_note`), T21 (sample and event routes), T26 (frontend: note field, names in timeline and collector column), T33 (tests), T42 (`api.md`). | Arvind |
 
 ---
 

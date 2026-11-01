@@ -11,7 +11,9 @@ import { assertProjectAccess, projectIdOfEvent } from './projectAccess.js';
 import { SAMPLE_COLUMNS } from './samples.service.js';
 
 const EVENT_COLUMNS = `
-  e.event_id, e.project_id, e.site_id, e.collector_id, e.collected_at, e.notes, e.created_at`;
+  e.event_id, e.project_id, e.site_id, e.collector_id,
+  (SELECT u.full_name FROM users u WHERE u.user_id = e.collector_id) AS collector_name,
+  e.collected_at, e.notes, e.created_at`;
 
 const eventNotFound = () => new AppError(404, 'not_found', 'Event not found');
 

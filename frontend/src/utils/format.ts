@@ -46,3 +46,11 @@ export function todayLocal(): string {
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 }
+
+/** A number typed in a text box ("7.4", "-0.5", "1e3"), or null when it is not one. */
+export function parseNumber(text: string): number | null {
+  const trimmed = text.trim();
+  if (!/^[-+]?(\d+(\.\d*)?|\.\d+)(e[-+]?\d+)?$/i.test(trimmed)) return null;
+  const value = Number(trimmed);
+  return Number.isFinite(value) ? value : null;
+}

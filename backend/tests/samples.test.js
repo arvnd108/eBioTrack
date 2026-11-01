@@ -141,12 +141,17 @@ describe.skipIf(!available)('samples', () => {
       ]);
       expect(Object.keys(res.body.data.site).sort()).toEqual(['name', 'site_id']);
       const history = res.body.data.status_history;
-      expect(history[0]).toMatchObject({ old_status: null, new_status: 'collected' });
+      expect(history[0]).toMatchObject({
+        old_status: null,
+        new_status: 'collected',
+        changed_by_name: 'Farah Field',
+      });
       const times = history.map((h) => new Date(h.changed_at).getTime());
       expect(times).toEqual([...times].sort((a, b) => a - b));
       expect(Object.keys(history[0]).sort()).toEqual([
         'changed_at',
         'changed_by',
+        'changed_by_name',
         'new_status',
         'note',
         'old_status',
@@ -303,6 +308,12 @@ describe.skipIf(!available)('samples', () => {
         [null, 'collected', 3],
         ['collected', 'stored', 3],
         ['stored', 'extracted', 4],
+      ]);
+      // The optional note is stored on its own history row; no note stores NULL.
+      expect(detail.body.data.status_history.map((h) => [h.changed_by_name, h.note])).toEqual([
+        ['Farah Field', null],
+        ['Farah Field', null],
+        ['Lakshmi Lab', 'ready for the lab'],
       ]);
     });
     it('409 invalid_transition with the trigger message for an illegal jump', async () => {
