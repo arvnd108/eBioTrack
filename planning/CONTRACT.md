@@ -1,6 +1,6 @@
 # eBioTrack — Project Contract (T00)
 
-**Version:** 1.4 (approved, G0 passed; 1.1 adds the not-blank CHECKs to 4.3; 1.2 names two response fields in section 10; 1.3 links a correction run to the run it supersedes and settles all-`fail` approval; 1.4 exposes `supersedes_analysis_id` in the analysis routes and adds the `413` status)
+**Version:** 1.5 (approved, G0 passed; 1.1 adds the not-blank CHECKs to 4.3; 1.2 names two response fields in section 10; 1.3 links a correction run to the run it supersedes and settles all-`fail` approval; 1.4 exposes `supersedes_analysis_id` in the analysis routes and adds the `413` status; 1.5 adds the `429` status, `too_many_attempts` error code and `Retry-After` header for login lockout)
 
 This is the output of task **T00** in [WORKFLOW.md](WORKFLOW.md). It fixes the names, types, values, and shapes that all four members build against, so the database, API, frontend, tests, and docs line up without anyone guessing.
 
@@ -451,6 +451,13 @@ Procedures and triggers raise exceptions with these SQLSTATE codes. The API maps
 
 The exception message is a short human-readable sentence; extra detail goes in `DETAIL`.
 
+API-only error codes, raised by the application rather than the database (no SQLSTATE):
+
+| HTTP status | API error code | When |
+|---|---|---|
+| 413 | `payload_too_large` | A CSV upload over 10 MB (`POST /api/analyses/import`) |
+| 429 | `too_many_attempts` | Repeated failed sign-ins (`POST /api/auth/login`); the response carries a `Retry-After` header |
+
 ### Views
 
 Names fixed so the API and tests can rely on them. Column lists are decided by the slice owner and written into the slice's `docs/slices/*.md`.
@@ -478,7 +485,7 @@ Names fixed so the API and tests can rely on them. Column lists are decided by t
 { "error": { "code": "validation_error", "message": "Latitude must be between -90 and 90", "details": [ { "field": "latitude", "message": "out of range" } ] } }
 ```
 
-- **Status codes:** `200` OK, `201` created, `204` no content, `400` malformed, `401`, `403`, `404`, `409` conflict, `413` upload too large (`payload_too_large`, CSV import only: 10 MB), `422` validation or rule failure.
+- **Status codes:** `200` OK, `201` created, `204` no content, `400` malformed, `401`, `403`, `404`, `409` conflict, `413` upload too large (`payload_too_large`, CSV import only: 10 MB), `422` validation or rule failure, `429` too many failed sign-in attempts (`too_many_attempts`, `POST /api/auth/login` only; the response carries a `Retry-After` header with the wait in whole seconds).
 - **Writes** run in a transaction that first sets `app.current_user_id` (section 7).
 - **Filters** are query parameters named after the column (`site_id`, `status`, `from`, `to`).
 
@@ -519,6 +526,8 @@ Project role `viewer` is read-only regardless of global role; project role `owne
 | POST | `/api/auth/login` | public | `{ email, password }` | user object |
 | POST | `/api/auth/logout` | any | — | `204` |
 | GET | `/api/auth/me` | any | — | user object |
+
+Login lockout: after 5 failed sign-ins for the same client IP and email within 15 minutes, `POST /api/auth/login` answers `429` with code `too_many_attempts` and `Retry-After: <seconds>` until the window ends; a successful sign-in resets the count. The numbers are the current implementation values (in memory, reset on restart), not guaranteed constants.
 
 ### Users (administration)
 
@@ -743,6 +752,7 @@ The backend resolves `scientific_name` and `taxon_rank` to `taxon_id` before cal
 | 1.2 | Section 10: name the response fields the frontend already types. `GET /api/analyses/:id` returns `assignment_counts: { pass, warn, fail }`; `GET /api/dashboard/summary` `recent_activity[]` entries are `audit_logs` rows (up to 5, newest first, empty for roles that cannot read the audit log, same shape as `GET /api/audit`). Affects T20 and T23 (the audit, analysis and dashboard routes) and T24 to T29 (frontend types). | Arvind |
 | 1.3 | Section 3 and 4.4: add `analysis_runs.supersedes_analysis_id` (self FK, NULL, UNIQUE, not its own id) and the rule that approving a correction moves the run it supersedes to `superseded` in the same transaction; state that an analysis whose detections are all `fail` may be approved. Section 7: `approve_analysis()` description. Affects T05 (migration `040`, a follow-up migration), T16-A (`approve_analysis()`), T17-A (status trigger), T23 (analysis routes), T07 (ER diagram), T40-A. | Arvind |
 | 1.4 | Section 10: `supersedes_analysis_id` is accepted by `POST /api/analyses` and returned on every analysis row; richness rows always carry `site_id` (one row per group and site) and `sample_count` counts all samples of the group and site. Status-code list: `413 payload_too_large` for a CSV upload over 10 MB. Affects T23, T24 to T29 (the `AnalysisRun` type gains `supersedes_analysis_id: number \| null`), T40-A. | Arvind |
+| 1.5 | Section 7 and 8: add status `429` with error code `too_many_attempts` and the `Retry-After` header (seconds) for `POST /api/auth/login` after repeated failed sign-ins, matching T13; the new API-only error-code table in section 7 also lists `413 payload_too_large`. Affects T13 (already implemented), T24 (frontend, already handles it), T33 (authorization/auth tests), T42 (`api.md`). | Arvind |
 
 ---
 
