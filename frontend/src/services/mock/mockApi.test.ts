@@ -58,7 +58,7 @@ describe('every GET endpoint in CONTRACT section 10', () => {
     '/taxa/8',
     '/taxa/8/detections',
     '/analytics/richness',
-    '/analytics/detection-frequency',
+    '/analytics/detection-frequency?taxon_id=7',
     '/dashboard/summary',
     '/audit',
   ];
@@ -87,7 +87,7 @@ describe('section 11 example shapes', () => {
     expect(data.status_history.at(-1)?.new_status).toBe('analyzed');
   });
 
-  it('richness rows carry the caveat and skip failed samples', async () => {
+  it('richness rows carry the caveat and count every sample as effort (CONTRACT 1.4)', async () => {
     await signIn('principal_investigator');
     const res = await api.get<RichnessRow[], CaveatMeta>('/analytics/richness', {
       project_id: 1,
@@ -95,8 +95,8 @@ describe('section 11 example shapes', () => {
     });
     expect(res.meta?.caveat).toBe(EDNA_CAVEAT);
     const site1In2025 = res.data.find((r) => r.group === '2025' && r.site_id === 1);
-    // Event 1 has samples 1, 2 and the failed sample 17.
-    expect(site1In2025).toMatchObject({ sample_count: 2 });
+    // Event 1 has samples 1, 2 and the failed sample 17: all three are sampling effort.
+    expect(site1In2025).toMatchObject({ sample_count: 3 });
     expect(site1In2025!.observed_taxa).toBeGreaterThan(0);
   });
 
@@ -163,19 +163,40 @@ describe('section 11 example shapes', () => {
     ]);
   });
 
-  it('import dry run returns the contract example (multipart body)', async () => {
+  it('import dry run checks the file like the API (multipart body)', async () => {
     await signIn('analyst');
-    const form = new FormData();
-    form.append('analysis_id', '4');
-    form.append(
-      'file',
-      new Blob(['library_code,scientific_name\n'], { type: 'text/csv' }),
-      'd.csv',
-    );
-    const res = await api.post<ImportDryRunResult>('/analyses/import?dry_run=true', form);
-    expect(res.data).toEqual({
-      valid_rows: 38,
-      errors: [{ row: 12, field: 'confidence', message: 'must be between 0 and 1' }],
+    const upload = (text: string) => {
+      const form = new FormData();
+      form.append('analysis_id', '4');
+      form.append('file', new Blob([text], { type: 'text/csv' }), 'd.csv');
+      return api.post<ImportDryRunResult>('/analyses/import?dry_run=true', form);
+    };
+    const header = (await upload('library_code,scientific_name\n')).data;
+    expect(header.valid_rows).toBe(0);
+    expect(header.errors.map((e) => `${e.row} ${e.field} ${e.message}`)).toEqual([
+      '1 taxon_rank column is missing',
+      '1 read_count column is missing',
+      '1 confidence column is missing',
+      '1 qc_flag column is missing',
+    ]);
+    const rows = (
+      await upload(
+        'library_code,scientific_name,taxon_rank,read_count,confidence,qc_flag\n' +
+          'LIB-0001,Labeo rohita,species,10,0.9,pass\n' +
+          'LIB-0009,Labeo rohita,species,10,1.5,pass\n' +
+          'LIB-0002,Labeo nova,species,10,0.9,pass\n',
+      )
+    ).data;
+    expect(rows).toEqual({
+      valid_rows: 1,
+      errors: [
+        { row: 3, field: 'confidence', message: 'must be a number between 0 and 1' },
+        {
+          row: 4,
+          field: 'scientific_name',
+          message: 'no taxon "Labeo nova" with rank species (taxa are never created by an import)',
+        },
+      ],
     });
   });
 
@@ -871,5 +892,122 @@ describe('T22 lab rules match the real API (values checked against backend PR #1
         api.post('/qc-results', { sample_id: 1, qc_type: 'concentration', result: 'pass' }),
       ),
     ).toMatchObject(forbidden);
+  });
+});
+
+describe('T23 analysis, taxa and export rules match the real API (checked against backend PR #142)', () => {
+  const as = async (role: string) => {
+    await api.post('/auth/logout').catch(() => undefined);
+    await signIn(role);
+  };
+  const failure = (promise: Promise<unknown>) =>
+    promise.catch((e: unknown) => e) as Promise<ApiError>;
+  const upload = (id: number, text: string, dry = false) => {
+    const form = new FormData();
+    form.append('analysis_id', String(id));
+    form.append('file', new Blob([text], { type: 'text/csv' }), 'd.csv');
+    return api.post<Record<string, unknown>>(`/analyses/import${dry ? '?dry_run=true' : ''}`, form);
+  };
+  const ROWS =
+    'library_code,scientific_name,taxon_rank,read_count,confidence,qc_flag\n' +
+    'LIB-0001,Labeo bata,species,500,0.9,pass\nLIB-0002,Labeo bata,species,20,0.6,warn\n';
+
+  it('hides unapproved analyses from roles that may not read them (404, absent from lists)', async () => {
+    await as('viewer');
+    const list = await api.get<{ analysis_id: number }[]>('/analyses');
+    expect(list.data.map((a) => a.analysis_id)).toEqual([1, 2]);
+    expect(await failure(api.get('/analyses/3'))).toMatchObject({
+      status: 404,
+      message: 'Analysis not found',
+    });
+    await as('analyst');
+    expect((await api.get<unknown[]>('/analyses')).data).toHaveLength(4);
+  });
+
+  it('imports, approves and counts a species at once; keeps the rejection reason', async () => {
+    await as('analyst');
+    const made = await api.post<{ analysis_id: number }>('/analyses', {
+      run_id: 1,
+      marker_id: 1,
+      pipeline_name: 'x',
+      pipeline_version: '1',
+      reference_db: 'y',
+    });
+    const id = made.data.analysis_id;
+    expect(id).toBe(1000);
+    expect((await upload(id, ROWS, true)).data).toEqual({ valid_rows: 2, errors: [] });
+    expect((await upload(id, ROWS)).data).toEqual({ inserted: 2 });
+    expect(await failure(upload(id, ROWS))).toMatchObject({
+      status: 409,
+      code: 'conflict',
+      message: 'Analysis 1000 is already imported',
+    });
+    expect(await failure(api.post(`/analyses/${id}/approve`))).toMatchObject({ status: 403 });
+    await as('principal_investigator');
+    const approved = await api.post<Record<string, unknown>>(`/analyses/${id}/approve`);
+    expect(approved.data).toMatchObject({
+      status: 'approved',
+      imported_by_name: 'Anil Analyst',
+      approved_by_name: 'Pranav Investigator',
+      run_code: 'RUN-001',
+      marker_name: '12S',
+      rejection: null,
+    });
+    const bata = await api.get<{ sample_id: number; read_count: number }[]>('/taxa/9/detections');
+    expect(bata.data).toEqual([expect.objectContaining({ sample_id: 1, read_count: 500 })]);
+
+    const rejected = await api.post<{ rejection: Record<string, unknown> }>('/analyses/3/reject', {
+      reason: ' Wrong marker ',
+    });
+    expect(rejected.data.rejection).toMatchObject({
+      reason: 'Wrong marker',
+      rejected_by: 2,
+      rejected_by_name: 'Pranav Investigator',
+    });
+  });
+
+  it('refuses the importer’s own approval and a correction of a correction’s target twice', async () => {
+    await as('principal_investigator');
+    const body = {
+      run_id: 1,
+      marker_id: 1,
+      pipeline_name: 'x',
+      pipeline_version: '1',
+      reference_db: 'y',
+    };
+    const own = (await api.post<{ analysis_id: number }>('/analyses', body)).data.analysis_id;
+    await upload(own, ROWS);
+    expect(await failure(api.post(`/analyses/${own}/approve`))).toMatchObject({
+      status: 422,
+      code: 'rule_violation',
+      message: 'The importer may not approve their own analysis',
+      details: [{ message: `User 2 imported analysis ${own}.` }],
+    });
+    await api.post('/analyses', { ...body, supersedes_analysis_id: 1 });
+    expect(
+      await failure(api.post('/analyses', { ...body, supersedes_analysis_id: 1 })),
+    ).toMatchObject({ status: 409, code: 'duplicate' });
+  });
+
+  it('downloads an export only for the person who asked for it', async () => {
+    await as('viewer');
+    const made = await api.post<{ export_id: number; row_count: number }>('/exports', {
+      export_type: 'richness_csv',
+      project_id: 1,
+      filters: { group_by: 'site' },
+    });
+    expect(made.data).toEqual({ export_id: 1000, row_count: 3 });
+    const file = await api.download('/exports/1000/download');
+    expect(file).toMatchObject({
+      filename: 'ebiotrack-richness_csv-1000.csv',
+      rowCount: 3,
+      caveat: EDNA_CAVEAT,
+    });
+    expect(file.text.split('\r\n')[1]).toBe('Dakpathar Barrage,1,2,5');
+    await as('analyst');
+    expect(await failure(api.download('/exports/1000/download'))).toMatchObject({
+      status: 404,
+      message: 'Export not found',
+    });
   });
 });

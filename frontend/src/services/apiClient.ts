@@ -238,6 +238,62 @@ async function send<T, M>(path: string, options: RequestOptions): Promise<ApiRes
   );
 }
 
+/** A file the API sends instead of JSON (CSV export download). */
+export interface DownloadedFile {
+  text: string;
+  /** From `Content-Disposition`; null when the header has none. */
+  filename: string | null;
+  /** `X-Row-Count`: data rows in the file now (can differ from the count at request time). */
+  rowCount: number | null;
+  /** `X-Caveat`: the eDNA interpretation caveat, shown beside the link. */
+  caveat: string | null;
+}
+
+function fileFrom(text: string, header: (name: string) => string | null): DownloadedFile {
+  const disposition = header('Content-Disposition');
+  const rows = header('X-Row-Count');
+  return {
+    text,
+    filename: disposition ? (/filename="([^"]+)"/.exec(disposition)?.[1] ?? null) : null,
+    rowCount: rows === null || rows === '' ? null : Number(rows),
+    caveat: header('X-Caveat'),
+  };
+}
+
+/**
+ * GET a file (for example `/exports/12/download`). Errors come back in the usual JSON envelope and
+ * throw `ApiError` like any other request, so a page can show "Export not found" instead of
+ * navigating to a JSON error page.
+ */
+export async function download(path: string): Promise<DownloadedFile> {
+  try {
+    if (mockMode) {
+      const mock = await handleMockRequest('GET', path);
+      if (mock.status === 200 && typeof mock.body === 'string') {
+        return fileFrom(mock.body, (name) => mock.headers?.[name] ?? null);
+      }
+      toResult(mock.status, mock.body);
+      throw new ApiError(mock.status, { code: 'invalid_response', message: 'Not a file.' });
+    }
+    let res: Response;
+    try {
+      res = await fetch(`${API_BASE}${path}`, { credentials: 'include' });
+    } catch {
+      throw new ApiError(0, {
+        code: 'network_error',
+        message: 'Could not reach the server. Check your connection and try again.',
+      });
+    }
+    if (!res.ok) {
+      toResult(res.status, await readJson(res), res.statusText);
+    }
+    return fileFrom(await res.text(), (name) => res.headers.get(name));
+  } catch (err) {
+    if (isApiError(err) && err.code === 'unauthenticated') onUnauthenticated?.();
+    throw err;
+  }
+}
+
 /** Shorthand used by the service files. */
 export const api = {
   get: <T, M = undefined>(path: string, query?: Query, signal?: AbortSignal) =>
@@ -247,4 +303,5 @@ export const api = {
   patch: <T, M = undefined>(path: string, body?: unknown) =>
     request<T, M>(path, { method: 'PATCH', body }),
   delete: <T = void>(path: string) => request<T>(path, { method: 'DELETE' }),
+  download,
 };

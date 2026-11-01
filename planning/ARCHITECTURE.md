@@ -193,7 +193,7 @@ React + TypeScript app. Owned entirely by **B**.
 | `frontend/src/components/common/ErrorState.tsx` | B | error display |
 | `frontend/src/components/common/CaveatBanner.tsx` | B | eDNA caveat: detection is not abundance; non-detection is not absence |
 | `frontend/src/components/charts/RichnessChart.tsx` | B | Richness by site/period (Recharts) |
-| `frontend/src/components/charts/DetectionTrendChart.tsx` | B | Detection history chart (Recharts) |
+| `frontend/src/components/charts/DetectionFrequencyChart.tsx` | B | Detection frequency of a taxon by site (Recharts) |
 | `frontend/src/components/maps/SiteMap.tsx` | B | Sampling sites map (Leaflet + OpenStreetMap) |
 | `frontend/src/pages/LoginPage.tsx` | B | Sign in |
 | `frontend/src/pages/DashboardPage.tsx` | B | Projects, sites, samples, recent activity |

@@ -5,6 +5,7 @@
 // offer only valid choices. If section 3 changes, change this file in the same PR.
 
 import type {
+  AnalysisStatus,
   HabitatType,
   QcResult,
   QcStatus,
@@ -12,6 +13,7 @@ import type {
   RegionType,
   RunStatus,
   SampleStatus,
+  TaxonRank,
 } from './types';
 
 export const HABITAT_TYPES: HabitatType[] = [
@@ -81,3 +83,24 @@ export const RUN_TRANSITIONS: Readonly<Record<RunStatus, readonly RunStatus[]>> 
   completed: [],
   failed: [],
 };
+
+/** `analysis_runs.status` (CONTRACT section 3): draft -> imported -> approved -> superseded. */
+export const ANALYSIS_STATUSES: AnalysisStatus[] = [
+  'draft',
+  'imported',
+  'approved',
+  'rejected',
+  'superseded',
+];
+
+/** `taxa.rank`, highest first. */
+export const TAXON_RANKS: TaxonRank[] = [
+  'domain',
+  'kingdom',
+  'phylum',
+  'class',
+  'order',
+  'family',
+  'genus',
+  'species',
+];
