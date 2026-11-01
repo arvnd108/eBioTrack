@@ -8,7 +8,7 @@
 //     an unknown object (`notFound()`), so existence is not leaked;
 //   - a project role of `viewer` is read-only: 403 when `write` is true.
 // The global role gate (which roles may write at all) stays on the route (`requireRole`).
-import { queryOne } from '../db/query.js';
+import { query, queryOne } from '../db/query.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { ROLES } from '../middleware/permissions.js';
 
@@ -64,4 +64,77 @@ export async function projectIdOfSample(sampleId, executor) {
     executor,
   );
   return row ? row.project_id : null;
+}
+
+/** The project of an extraction (through its sample and event), or null when it does not exist. */
+export async function projectIdOfExtraction(extractionId, executor) {
+  const row = await queryOne(
+    `SELECT e.project_id FROM dna_extractions x
+       JOIN samples s ON s.sample_id = x.sample_id
+       JOIN collection_events e ON e.event_id = s.event_id
+      WHERE x.extraction_id = $1`,
+    [extractionId],
+    executor,
+  );
+  return row ? row.project_id : null;
+}
+
+/**
+ * The projects a run touches (the projects of its libraries' samples). Null when the run does not
+ * exist; an empty array for a run without libraries.
+ */
+export async function projectIdsOfRun(runId, executor) {
+  const run = await queryOne(
+    'SELECT 1 AS ok FROM sequencing_runs WHERE run_id = $1',
+    [runId],
+    executor,
+  );
+  if (!run) return null;
+  const rows = await query(
+    `SELECT DISTINCT e.project_id
+       FROM sequencing_libraries l
+       JOIN dna_extractions x ON x.extraction_id = l.extraction_id
+       JOIN samples s ON s.sample_id = x.sample_id
+       JOIN collection_events e ON e.event_id = s.event_id
+      WHERE l.run_id = $1`,
+    [runId],
+    executor,
+  );
+  return rows.map((row) => row.project_id);
+}
+
+/** The projects of an analysis (those of its run). Null when the analysis does not exist. */
+export async function projectIdsOfAnalysis(analysisId, executor) {
+  const analysis = await queryOne(
+    'SELECT run_id FROM analysis_runs WHERE analysis_id = $1',
+    [analysisId],
+    executor,
+  );
+  return analysis ? projectIdsOfRun(analysis.run_id, executor) : null;
+}
+
+/**
+ * Like assertProjectAccess for an object that spans several projects (a run, an analysis): the
+ * caller needs access to AT LEAST ONE of them. For a write, at least one project where the caller
+ * is not a `viewer`. The administrator always passes; `notFound` is thrown when none is visible.
+ * @param {{ user_id: number, roles: string[] }} user
+ * @param {number[]} projectIds
+ */
+export async function assertAnyProjectAccess(
+  user,
+  projectIds,
+  { write = false, notFound = projectNotFound } = {},
+) {
+  if (isAdmin(user)) return;
+  const rows =
+    projectIds.length === 0
+      ? []
+      : await query(
+          'SELECT project_role FROM project_members WHERE user_id = $1 AND project_id = ANY($2::bigint[])',
+          [user.user_id, projectIds],
+        );
+  if (rows.length === 0) throw notFound();
+  if (write && rows.every((row) => row.project_role === 'viewer')) {
+    throw new AppError(403, 'forbidden', 'You do not have permission to do this');
+  }
 }
