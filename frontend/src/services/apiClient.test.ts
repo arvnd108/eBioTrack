@@ -239,8 +239,11 @@ describe('mock mode', () => {
     await expect(api.get('/projects/2')).rejects.toMatchObject({ status: 404 });
   });
 
-  it('filters sites by project', async () => {
-    await api.post('/auth/login', { email: 'viewer@ebiotrack.test', password: DEV_PASSWORD });
+  it('filters sites by project, for a member of that project', async () => {
+    await api.post('/auth/login', {
+      email: 'field_researcher@ebiotrack.test',
+      password: DEV_PASSWORD,
+    });
     const res = await api.get<{ site_id: number }[]>('/sites', { project_id: 2 });
     expect(res.data.map((s) => s.site_id)).toEqual([4, 5]);
   });

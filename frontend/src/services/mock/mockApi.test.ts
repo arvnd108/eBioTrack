@@ -515,6 +515,21 @@ describe('T20 write rules match the real API (values checked against backend PR 
     expect(logins.data[0]).toMatchObject({ action: 'login', actor_id: 1, entity_id: 1 });
   });
 
+  it('lists sites by name for anyone, and checks project access when filtering', async () => {
+    await as('lab_technician');
+    const sites = await api.get<{ name: string }[]>('/sites', { limit: 100, sort: 'name' });
+    const names = sites.data.map((s) => s.name);
+    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
+    expect(await failure(api.get('/sites', { project_id: 2 }))).toMatchObject({
+      status: 404,
+      message: 'Project not found',
+    });
+    expect(await failure(api.get('/sites', { sort: 'habitat_type' }))).toMatchObject({
+      status: 422,
+      message: 'Invalid sort field: habitat_type',
+    });
+  });
+
   it('sorts lists through ?sort and rejects fields the API does not allow', async () => {
     await as('administrator');
     const users = await api.get<User[]>('/users', { sort: '-full_name', limit: 3 });

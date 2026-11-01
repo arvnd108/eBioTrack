@@ -110,7 +110,7 @@ export function SitesSection({ project, canEdit, onChanged }: SitesSectionProps)
           <FormField
             label="Site"
             error={siteError ?? server.fieldErrors.site_id}
-            hint={listed ? undefined : 'The site list is not available yet; enter the site ID.'}
+            hint={listed ? undefined : 'The site list could not be loaded; enter the site ID.'}
             required
           >
             <SitePicker

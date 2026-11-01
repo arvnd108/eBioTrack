@@ -1102,17 +1102,21 @@ const routes: MockRoute[] = [
   {
     method: 'GET',
     path: '/sites',
-    handler: ({ query }) => {
+    handler: ({ query, user }) => {
       const projectId = num(query, 'project_id');
       const regionId = num(query, 'region_id');
       const habitat = query.get('habitat_type');
+      // As the API: filtering by a project needs access to it (backend sites.service.js).
+      if (projectId !== null && !visibleProjectIds(user).includes(projectId)) {
+        return notFound('Project');
+      }
       const rows = mockSites.filter(
         (s) =>
           (projectId === null || siteIdsOf(projectId).includes(s.site_id)) &&
           (regionId === null || s.region_id === regionId) &&
           (!habitat || s.habitat_type === habitat),
       );
-      return paginate(rows, query);
+      return paginate(rows, query, ['site_id', 'name']);
     },
   },
   {

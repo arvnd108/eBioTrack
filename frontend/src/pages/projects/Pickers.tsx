@@ -4,7 +4,7 @@
 // Each picker shows a list when the API can give one, and otherwise an ID box:
 //  - users: GET /api/users is administrator-only (CONTRACT 10), so a principal investigator types
 //    the person's user ID;
-//  - sites: GET /api/sites arrives with T21; while the API answers 404 the user types a site ID.
+//  - sites: GET /api/sites (any signed-in user); if it cannot be loaded the user types a site ID.
 // Both forward `id` / `aria-*` from FormField to the control they render.
 
 import type { SelectHTMLAttributes } from 'react';
@@ -95,11 +95,12 @@ export function UserPicker({ value, onChange, exclude, invalid, ...control }: Pi
 }
 
 /**
- * Lists sites when GET /api/sites is available; the hint says which mode is in use.
+ * All sites by name (GET /api/sites; up to 100, the API's page maximum); on an error the picker
+ * becomes an ID box and the hint says so.
  * `enabled` is false for users who cannot link sites, so they send no request.
  */
 export function useSiteList(enabled = true) {
-  return useFetch<Site[], PageMeta>(enabled ? '/sites' : null, { limit: 100 });
+  return useFetch<Site[], PageMeta>(enabled ? '/sites' : null, { limit: 100, sort: 'name' });
 }
 
 export function SitePicker({
