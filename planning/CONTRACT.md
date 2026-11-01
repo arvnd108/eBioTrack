@@ -1,6 +1,6 @@
 # eBioTrack — Project Contract (T00)
 
-**Version:** 1.3 (approved, G0 passed; 1.1 adds the not-blank CHECKs to 4.3; 1.2 names two response fields in section 10; 1.3 links a correction run to the run it supersedes and settles all-`fail` approval)
+**Version:** 1.4 (approved, G0 passed; 1.1 adds the not-blank CHECKs to 4.3; 1.2 names two response fields in section 10; 1.3 links a correction run to the run it supersedes and settles all-`fail` approval; 1.4 exposes `supersedes_analysis_id` in the analysis routes and adds the `413` status)
 
 This is the output of task **T00** in [WORKFLOW.md](WORKFLOW.md). It fixes the names, types, values, and shapes that all four members build against, so the database, API, frontend, tests, and docs line up without anyone guessing.
 
@@ -478,7 +478,7 @@ Names fixed so the API and tests can rely on them. Column lists are decided by t
 { "error": { "code": "validation_error", "message": "Latitude must be between -90 and 90", "details": [ { "field": "latitude", "message": "out of range" } ] } }
 ```
 
-- **Status codes:** `200` OK, `201` created, `204` no content, `400` malformed, `401`, `403`, `404`, `409` conflict, `422` validation or rule failure.
+- **Status codes:** `200` OK, `201` created, `204` no content, `400` malformed, `401`, `403`, `404`, `409` conflict, `413` upload too large (`payload_too_large`, CSV import only: 10 MB), `422` validation or rule failure.
 - **Writes** run in a transaction that first sets `app.current_user_id` (section 7).
 - **Filters** are query parameters named after the column (`site_id`, `status`, `from`, `to`).
 
@@ -593,8 +593,8 @@ Project role `viewer` is read-only regardless of global role; project role `owne
 
 | Method | Path | Min role | Request | Response `data` |
 |---|---|---|---|---|
-| GET | `/api/analyses` | any | `?run_id&status&marker_id` | analysis runs |
-| POST | `/api/analyses` | analyst | `{ run_id, marker_id, pipeline_name, pipeline_version, reference_db, reference_db_version?, parameters? }` | analysis (status `draft`) |
+| GET | `/api/analyses` | any | `?run_id&status&marker_id` | analysis runs; every analysis row carries `supersedes_analysis_id` (`null` for ordinary runs) |
+| POST | `/api/analyses` | analyst | `{ run_id, marker_id, pipeline_name, pipeline_version, reference_db, reference_db_version?, parameters?, supersedes_analysis_id? }` (the optional id names the approved run this one corrects, section 3) | analysis (status `draft`) |
 | GET | `/api/analyses/:id` | any | — | the analysis row plus `assignment_counts: { pass, warn, fail }` (integer detection counts by `qc_flag`; all three keys always present, `0` when none) |
 | POST | `/api/analyses/import` | analyst | multipart: `analysis_id`, `file` (CSV, section 12); query `?dry_run=true` validates only | dry run: `{ valid_rows, errors: [{ row, field, message }] }`; real import: `{ inserted }` |
 | POST | `/api/analyses/:id/approve` | principal_investigator | — | analysis (status `approved`) |
@@ -612,7 +612,7 @@ Project role `viewer` is read-only regardless of global role; project role `owne
 
 | Method | Path | Min role | Request | Response `data` |
 |---|---|---|---|---|
-| GET | `/api/analytics/richness` | any | `?project_id&site_id&group_by=year\|month\|site&from&to` | rows `{ group, site_id?, observed_taxa, sample_count }` |
+| GET | `/api/analytics/richness` | any | `?project_id&site_id&group_by=year\|month\|site&from&to` | rows `{ group, site_id, observed_taxa, sample_count }`, one per (group, site); `sample_count` = samples collected in the group at that site, including samples with no detection |
 | GET | `/api/analytics/detection-frequency` | any | `?taxon_id&project_id` | rows `{ site_id, detections, samples_total }` |
 | GET | `/api/dashboard/summary` | any | `?project_id` | `{ projects, sites, samples, approved_detections, recent_activity[] }`; `recent_activity` holds up to 5 audit entries, newest first (an empty array for roles that cannot read the audit log), each `{ audit_id, actor_id, entity_type, entity_id, action, details, created_at }` (the `audit_logs` columns, same shape as `GET /api/audit`) |
 | POST | `/api/exports` | any | `{ export_type, project_id, filters? }` | `{ export_id, row_count }` |
@@ -742,6 +742,7 @@ The backend resolves `scientific_name` and `taxon_rank` to `taxon_id` before cal
 | 1.1 | Section 4.3: document the four not-blank CHECKs added in `030` (`laboratories.name`, `sequencing_runs.run_code` / `platform`, `sequencing_libraries.library_code`). Affects T04, T07, T40-B. | Arvind |
 | 1.2 | Section 10: name the response fields the frontend already types. `GET /api/analyses/:id` returns `assignment_counts: { pass, warn, fail }`; `GET /api/dashboard/summary` `recent_activity[]` entries are `audit_logs` rows (up to 5, newest first, empty for roles that cannot read the audit log, same shape as `GET /api/audit`). Affects T20 and T23 (the audit, analysis and dashboard routes) and T24 to T29 (frontend types). | Arvind |
 | 1.3 | Section 3 and 4.4: add `analysis_runs.supersedes_analysis_id` (self FK, NULL, UNIQUE, not its own id) and the rule that approving a correction moves the run it supersedes to `superseded` in the same transaction; state that an analysis whose detections are all `fail` may be approved. Section 7: `approve_analysis()` description. Affects T05 (migration `040`, a follow-up migration), T16-A (`approve_analysis()`), T17-A (status trigger), T23 (analysis routes), T07 (ER diagram), T40-A. | Arvind |
+| 1.4 | Section 10: `supersedes_analysis_id` is accepted by `POST /api/analyses` and returned on every analysis row; richness rows always carry `site_id` (one row per group and site) and `sample_count` counts all samples of the group and site. Status-code list: `413 payload_too_large` for a CSV upload over 10 MB. Affects T23, T24 to T29 (the `AnalysisRun` type gains `supersedes_analysis_id: number \| null`), T40-A. | Arvind |
 
 ---
 
