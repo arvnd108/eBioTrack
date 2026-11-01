@@ -238,7 +238,9 @@ describe('Administration page', () => {
     expect(screen.queryByRole('table', { name: 'Users' })).toBeNull();
     const rows = await rowsOf('Audit entries');
     expect(rows).toHaveLength(1); // their sign-in is not project data
-    expect(rows[0].textContent).toContain('User 2');
+    // The PI's own ID is shown as "You", not "User 2".
+    expect(rows[0].textContent).toContain('You');
+    expect(rows.some((r) => /User 2\b/.test(r.textContent ?? ''))).toBe(false);
     expect(rows[0].textContent).toContain('Projects #1');
     expect(rows[0].textContent).toContain('status: active → completed');
   });

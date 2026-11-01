@@ -64,7 +64,7 @@ export function summarizeChange(entry: AuditEntry): string {
 const EMPTY: AuditFilters = {};
 
 export function AuditPanel() {
-  const { can } = useAuth();
+  const { user, can } = useAuth();
   const isAdmin = can('manage_users');
   const [draft, setDraft] = useState<AuditFilters>(EMPTY);
   const [applied, setApplied] = useState<AuditFilters>(EMPTY);
@@ -83,8 +83,10 @@ export function AuditPanel() {
     () => new Map((users.data ?? []).map((u) => [u.user_id, u.full_name])),
     [users.data],
   );
+  // Only administrators can list users; anyone else sees their own actions as "You" and the
+  // rest by user ID.
   const actorName = (id: number | null) =>
-    id === null ? 'System' : (names.get(id) ?? `User ${id}`);
+    id === null ? 'System' : (names.get(id) ?? (id === user?.user_id ? 'You' : `User ${id}`));
 
   function set<K extends keyof AuditFilters>(key: K, value: AuditFilters[K]) {
     setDraft((current) => ({ ...current, [key]: value }));
