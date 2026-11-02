@@ -5,10 +5,11 @@
 //  - Users (manage_users): administrators only;
 //  - Audit log (read_audit_log): administrators, and principal investigators for their own
 //    projects.
-// The route itself is limited to those roles (ProtectedRoute in routes.tsx).
+// The route itself is limited to those roles (ProtectedRoute in routes.tsx). The chosen tab is
+// kept in the URL (?tab=audit).
 
-import { useState } from 'react';
 import { useAuth } from '../hooks/useAuth';
+import { useQueryFilters } from '../hooks/useQueryFilters';
 import { AuditPanel } from './admin/AuditPanel';
 import { UsersPanel } from './admin/UsersPanel';
 
@@ -20,8 +21,9 @@ export default function AdministrationPage() {
     ...(can('manage_users') ? [{ id: 'users' as const, label: 'Users' }] : []),
     ...(can('read_audit_log') ? [{ id: 'audit' as const, label: 'Audit log' }] : []),
   ];
-  const [chosen, setChosen] = useState<Tab | null>(null);
-  const current = tabs.find((t) => t.id === chosen)?.id ?? tabs[0]?.id;
+  // The tab is in the URL (?tab=audit), so the dashboard can link to the audit log.
+  const [filters, setFilters] = useQueryFilters(['tab'] as const);
+  const current = tabs.find((t) => t.id === filters.tab)?.id ?? tabs[0]?.id;
 
   return (
     <section className="space-y-4">
@@ -48,7 +50,9 @@ export default function AdministrationPage() {
               id={`tab-${t.id}`}
               aria-selected={current === t.id}
               aria-controls={`panel-${t.id}`}
-              onClick={() => setChosen(t.id)}
+              onClick={() =>
+                setFilters({ tab: t.id === tabs[0]?.id ? '' : t.id }, { keepOthers: false })
+              }
               className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
                 current === t.id
                   ? 'border-emerald-700 text-emerald-800'

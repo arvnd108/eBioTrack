@@ -7,7 +7,7 @@
 
 import type {
   AnalysisRunRow,
-  AuditEntry,
+  AuditRow,
   CollectionEvent,
   DnaExtraction,
   DnaMarker,
@@ -1064,7 +1064,7 @@ export const mockAssignments: MockAssignment[] = ASSIGNMENTS.map(
 );
 
 /** The seeded database has no audit rows; entries appear as people sign in and make changes. */
-export const mockAudit: AuditEntry[] = [];
+export const mockAudit: AuditRow[] = [];
 
 export function hasAnyRole(user: User, roles: User['roles']): boolean {
   return user.roles.some((r) => roles.includes(r));

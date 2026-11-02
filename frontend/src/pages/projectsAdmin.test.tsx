@@ -229,7 +229,7 @@ describe('Administration page', () => {
     expect(first?.textContent).toContain('Signed in');
   });
 
-  it('shows a principal investigator only the audit log, with user IDs instead of names', async () => {
+  it('shows a principal investigator only the audit log, with names from the API', async () => {
     await signInAs('principal_investigator');
     await api.patch('/projects/1', { status: 'completed' });
     renderApp('/admin');
@@ -243,6 +243,22 @@ describe('Administration page', () => {
     expect(rows.some((r) => /User 2\b/.test(r.textContent ?? ''))).toBe(false);
     expect(rows[0].textContent).toContain('Projects #1');
     expect(rows[0].textContent).toContain('status: active → completed');
+  });
+
+  it('names other people in a principal investigator’s audit log (CONTRACT 1.9)', async () => {
+    await signInAs('field_researcher');
+    await api.post('/events', {
+      project_id: 1,
+      site_id: 1,
+      collected_at: '2026-10-30T08:00:00Z',
+      samples: [{ sample_type_id: 1 }],
+    });
+    await signInAs('principal_investigator');
+    renderApp('/admin');
+    const rows = await rowsOf('Audit entries');
+    const event = rows.find((r) => r.textContent?.includes('Collection events #1000'));
+    expect(event?.textContent).toContain('Farah Field');
+    expect(rows.some((r) => /User 3\b/.test(r.textContent ?? ''))).toBe(false);
   });
 
   it('filters the audit log and rejects a reversed day range', async () => {
@@ -329,6 +345,7 @@ describe('helpers', () => {
     action,
     details,
     created_at: '2026-01-01T00:00:00Z',
+    actor_name: 'Asha Admin',
   });
 
   it('summarizes audit details in the trigger’s three shapes', () => {

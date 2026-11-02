@@ -22,8 +22,10 @@
 import { query } from '../db/query.js';
 import { ROLES } from '../middleware/permissions.js';
 
-const AUDIT_COLUMNS =
-  'a.audit_id, a.actor_id, a.entity_type, a.entity_id, a.action, a.details, a.created_at';
+// actor_name (CONTRACT 1.9): the acting user's name next to actor_id, so a principal investigator,
+// who cannot list users, can show who did what; null for a system action (no actor).
+const AUDIT_COLUMNS = `a.audit_id, a.actor_id, a.entity_type, a.entity_id, a.action, a.details, a.created_at,
+  (SELECT u.full_name FROM users u WHERE u.user_id = a.actor_id) AS actor_name`;
 
 // $1 = the PI's user_id, $7 = optional project to narrow to, $8 = true for the administrator (every project). Rows are (entity_type, entity_id) pairs the PI may see.
 const PI_SCOPE = `

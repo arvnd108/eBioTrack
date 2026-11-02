@@ -27,6 +27,7 @@ import {
   type Taxon,
   type AuditAction,
   type AuditEntry,
+  type AuditRow,
   type Project,
   type ProjectRole,
   type ApiErrorDetail,
@@ -195,7 +196,7 @@ interface MockState {
   projects: Omit<Project, 'your_role'>[];
   members: MemberRow[];
   projectSites: { project_id: number; site_id: number }[];
-  audit: AuditEntry[];
+  audit: AuditRow[];
   sites: Site[];
   events: CollectionEvent[];
   samples: Sample[];
@@ -520,7 +521,7 @@ function approvedDetections(user: User) {
  * for the administrator too.
  */
 function auditFor(user: User, projectId: number | null = null): AuditEntry[] {
-  let visible: AuditEntry[];
+  let visible: AuditRow[];
   if (isAdmin(user) && projectId === null) {
     visible = state.audit;
   } else if (isAdmin(user) || hasAnyRole(user, ['principal_investigator'])) {
@@ -574,9 +575,10 @@ function auditFor(user: User, projectId: number | null = null): AuditEntry[] {
   } else {
     return [];
   }
-  return [...visible].sort(
-    (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.audit_id - a.audit_id,
-  );
+  // CONTRACT 1.9: every entry names its actor (null for a system action).
+  return [...visible]
+    .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.audit_id - a.audit_id)
+    .map((a) => ({ ...a, actor_name: userName(a.actor_id) }));
 }
 
 // ---------------------------------------------------------------------------
