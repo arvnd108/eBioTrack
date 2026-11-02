@@ -269,6 +269,27 @@ export async function activeSessionCount(observer) {
   return rows[0].n;
 }
 
+/**
+ * Wait (bounded polling) until no other session of this database is active. A closed client's
+ * backend can take a few milliseconds to finish its rollback, so "quiet" is a state to wait for,
+ * not something to read once. Resolves with the final count; rejects with the activity list.
+ */
+export async function waitUntilQuiet(observer, { timeoutMs = 5000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const n = await activeSessionCount(observer);
+    if (n === 0) return 0;
+    if (Date.now() > deadline) {
+      const activity = await observer.query(
+        `SELECT pid, state, wait_event_type, left(query, 80) AS query FROM pg_stat_activity
+          WHERE datname = current_database() AND pid <> pg_backend_pid() AND state <> 'idle'`,
+      );
+      throw new Error(`Database not quiet after ${timeoutMs} ms: ${JSON.stringify(activity.rows)}`);
+    }
+    await sleep(25);
+  }
+}
+
 // -------------------------------------------------------------------------------------------
 // Fixture factories: fresh committed rows, built through the real procedures and constraints.
 // -------------------------------------------------------------------------------------------

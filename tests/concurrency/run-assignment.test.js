@@ -10,7 +10,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, inject, it } from 'vitest';
 import { assertNo5xx, loginAll, startApi, stopApi } from '../setup/api.js';
 import {
-  activeSessionCount,
   closeSessions,
   forbiddenCodes,
   librariesOf,
@@ -23,6 +22,7 @@ import {
   shuffled,
   summarise,
   waitUntilBlocked,
+  waitUntilQuiet,
 } from '../setup/concurrency.js';
 import { closeTestPool, getPool } from '../setup/testDb.js';
 import { restoreIfCommitted } from '../setup/transactions.js';
@@ -72,6 +72,7 @@ describe.skipIf(!dbAvailable)('run assignment races', () => {
     await startApi();
     users = await loginAll();
     observer = await openObserver();
+    await waitUntilQuiet(observer); // a previous file's closed sessions may still be finishing
     sessions = await openSessions(N);
   });
   afterEach(() => assertNo5xx());
@@ -79,7 +80,7 @@ describe.skipIf(!dbAvailable)('run assignment races', () => {
     assertNo5xx();
     if (sessions) await closeSessions(sessions);
     if (observer) {
-      expect(await activeSessionCount(observer)).toBe(0);
+      expect(await waitUntilQuiet(observer)).toBe(0);
       await observer.end();
     }
     await restoreIfCommitted();

@@ -20,7 +20,6 @@ import {
   stopApi,
 } from '../setup/api.js';
 import {
-  activeSessionCount,
   analysisState,
   auditRows,
   closeSessions,
@@ -36,6 +35,7 @@ import {
   settle,
   summarise,
   waitUntilBlocked,
+  waitUntilQuiet,
 } from '../setup/concurrency.js';
 import { closeTestPool, getPool } from '../setup/testDb.js';
 import { readFixture, restoreIfCommitted } from '../setup/transactions.js';
@@ -88,6 +88,7 @@ describe.skipIf(!dbAvailable)('double approval and the other analysis races', ()
     await startApi();
     users = await loginAll();
     observer = await openObserver();
+    await waitUntilQuiet(observer); // a previous file's closed sessions may still be finishing
     sessions = await openSessions(N);
     // Reference: what exactly one approval writes to the audit log.
     const id = await newImportedAnalysis();
@@ -100,7 +101,7 @@ describe.skipIf(!dbAvailable)('double approval and the other analysis races', ()
     assertNo5xx();
     if (sessions) await closeSessions(sessions);
     if (observer) {
-      expect(await activeSessionCount(observer)).toBe(0);
+      expect(await waitUntilQuiet(observer)).toBe(0);
       await observer.end();
     }
     await restoreIfCommitted();
