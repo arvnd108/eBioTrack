@@ -50,7 +50,7 @@ Per-slice values are in the seed sections below; T12 adds the fixture-file value
 | Environmental measurements         | 32                | CONTRACT 6                                                     |
 | Detections in seeds (analyses 1-3) | 43                | `SELECT count(*) FROM taxon_assignments`                       |
 | Detections in analysis 4           | 0                 | `SELECT count(*) FROM taxon_assignments WHERE analysis_id = 4` |
-| Everything else                    | see seed sections | T31 fills in query-level values                                |
+| Everything else                    | see seed sections | Query-level expected values (T31)                              |
 
 ## Access slice seed (`database/seeds/010_seed_access.sql`)
 
@@ -260,3 +260,18 @@ Views in `database/views/access_views.sql` (apply with `psql -f` first; the runn
 | `v_user_project_access` for user 999                   | zero rows                                                                                                                            |
 | `v_project_summary` project 1                          | owner 2, members 5 (0 manager, 3 contributor, 1 viewer), sites 3, events 6, samples 13                                               |
 | `v_project_summary` project 2                          | owner 2, members 2 (0, 1, 0), sites 2, events 2, samples 4                                                                           |
+
+## Query-level expected values (T31)
+
+The suites in `tests/queries/` hold the full tables; each literal is derived by hand from the seeds, with the derivation in a comment next to it. Rule for all analytics (CONTRACT 10): approved analyses only, `qc_flag = 'pass'` only, richness counts species-rank taxa only. Dates are UTC days; `year` is the UTC year of `collected_at`.
+
+| Query                                                         | Expected on the unmodified fixture                                                                                                                                                                                                         |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `v_approved_detections`                                       | 24 rows: analysis 1 gives 14 (17 minus warn 11, 14 and fail 17), analysis 2 gives 10; taxa 7 / 8 / 11 = 15 / 3 / 6; taxa 9, 13, 15 never appear                                                                                            |
+| `analysis_taxa_at_site(site, NULL, NULL, NULL)`               | site 1: taxon 7 (4 samples, reads 76150, max .9901), taxon 8 (3, 8180); site 2: 7 (4, 53700), 11 (2, 11550); site 3: 7 (4, 33160), 11 (3, 14920); site 4: 7 (2, 9590), 11 (1, 3350); site 5: 7 (1, 2150)                                   |
+| `analysis_richness_by_site_year(NULL x4)` / `v_site_richness` | 8 site-years (site, year, observed, samples, events): 1/2025 2,3,1; 1/2026 2,2,1; 2/2025 2,2,1; 2/2026 1,2,1; 3/2025 2,2,1; 3/2026 2,2,1; 4/2026 2,2,1; 5/2026 1,2,1; change vs previous year only for 1/2026 (0), 2/2026 (-1), 3/2026 (0) |
+| `analysis_taxon_detection_history(t, NULL x3)`                | taxon 7: 15 rows; 8: 3; 11: 6; genus 6: 18; genus 10: 6; family 5, class 3, kingdom 1: 24; species 9, 13, 15 and genera 12, 14: 0                                                                                                          |
+| `analysis_taxon_lineage(7)` / `(15)` / `(1)`                  | ids 1..7 at depth 0..6 / ids 1, 2, 3, 14, 15 at depth 0..4 / one row at depth 0                                                                                                                                                            |
+| Lab and field slices                                          | see `lab.queries.test.js` (stage per library, QC problems) and `field.queries.test.js` (counts per site, latest status per event, moving average)                                                                                          |
+
+Metamorphic cases (rolled back): approving analysis 3 gives site 2/2026 = 2, site 4/2026 = 3, site 5/2026 = 2 observed taxa; detections in the draft analysis 4 change nothing.

@@ -34,3 +34,19 @@ INTEGRITY_REPORT=1 npx vitest run integrity/constraint-coverage --reporter=verbo
 **Coverage guard (`integrity/constraint-coverage.test.js`).** Reads `pg_constraint` (`pk_`, `fk_`, `uq_`, `ck_`), `uq_` unique indexes and user triggers, and fails, listing the names, when no integrity file mentions one as a plain string. Add the test, or (rarely, with a reason) an entry to `ALLOWLIST`. Stale allowlist entries fail too.
 
 **Defects and gaps.** A test written from the spec that fails because the database is wrong stays as it is, marked `it.fails(...)` with `// DEFECT: ... (owner: X)`; remove the marker when fixed. Spec silences are marked `// CONTRACT GAP`.
+
+## Query suites (`queries/`, T31)
+
+Proves that every prepared statement in `database/queries/*_queries.sql` and every view in `database/views/*.sql` returns the right rows on the fixture world. Each query has one `describe` block with: A golden values derived by hand (derivation in comments), B an oracle written differently (plain joins, filtering and grouping in JavaScript), C filters and NULL parameters, D metamorphic cases (a change inside a rolled-back transaction moves the result as predicted), E documented columns and types, F determinism (repeat, generic and custom plan, several session time zones for date-sensitive cases).
+
+```bash
+npm run test:queries                                    # the four slice files, the guard
+npx vitest run queries/analysis --reporter=verbose      # one slice
+QUERY_REPORT=1 npx vitest run queries/query-coverage    # name -> file table
+```
+
+**Helpers (`setup/queries.js`).** `openQuerySession(slice)` runs the committed file on a dedicated connection (prepared statements are per session) and returns `execute(name, params)`, `columns`, `queryView(view, { where, params, orderBy })`, `sql` for oracle SQL, and `rollback(fn)`. Make fixture changes inside `session.rollback(async (db) => ...)` so they run on the same connection as the statements; do not use `withRollback`, which takes a different connection. `acrossSettings(session, check, { zones })` repeats a check per time zone and plan mode. Types: bigint and numeric are strings, int4 a number, `date` the `YYYY-MM-DD` text, timestamptz an ISO UTC string.
+
+**Coverage guard (`queries/query-coverage.test.js`).** Reads the PREPARE names and view names from the SQL and fails, listing them, when no `describe` title in the query suites contains one. Add the block or (rarely, with a reason) an `ALLOWLIST` entry.
+
+**Defects and gaps.** As for integrity: `it.fails(...)` with `// DEFECT:` and `// CONTRACT GAP` markers. The helper has a self-test in `smoke/queries-helpers.smoke.test.js`.
