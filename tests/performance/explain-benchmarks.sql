@@ -2,19 +2,27 @@
 -- Purpose: EXPLAIN (ANALYZE, BUFFERS) before and after indexes
 
 -- ============================================================================================
--- T19-C: Access, Projects & Audit (results: database/indexes/access_indexes.sql)
--- ============================================================================================
--- Runnable: re-run the EXPLAINs of issue #39 with
+-- By-hand version of the benchmark. The repeatable one is `npm run bench` (run-benchmarks.js,
+-- same statements and parameter lookups from benchmarks.config.js, median of 5, checksums, write
+-- cost with triggers enabled, results in performance/results/). This file prints one plan of every
+-- statement in text form, for reading:
 --
 --   cd tests && npm run volume:load -- --scale medium
---   psql "$TEST_DATABASE_URL" -f performance/explain-benchmarks.sql      (from tests/, or adjust the \i path)
+--   psql "$TEST_DATABASE_URL" -f performance/explain-benchmarks.sql      (run from tests/)
 --
--- Order matters: take the "before" plans on the unindexed database FIRST, then apply
--- database/indexes/access_indexes.sql, run VACUUM (ANALYZE) project_members, audit_logs (outside
--- a transaction), and run this file again for the "after" plans. For a figure, repeat each
--- statement: one warm-up and the median of 5 (the file prints one run of each). Clean up with
--- `npm run volume:clean` and the DROP INDEX lines at the end of access_indexes.sql.
--- The ids are looked up from the data (hot = most rows, cold = 3 rows), never hard-coded.
+-- Four sections: T19-C Access, T19-D Field, T19-A Analysis, T19-B Laboratory. Order matters: take
+-- the "before" plans on the database WITHOUT the final indexes first (the DROP INDEX lines at the
+-- end of each database/indexes/*.sql file, then VACUUM (ANALYZE) outside a transaction), apply the
+-- index files, VACUUM (ANALYZE) again and run this file again for the "after" plans. For a figure,
+-- repeat each statement: one warm-up and the median of 5 (this file prints one run of each).
+-- The ids are looked up from the data (hot = most rows), never hard-coded.
+--
+-- Data preparation (test database only, idempotent): the Field and Analysis sections add rows the
+-- volume generator does not create (4 readings per volume event; every 5th volume analysis
+-- approved). Both are removed again at the end of this file, so `npm run volume:clean` does not
+-- stop on a foreign key; `\set keep_prep 1` before running keeps them (then remove them with
+-- `npm run bench -- --cleanup`).
+-- ============================================================================================
 
 \set ON_ERROR_STOP on
 \pset pager off
@@ -53,6 +61,8 @@ FROM audit_logs WHERE entity_type = 'samples' AND entity_id = :hot_sample \gset
 
 \echo BQ1
 EXPLAIN (ANALYZE, BUFFERS) SELECT project_id FROM project_members WHERE user_id = :hot_user;
+\echo BQ1b (redundancy: members of one project use pk_project_members)
+EXPLAIN (ANALYZE, BUFFERS) SELECT user_id FROM project_members WHERE project_id = :hot_project;
 \echo BQ2
 EXPLAIN (ANALYZE, BUFFERS) EXECUTE access_user_projects(:hot_user, NULL);
 \echo BQ3a
@@ -73,19 +83,18 @@ EXPLAIN (ANALYZE, BUFFERS) SELECT audit_id, entity_type, entity_id, action, crea
 -- ============================================================================================
 -- T19-D: Field & Samples (results: database/indexes/field_indexes.sql)
 -- ============================================================================================
--- Same volume load as above. The volume generator creates no environmental_measurements, so
--- the T14 time-series query would have nothing to read: this section first adds 4 deterministic
--- readings (temperature_c, ph, dissolved_oxygen_mg_l, turbidity_ntu) to every volume event, once.
--- Their measurement_id is event_id * 4 + k (4 000 000 and up). `npm run volume:clean` does not
--- know these rows and would stop on the foreign key, so remove them FIRST:
---   DELETE FROM environmental_measurements WHERE measurement_id >= 1000000;
--- Order: take the "before" plans FIRST, then apply database/indexes/field_indexes.sql, run
--- VACUUM (ANALYZE) collection_events (outside a transaction) and run this section again for the
--- "after" plans. For a figure, repeat each statement: one warm-up and the median of 5. The
--- experimental indexes (text_pattern_ops, samples(event_id), sample_status_history(sample_id))
--- are listed in field_indexes.sql; create and drop them by hand around the FQ2 and FQ5 plans.
+-- Index: idx_collection_events_site_id_collected_at. Improved: FQ3a-c, FQ4a. Expected unchanged:
+-- FQ1 (unique index), FQ3d and FQ4b (leading-column rule, reads every event), FQ5c.
+-- The T19-D follow-up indexes (samples(event_id), sample_status_history(sample_id), the
+-- text_pattern_ops prefix index) are NOT part of database/indexes/ yet, so FQ2 and FQ5a/b/d are
+-- measured as "no index covers it"; once an index file adds them the statements below show the gain
+-- without an edit (and benchmarks.config.js names the statements that serve them).
+-- The volume generator creates no environmental_measurements, so the T14 time-series query would
+-- have nothing to read: this section first adds 4 deterministic readings (temperature_c, ph,
+-- dissolved_oxygen_mg_l, turbidity_ntu) to every volume event, once (test database only). Their
+-- measurement_id is event_id * 4 + k (4 000 000 and up); they are removed at the end of this file.
 
-SELECT (SELECT count(*) FROM environmental_measurements) < 10000
+SELECT NOT EXISTS (SELECT 1 FROM environmental_measurements WHERE measurement_id >= 1000000)
    AND EXISTS (SELECT 1 FROM collection_events WHERE event_id >= 1000000) AS need_measurements \gset
 \if :need_measurements
     INSERT INTO environmental_measurements (measurement_id, event_id, parameter, value, unit)
@@ -100,18 +109,35 @@ SELECT (SELECT count(*) FROM environmental_measurements) < 10000
     VACUUM (ANALYZE) environmental_measurements;
 \endif
 
+SELECT EXISTS (SELECT 1 FROM environmental_measurements WHERE measurement_id >= 1000000) AS ok \gset
+\if :ok
+\else
+    \echo STOP T19-D: no volume events; run npm run volume:load first.
+    \quit
+\endif
+
 -- Looked-up parameters (hot = the most rows).
 SELECT site_id AS hot_site FROM collection_events WHERE event_id >= 1000000
 GROUP BY site_id ORDER BY count(*) DESC, site_id LIMIT 1 \gset
 SELECT event_id AS hot_event FROM samples WHERE event_id >= 1000000
 GROUP BY event_id ORDER BY count(*) DESC, event_id LIMIT 1 \gset
-SELECT sample_code AS some_code FROM samples WHERE sample_id >= 1000000 ORDER BY sample_id OFFSET 50000 LIMIT 1 \gset
+SELECT sample_code AS some_code FROM samples WHERE sample_id >= 1000000
+ORDER BY sample_id OFFSET (SELECT count(*) / 2 FROM samples WHERE sample_id >= 1000000) LIMIT 1 \gset
 SELECT date_trunc('year', min(collected_at)) AS y0,
        date_trunc('year', min(collected_at)) + interval '1 year' AS y1,
        date_trunc('month', min(collected_at) + interval '1 month') AS m0,
        date_trunc('month', min(collected_at) + interval '2 months') AS m1
 FROM collection_events WHERE site_id = :hot_site \gset
+-- Year prefixes of the sample codes: the rarest, the one nearest 12.4% of the table, the largest.
+WITH y AS (SELECT substr(sample_code, 1, 7) AS p, count(*) AS n FROM samples GROUP BY 1),
+     t AS (SELECT sum(n) AS total FROM y)
+SELECT (SELECT p || '%' FROM y ORDER BY n, p LIMIT 1) AS pfx_rare,
+       (SELECT p || '%' FROM y, t ORDER BY abs(n - 0.124 * total), p LIMIT 1) AS pfx_mid,
+       (SELECT p || '%' FROM y ORDER BY n DESC, p LIMIT 1) AS pfx_big \gset
+SELECT regexp_replace(sample_code, '-[0-9]+$', '') || '%' AS pfx_event
+FROM samples WHERE event_id = :hot_event ORDER BY sample_id LIMIT 1 \gset
 \echo hot site :hot_site, hot event :hot_event, code :some_code, year :y0 to :y1, month :m0 to :m1
+\echo prefixes :pfx_rare, :pfx_mid, :pfx_big, :pfx_event
 
 -- Queries 1 to 3 of database/queries/field_queries.sql (PREPARE; their example EXECUTE output is
 -- discarded).
@@ -121,14 +147,14 @@ FROM collection_events WHERE site_id = :hot_site \gset
 
 \echo FQ1 (exact code, unique index samples_sample_code_key)
 EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM samples WHERE sample_code = :'some_code';
-\echo FQ2a (prefix, 10 rows)
-EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM samples WHERE sample_code LIKE 'EB-2026%';
-\echo FQ2b (prefix, 12.4% of the table)
-EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM samples WHERE sample_code LIKE 'EB-2020%';
-\echo FQ2c (prefix, 87.6% of the table)
-EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM samples WHERE sample_code LIKE 'EB-2019%';
+\echo FQ2a (prefix, rarest year; no index covers it)
+EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM samples WHERE sample_code LIKE :'pfx_rare';
+\echo FQ2b (prefix, ~12% of the table)
+EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM samples WHERE sample_code LIKE :'pfx_mid';
+\echo FQ2c (prefix, ~88% of the table)
+EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM samples WHERE sample_code LIKE :'pfx_big';
 \echo FQ2d (prefix, the samples of one event)
-EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM samples WHERE sample_code LIKE 'EB-20190101-1000000%';
+EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM samples WHERE sample_code LIKE :'pfx_event';
 \echo FQ3a (site and one year)
 EXPLAIN (ANALYZE, BUFFERS) SELECT event_id, site_id, collected_at FROM collection_events
 WHERE site_id = :hot_site AND collected_at >= :'y0' AND collected_at < :'y1' ORDER BY collected_at;
@@ -145,34 +171,42 @@ WHERE collected_at >= :'m0' AND collected_at < :'m1' ORDER BY collected_at;
 EXPLAIN (ANALYZE, BUFFERS) EXECUTE field_readings_moving_average('temperature_c', :hot_site, NULL);
 \echo FQ4b (T14 Q3, all sites)
 EXPLAIN (ANALYZE, BUFFERS) EXECUTE field_readings_moving_average('temperature_c', NULL, NULL);
-\echo FQ5a (Q2, one event; not indexed)
+\echo FQ5a (Q2, one event; no index covers it)
 EXPLAIN (ANALYZE, BUFFERS) EXECUTE field_event_samples_latest_status(:hot_event);
-\echo FQ5b (samples of one event; not indexed)
+\echo FQ5b (samples of one event; no index covers it)
 EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM samples WHERE event_id = :hot_event;
 \echo FQ5c (Q1, all sites)
 EXPLAIN (ANALYZE, BUFFERS) EXECUTE field_site_sample_counts(NULL);
-\echo FQ5d (v_site_sample_summary, one site; not indexed)
+\echo FQ5d (v_site_sample_summary, one site; no index covers it)
 EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM v_site_sample_summary WHERE site_id = :hot_site;
 
 -- ============================================================================================
 -- T19-A: Analysis, Taxonomy & Analytics (results: database/indexes/analysis_indexes.sql)
 -- ============================================================================================
--- Same order as above: take the "before" plans on the unindexed database FIRST, apply
--- database/indexes/analysis_indexes.sql, run VACUUM (ANALYZE) taxon_assignments (outside a
--- transaction), and run this section again. For a figure: one warm-up, then the median of 5.
--- The volume generator creates every analysis as `imported`, but all of these queries read
--- approved runs only, so before measuring, approve some (test database only), e.g.
---   ALTER TABLE analysis_runs DISABLE TRIGGER trg_analysis_runs_audit;
---   UPDATE analysis_runs SET status = 'approved', approved_by = 2, approved_at = now()
---    WHERE analysis_id >= 1000000 AND analysis_id % 5 = 0;
---   ALTER TABLE analysis_runs ENABLE TRIGGER trg_analysis_runs_audit;
--- and undo it before `npm run volume:clean` (set status back to 'imported', approved_by and
--- approved_at to NULL, with the immutability triggers disabled for that statement).
+-- Indexes: idx_taxon_assignments_taxon_id_qc_flag, idx_taxon_assignments_library_id. Improved: BQ1a-c,
+-- BQ3, BQ4b, BQ5a-b, BQ7a. Expected unchanged: BQ2a-b, BQ4a, BQ6 and BQ8 (unique constraint index), BQ7b.
+-- The volume generator creates every analysis as `imported`, but all of these queries read approved
+-- runs only, so every 5th volume analysis is approved first (test database only, once). The audit
+-- trigger is off for that statement, and approved_at is a fixed timestamp so the result is
+-- deterministic. Undone at the end of this file (status back to 'imported', approved_by and
+-- approved_at NULL, with the immutability and status triggers off for that statement only).
 
-SELECT count(*) > 0 AS ok FROM v_approved_detections \gset
+SELECT NOT EXISTS (SELECT 1 FROM analysis_runs WHERE analysis_id >= 1000000 AND status = 'approved')
+   AND EXISTS (SELECT 1 FROM analysis_runs WHERE analysis_id >= 1000000) AS need_approval \gset
+\if :need_approval
+    BEGIN;
+    ALTER TABLE analysis_runs DISABLE TRIGGER trg_analysis_runs_audit;
+    UPDATE analysis_runs SET status = 'approved', approved_by = 2, approved_at = timestamptz '2026-01-01 00:00:00+00'
+     WHERE analysis_id >= 1000000 AND analysis_id % 5 = 0 AND status = 'imported';
+    ALTER TABLE analysis_runs ENABLE TRIGGER trg_analysis_runs_audit;
+    COMMIT;
+    VACUUM (ANALYZE) analysis_runs;
+\endif
+
+SELECT EXISTS (SELECT 1 FROM analysis_runs WHERE analysis_id >= 1000000 AND status = 'approved') AS ok \gset
 \if :ok
 \else
-    \echo STOP T19-A: no approved detections; approve some volume analyses first (see above).
+    \echo STOP T19-A: no approved volume analyses; run npm run volume:load first.
     \quit
 \endif
 
@@ -220,3 +254,66 @@ EXPLAIN (ANALYZE, BUFFERS) SELECT ta.taxon_id, count(*) FROM taxon_assignments t
 WHERE ar.status = 'approved' AND ta.qc_flag = 'pass' GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 5;
 \echo BQ8 (redundancy check: count for one analysis)
 EXPLAIN (ANALYZE, BUFFERS) SELECT count(*) FROM taxon_assignments WHERE analysis_id = :big_analysis;
+
+-- ============================================================================================
+-- T19-B: Laboratory & Sequencing (results: database/indexes/lab_indexes.sql)
+-- ============================================================================================
+-- Indexes: idx_sequencing_libraries_run_id, idx_dna_extractions_batch_id. Improved: BQ1, BQ2a.
+-- Expected unchanged: BQ2b (aggregates every batch), BQ3a and BQ3b (the unique index on
+-- (sample_id, attempt_number) already serves them).
+
+SELECT EXISTS (SELECT 1 FROM sequencing_libraries WHERE library_id >= 1000000) AS ok \gset
+\if :ok
+\else
+    \echo STOP T19-B: no volume libraries; run npm run volume:load first.
+    \quit
+\endif
+
+SELECT run_id AS big_run FROM sequencing_libraries GROUP BY run_id ORDER BY count(*) DESC, run_id LIMIT 1 \gset
+-- A batch of typical size: the one whose extraction count is nearest the median.
+WITH b AS (SELECT batch_id, count(*) AS n FROM dna_extractions GROUP BY 1),
+     m AS (SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY n) AS med FROM b)
+SELECT batch_id AS typ_batch FROM b, m ORDER BY abs(n - med), batch_id LIMIT 1 \gset
+SELECT lab_id AS busy_lab FROM extraction_batches GROUP BY lab_id ORDER BY count(*) DESC, lab_id LIMIT 1 \gset
+SELECT sample_id AS mid_sample FROM dna_extractions WHERE extraction_id >= 1000000
+ORDER BY extraction_id OFFSET (SELECT count(*) / 2 FROM dna_extractions WHERE extraction_id >= 1000000) LIMIT 1 \gset
+\echo big run :big_run, typical batch :typ_batch, lab :busy_lab, sample :mid_sample
+
+-- Queries Q1 and Q2 of database/queries/lab_queries.sql (PREPARE; their example EXECUTE output is
+-- discarded). The file starts with DEALLOCATE ALL, which also drops the sections above.
+\o /dev/null
+\i ../database/queries/lab_queries.sql
+\o
+
+\echo BQ1 (Q2, the run with the most libraries)
+EXPLAIN (ANALYZE, BUFFERS) EXECUTE q2_run_libraries_with_samples(:big_run);
+\echo BQ2a (extractions of one batch)
+EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM dna_extractions WHERE batch_id = :typ_batch;
+\echo BQ2b (Q1, one lab: aggregates every batch, not helped)
+EXPLAIN (ANALYZE, BUFFERS) EXECUTE q1_extraction_qc_by_batch(:busy_lab);
+\echo BQ3a (redundancy: extractions of one sample use uq_dna_extractions_sample_attempt)
+EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM dna_extractions WHERE sample_id = :mid_sample;
+\echo BQ3b (v_lab_pipeline_status, one sample)
+EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM v_lab_pipeline_status WHERE sample_id = :mid_sample;
+
+-- ============================================================================================
+-- Cleanup of the rows this file added (skipped when `\set keep_prep 1` was given)
+-- ============================================================================================
+\if :{?keep_prep}
+    \echo Keeping the prepared rows (remove with: npm run bench -- --cleanup)
+\else
+    DELETE FROM environmental_measurements WHERE measurement_id >= 1000000;
+    BEGIN;
+    ALTER TABLE analysis_runs DISABLE TRIGGER trg_analysis_runs_audit;
+    ALTER TABLE analysis_runs DISABLE TRIGGER trg_analysis_runs_immutable;
+    ALTER TABLE analysis_runs DISABLE TRIGGER trg_analysis_runs_status;
+    UPDATE analysis_runs SET status = 'imported', approved_by = NULL, approved_at = NULL
+     WHERE analysis_id >= 1000000 AND status = 'approved' AND approved_by = 2
+       AND approved_at = timestamptz '2026-01-01 00:00:00+00';
+    ALTER TABLE analysis_runs ENABLE TRIGGER trg_analysis_runs_audit;
+    ALTER TABLE analysis_runs ENABLE TRIGGER trg_analysis_runs_immutable;
+    ALTER TABLE analysis_runs ENABLE TRIGGER trg_analysis_runs_status;
+    COMMIT;
+    VACUUM (ANALYZE) environmental_measurements, analysis_runs;
+    \echo Removed the prepared measurements and analysis approvals.
+\endif
