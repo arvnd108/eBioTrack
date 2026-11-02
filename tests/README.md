@@ -50,3 +50,36 @@ QUERY_REPORT=1 npx vitest run queries/query-coverage    # name -> file table
 **Coverage guard (`queries/query-coverage.test.js`).** Reads the PREPARE names and view names from the SQL and fails, listing them, when no `describe` title in the query suites contains one. Add the block or (rarely, with a reason) an `ALLOWLIST` entry.
 
 **Defects and gaps.** As for integrity: `it.fails(...)` with `// DEFECT:` and `// CONTRACT GAP` markers. The helper has a self-test in `smoke/queries-helpers.smoke.test.js`.
+
+## Transaction suites (`transactions/`, T32)
+
+Proves, with real commits and rollbacks over real connections, that the multi-step operations are atomic, consistent, isolated and durable: the import and approval of detections (`import-rollback.test.js`), project onboarding (`project-create.test.js`) and the Lab and Field scenarios (`scenario-parity.test.js`). They are the automated twin of `database/transactions/*.sql`; unlike the integrity and query suites they COMMIT.
+
+```bash
+npm run test:transactions
+npx vitest run transactions/project --reporter=verbose
+```
+
+| Scenario                                                                         | T18 script part it mirrors               |
+| -------------------------------------------------------------------------------- | ---------------------------------------- |
+| Analysis: valid import commits 14, approval is one unit, audit rows              | `analysis_transaction.sql` Part 1        |
+| Analysis: the bad row and the injected-error matrix leave nothing                | Part 2, Part 3                           |
+| Analysis: savepoint recovery (bad file, then the good one)                       | Part 4                                   |
+| Access: onboarding commits 1 project, 4 members, 2 sites, 7 audit rows           | `access_transaction.sql` Part 1          |
+| Access: second owner, unknown site or member, procedure errors, injected failure | Part 2, Part 3                           |
+| Access: savepoint around one bad member                                          | Part 4                                   |
+| Lab: run with libraries, failed-QC extraction, already-booked extraction         | `lab_transaction.sql` Parts 1, 3, 4      |
+| Field: event + measurements + samples, bad sample undoes the event               | `field_transaction.sql` Parts 1, 2, 3, 4 |
+
+**Helper (`setup/transactions.js`).**
+
+- `runTransaction(fn, { actorId })` mirrors the backend `withTransaction` line by line (the table is in the file's header comment): the original error is rethrown unchanged, so `expect(err).toBe(injected)` works.
+- `observer()` is a second autocommit connection (READ COMMITTED, `lock_timeout` 5 s) that never joins the transaction. It proves "invisible before COMMIT, visible after, gone after ROLLBACK".
+- `snapshot(client)` returns row counts of every table, max primary keys and md5 fingerprints of the tables under test; "nothing happened" means snapshot before equals snapshot after. Never compare generated ids for equality.
+- `committed()` marks a test as committing; `restoreIfCommitted()` (in `afterAll`) reseeds. Group committing scenarios in one `describe` with a `beforeAll` commit and many read-only assertions, so a file reseeds once or twice. The last `afterAll` of every file checks the seeded counts (2 projects, 17 samples, 43 detections, 0 audit rows).
+- `assertGlobalInvariants(client)` runs after every test: one owner per project, approved analyses have approver and time, draft analyses have no detections, history matches sample status, audit details are objects.
+- `csvToRows(csvText, client)` builds the payload the backend service builds from a CSV.
+
+**Rules.** Audit rows are counted by `audit_id > baseline`, never as absolute numbers. Assert the first error's SQLSTATE and a message fragment (a later `25P02` is a consequence). Concurrency races are T34, not here. The helper has a self-test in `smoke/transactions-helpers.smoke.test.js`.
+
+`applyGrants()` (in `setup/transactions.js`) runs `database/roles/grants.sql`. Neither `migrate.js` nor CI applies that file and `smoke/harness` recreates the schema, so any test that uses the `ebiotrack_app` role applies it first.
