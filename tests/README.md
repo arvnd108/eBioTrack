@@ -106,3 +106,38 @@ Everything goes through the real Express app over HTTP (`fetch` against `http.cr
 - Passwords, cookies and session ids are never logged; `session-auth` scans every observed body for hashes and the dev password.
 
 **Findings** are listed in the PR: defects are `it.fails` with `// DEFECT: ... (owner: A)`, spec silence is a `// CONTRACT GAP` comment.
+
+## Concurrency suites (`concurrency/`, T34)
+
+Every race is run twice: against the stored functions with real parallel database connections (the guarantee), and through the HTTP API with parallel requests (the guarantee as the product exposes it: `409`/`422` instead of a `500`). Assertions are invariants (exactly one success, the documented SQLSTATE for every loser, the final state), never timing or "who wins".
+
+| File                      | Races                                                                                                                                                    |
+| ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `double-approval.test.js` | approve x20, approve vs reject, approve vs insert of a detection (both lock orders), double import, supersession, REPEATABLE READ, deadlock check        |
+| `run-assignment.test.js`  | one extraction on N runs, overlapping lists in opposite order, create vs assign, run leaving `planned`, QC verdict vs booking, isolation levels, `55P03` |
+| `other-races.test.js`     | helper self-test, same-title projects, owner deactivated mid-creation (`FOR SHARE`), parallel `register_sample`, parallel sample status                  |
+
+**Claim -> proof.**
+
+| Claim (source)                                                                          | Test                                                                    |
+| --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| 20 approvals: 1 success, 19 `EB003`, one audit footprint (analysis header, T18 Part 6)  | `double-approval` A, API "10 parallel approves"                         |
+| The loser really waits on the winner's row lock                                         | `double-approval` B, `run-assignment` C (hold + `waitUntilBlocked(by)`) |
+| Approved result never changes under the approver (`FOR SHARE` in the detection trigger) | `double-approval` D                                                     |
+| Correction locks itself, then the old run; old run superseded once                      | `double-approval` F, H                                                  |
+| Extraction rows locked `FOR UPDATE` in ascending id order: no deadlock                  | `run-assignment` B                                                      |
+| One planned/running run per extraction; losers `EB002`, nothing partial                 | `run-assignment` A, D, API                                              |
+| REPEATABLE READ refused, SERIALIZABLE safe, READ COMMITTED never `40001`                | `run-assignment` F, `double-approval` G                                 |
+| Same title: one wins, `23505` (409 `duplicate`)                                         | `other-races` Access                                                    |
+| Owner row `FOR SHARE`: no deactivation between the checks and the membership insert     | `other-races` "owner deactivated"                                       |
+| Event row `FOR UPDATE`: distinct, gapless sample codes                                  | `other-races` Field                                                     |
+
+**Helper (`setup/concurrency.js`).**
+
+- `openSessions(n)` opens `n` dedicated `pg.Client`s (not the pool) at READ COMMITTED with `lock_timeout` 10 s and `statement_timeout` 20 s; close them in `finally` / `afterAll` (`closeSessions`). Keep `n` at or below 20 (`max_connections` is 100).
+- `race(sessions, calls, { actor, isolation })`: every session `BEGIN`s and sets the actor first, then one shared promise releases all calls in the same tick; COMMIT after a success, ROLLBACK after an error. Results are `{ ok, value }` or `{ ok: false, code, message, detail }`; `summarise()` and `forbiddenCodes()` (`40P01`, `40001`) read them.
+- Hold pattern: `await a.begin(2); await a.query(...)` keeps A's locks; start B with `settle(...)`, `await waitUntilBlocked(observer, b.pid, { by: a.pid })` (bounded polling of `pg_stat_activity` and `pg_blocking_pids`, fails with the activity list), then `a.commit()` or `a.rollback()`.
+- Fixture factories create fresh committed rows through the real procedures: `newImportedAnalysis`, `newApprovedAnalysis`, `newDraftAnalysis`, `newPassedExtractions(n, { qc })`, `newEvent`. `prng()`/`shuffled()` replace `Math.random`.
+- Everything commits, so each file ends with `restoreIfCommitted()` (reseed). The API session cookies die with the reseed: each file logs in again in `beforeAll`.
+
+**Proving the tests can fail.** `setupTestDatabase` re-applies `database/procedures/*.sql` on every run, so a broken variant must be edited into the repo file (never committed), the suite run, then `git checkout` the file. Removing `FOR UPDATE` from `fn_analysis_lock` turns 11 `double-approval` tests red; locking extractions in the caller's order (no sort) turns both `B` tests red with `40P01`.
