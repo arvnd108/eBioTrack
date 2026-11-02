@@ -83,3 +83,26 @@ npx vitest run transactions/project --reporter=verbose
 **Rules.** Audit rows are counted by `audit_id > baseline`, never as absolute numbers. Assert the first error's SQLSTATE and a message fragment (a later `25P02` is a consequence). Concurrency races are T34, not here. The helper has a self-test in `smoke/transactions-helpers.smoke.test.js`.
 
 `applyGrants()` (in `setup/transactions.js`) runs `database/roles/grants.sql`. Neither `migrate.js` nor CI applies that file and `smoke/harness` recreates the schema, so any test that uses the `ebiotrack_app` role applies it first.
+
+## Authorization suites (`authorization/`, T33)
+
+Everything goes through the real Express app over HTTP (`fetch` against `http.createServer(app).listen(0)`) with the real session cookie, on the test database. `setup/api.js` refuses to start unless `NODE_ENV=test` and the backend database is the test database.
+
+| File                        | What it proves                                                                                                                         |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `permission-matrix.test.js` | CONTRACT 9 as a typed table, six roles x every CONTRACT 10 endpoint (denied is exactly 403), multi-role users, administrator bypass    |
+| `session-auth.test.js`      | 401 everywhere, login errors and lockout (429), cookie flags, fixation, logout, immediate effect of deactivation and role change, CSRF |
+| `project-access.test.js`    | Membership: non-member 404, viewer read-only, manager and owner rules, scoped lists, audit scope, project creation                     |
+| `data-scope.test.js`        | IDOR across projects, exports of the requester only, unapproved detections, mass assignment, D17 approver rule, hostile input, verbs   |
+
+**Matrix source.** `MATRIX` in `setup/api.js` is typed by hand from CONTRACT section 9 (it is never imported from `backend/src/middleware/permissions.js`, which is the thing under test). Coverage guards fail if a CONTRACT 10 endpoint, a mounted route or a matrix row has no counterpart; the only allowlisted route is `GET /api/health`. To add an endpoint, add a row to `ENDPOINTS` with its action and a probe that passes the gate and then fails validation, so no data changes.
+
+**Helper (`setup/api.js`).**
+
+- `startApi()` / `stopApi()` start and close the in-process server; one pair per file, inside a single `describe.skipIf(!dbAvailable)`.
+- `loginAll()` returns one client per seeded role (`users.viewer.get(...)`); `anonymous()` has no cookie. Clients keep a cookie jar, `opts.cookie` overrides it.
+- `assertNo5xx()` (in `afterEach` and `afterAll`) fails on any 5xx seen since the last call.
+- `addGlobalRole`, `setProjectRole`, `setActive`, `expireSessions` change the world by SQL and mark the test as committing; `restoreIfCommitted()` reseeds in `afterAll`. `limiter().clear()` ends a lockout window without waiting.
+- Passwords, cookies and session ids are never logged; `session-auth` scans every observed body for hashes and the dev password.
+
+**Findings** are listed in the PR: defects are `it.fails` with `// DEFECT: ... (owner: A)`, spec silence is a `// CONTRACT GAP` comment.
