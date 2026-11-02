@@ -8,7 +8,13 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { api } from '../services/apiClient';
 import { renderApp, resetMock, signInAs } from '../test/renderApp';
 import type { AuditEntry } from '../types';
-import { activityLink, describeAction, describeDetail, entityLabel } from './dashboard/activity';
+import {
+  activityLink,
+  describeAction,
+  describeDetail,
+  entityLabel,
+  withoutDuplicateDecisions,
+} from './dashboard/activity';
 
 beforeEach(resetMock);
 afterEach(cleanup);
@@ -249,9 +255,7 @@ describe('Dashboard', () => {
       'Approved detections0Approved analyses, QC flag pass',
     ]);
     // Creating the project also made its creator the owner, in the same transaction.
-    expect(activity()[0].textContent).toMatch(
-      /^You added a member to project #1000user #2 as owner/,
-    );
+    expect(activity()[0].textContent).toMatch(/^You added a member to project #1000You as owner/);
     expect(activity()[1].textContent).toMatch(/^You created project #1000Chambal Pilot/);
   });
 
@@ -333,6 +337,38 @@ describe('activity lines', () => {
     expect(describeAction(entry({ action: 'update', entity_type: 'project_sites' }))).toBe(
       'changed the sites of project #7',
     );
+  });
+
+  it('names the member of a membership row when it can, else shows the id', () => {
+    const added = entry({
+      action: 'insert',
+      entity_type: 'project_members',
+      details: { user_id: { new: 5 }, project_role: { new: 'analyst' } },
+    });
+    expect(describeDetail(added)).toBe('user #5 as analyst');
+    expect(describeDetail(added, (id) => (id === 5 ? 'Anil Analyst' : 'x'))).toBe(
+      'Anil Analyst as analyst',
+    );
+  });
+
+  it('drops the status change an approval or rejection already reports', () => {
+    const changed = (id: number, to: string, audit_id: number) =>
+      entry({
+        audit_id,
+        entity_type: 'analysis_runs',
+        entity_id: id,
+        action: 'update',
+        details: { status: { old: 'imported', new: to } },
+      });
+    const feed = [
+      entry({ audit_id: 1, entity_type: 'analysis_runs', entity_id: 3, action: 'approve' }),
+      changed(3, 'approved', 2),
+      changed(4, 'approved', 3), // no approve entry for #4 in the feed: stays
+      entry({ audit_id: 4, entity_type: 'analysis_runs', entity_id: 5, action: 'reject' }),
+      changed(5, 'rejected', 5),
+      changed(5, 'imported', 6), // an unrelated change to #5: stays
+    ];
+    expect(withoutDuplicateDecisions(feed).map((e) => e.audit_id)).toEqual([1, 3, 4, 6]);
   });
 
   it('summarises the details', () => {

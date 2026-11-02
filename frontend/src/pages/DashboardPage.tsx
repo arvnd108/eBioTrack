@@ -20,7 +20,12 @@ import { useProjectIndex, useUserNames } from '../hooks/useLookups';
 import { idParam, useQueryFilters } from '../hooks/useQueryFilters';
 import type { DashboardSummary, PageMeta } from '../types';
 import { formatDateTime, humanize } from '../utils/format';
-import { activityLink, describeAction, describeDetail } from './dashboard/activity';
+import {
+  activityLink,
+  describeAction,
+  describeDetail,
+  withoutDuplicateDecisions,
+} from './dashboard/activity';
 
 function Tile({
   label,
@@ -301,12 +306,12 @@ export default function DashboardPage() {
                       aria-label="Recent activity"
                       className="divide-y divide-slate-100 rounded-lg border border-slate-200 bg-white"
                     >
-                      {data.recent_activity.map((entry) => {
+                      {withoutDuplicateDecisions(data.recent_activity).map((entry) => {
                         const link = activityLink(entry, {
                           canOpenAnalyses: canAnalyse,
                           canManageUsers: can('manage_users'),
                         });
-                        const detail = describeDetail(entry);
+                        const detail = describeDetail(entry, (id) => names(id));
                         const what = (
                           <>
                             <span className="font-medium">

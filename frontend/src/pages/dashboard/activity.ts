@@ -84,8 +84,14 @@ export function describeAction(entry: AuditEntry): string {
   return `${VERBS[entry.action]} ${entityLabel(entry.entity_type)} #${entry.entity_id}`;
 }
 
-/** A short detail: the changed columns of an update, the name of a new row, a reason. */
-export function describeDetail(entry: AuditEntry): string | null {
+/**
+ * A short detail: the changed columns of an update, the name of a new row, a reason.
+ * `personName` turns a user id into a name for membership rows; without it they read "user #3".
+ */
+export function describeDetail(
+  entry: AuditEntry,
+  personName?: (userId: number) => string,
+): string | null {
   const details = entry.details;
   if (!details) return null;
   if (entry.action === 'reject' && typeof details.reason === 'string') {
@@ -110,7 +116,9 @@ export function describeDetail(entry: AuditEntry): string | null {
   const side = entry.action === 'delete' ? 'old' : 'new';
   const value = (key: string) => columns[key]?.[side];
   if (entry.entity_type === 'project_members' && value('user_id') !== undefined) {
-    return `user #${show(value('user_id'))} as ${show(value('project_role'))}`;
+    const who = value('user_id');
+    const person = typeof who === 'number' && personName ? personName(who) : `user #${show(who)}`;
+    return `${person} as ${show(value('project_role'))}`;
   }
   if (entry.entity_type === 'project_sites' && value('site_id') !== undefined) {
     return `site #${show(value('site_id'))}`;
@@ -155,4 +163,27 @@ export function activityLink(
     default:
       return null;
   }
+}
+
+/**
+ * An approval is audited twice: the trigger's column change (status -> approved) and the
+ * procedure's own `approve` / `reject` entry. The feed keeps the procedure's entry, which says
+ * more, and drops the status change it caused.
+ */
+export function withoutDuplicateDecisions(entries: AuditEntry[]): AuditEntry[] {
+  const decided = new Set(
+    entries
+      .filter(
+        (e) =>
+          e.entity_type === 'analysis_runs' && (e.action === 'approve' || e.action === 'reject'),
+      )
+      .map((e) => e.entity_id),
+  );
+  return entries.filter((e) => {
+    if (e.entity_type !== 'analysis_runs' || e.action !== 'update' || !decided.has(e.entity_id)) {
+      return true;
+    }
+    const status = (e.details as { status?: { new?: unknown } } | null)?.status?.new;
+    return status !== 'approved' && status !== 'rejected';
+  });
 }
