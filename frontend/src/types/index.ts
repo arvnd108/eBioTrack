@@ -545,8 +545,8 @@ export interface DetectionFrequencyRow {
   samples_total: number;
 }
 
-/** `GET /api/audit`, and `DashboardSummary.recent_activity`. */
-export interface AuditEntry {
+/** An `audit_logs` row as stored (section 4.1). */
+export interface AuditRow {
   audit_id: number;
   actor_id: number | null;
   entity_type: string;
@@ -554,6 +554,12 @@ export interface AuditEntry {
   action: AuditAction;
   details: Record<string, unknown> | null;
   created_at: string;
+}
+
+/** `GET /api/audit`, and `DashboardSummary.recent_activity`: the row plus the actor's name (1.9). */
+export interface AuditEntry extends AuditRow {
+  /** The acting user's name; null for a system action. */
+  actor_name: string | null;
 }
 
 /** `GET /api/dashboard/summary`. */

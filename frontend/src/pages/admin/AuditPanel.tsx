@@ -5,8 +5,8 @@
 // Each entry is one row change written by the audit trigger (database/triggers/access_triggers.sql):
 // insert -> { column: { new } }, delete -> { column: { old } }, update -> changed columns
 // { column: { old, new } }; a sign-in has no details. The table summarises the change and the
-// full details open underneath. Actor names come from GET /api/users, which only an
-// administrator may read; others see the user ID.
+// full details open underneath. Each entry names its actor (actor_name, CONTRACT 1.9), so a
+// principal investigator, who cannot read GET /api/users, sees names too.
 
 import { useMemo, useState, type FormEvent } from 'react';
 import { Badge } from '../../components/common/Badge';
@@ -83,10 +83,12 @@ export function AuditPanel() {
     () => new Map((users.data ?? []).map((u) => [u.user_id, u.full_name])),
     [users.data],
   );
-  // Only administrators can list users; anyone else sees their own actions as "You" and the
-  // rest by user ID.
-  const actorName = (id: number | null) =>
-    id === null ? 'System' : (names.get(id) ?? (id === user?.user_id ? 'You' : `User ${id}`));
+  // Every entry carries the actor's name (CONTRACT 1.9). Administrators also have the users
+  // list; anyone else sees their own actions as "You".
+  const actorName = (id: number | null, apiName: string | null) =>
+    id === null
+      ? 'System'
+      : (names.get(id) ?? (id === user?.user_id ? 'You' : (apiName ?? `User ${id}`)));
 
   function set<K extends keyof AuditFilters>(key: K, value: AuditFilters[K]) {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -112,7 +114,7 @@ export function AuditPanel() {
 
   const columns: Column<AuditEntry>[] = [
     { key: 'created_at', header: 'When', render: (e) => formatDateTime(e.created_at) },
-    { key: 'actor_id', header: 'Who', render: (e) => actorName(e.actor_id) },
+    { key: 'actor_id', header: 'Who', render: (e) => actorName(e.actor_id, e.actor_name) },
     { key: 'action', header: 'Action', render: (e) => <Badge value={e.action} /> },
     {
       key: 'entity',

@@ -223,6 +223,9 @@ describe.skipIf(!available)('taxa, analytics, dashboard and exports', () => {
         approved_detections: 24,
       });
       expect(admin.body.data.recent_activity.length).toBeLessThanOrEqual(5);
+      for (const entry of admin.body.data.recent_activity) {
+        expect(entry).toHaveProperty('actor_name');
+      }
       const lab = await as.lab_technician.get('/api/dashboard/summary');
       const direct = await query(
         'SELECT count(*)::int AS n FROM v_approved_detections WHERE project_id = 1',

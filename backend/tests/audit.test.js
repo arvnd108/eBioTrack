@@ -13,6 +13,7 @@ const available = await probeDatabase();
 const ENTRY_KEYS = [
   'action',
   'actor_id',
+  'actor_name',
   'audit_id',
   'created_at',
   'details',
@@ -90,6 +91,24 @@ describe.skipIf(!available)('audit', () => {
       const sorted = [...stamps].sort((a, b) => (a[0] < b[0] ? 1 : a[0] > b[0] ? -1 : b[1] - a[1]));
       expect(stamps).toEqual(sorted);
       expect(JSON.stringify(res.body)).not.toMatch(/password_hash/);
+    });
+    it('names the actor of every entry (CONTRACT 1.9), null for a system action', async () => {
+      await query(
+        `INSERT INTO audit_logs (actor_id, entity_type, entity_id, action) VALUES (NULL, 'taxa', 1, 'update')`,
+      );
+      const res = await as.administrator.get('/api/audit?limit=100');
+      const names = await query('SELECT user_id, full_name FROM users');
+      const byId = new Map(names.map((u) => [Number(u.user_id), u.full_name]));
+      for (const entry of res.body.data) {
+        expect(entry.actor_name).toBe(entry.actor_id === null ? null : byId.get(entry.actor_id));
+      }
+      expect(res.body.data.some((e) => e.actor_id === null)).toBe(true);
+      // A principal investigator reads the names too, though GET /api/users is closed to them.
+      const pi = await as.principal_investigator.get(
+        `/api/audit?entity_type=projects&entity_id=${projectA}`,
+      );
+      expect(pi.body.data[0]).toMatchObject({ actor_id: 2, actor_name: 'Pranav Investigator' });
+      expect((await as.principal_investigator.get('/api/users')).status).toBe(403);
     });
     it('filters by entity, actor and date range, and paginates', async () => {
       const trail = await as.administrator.get(
