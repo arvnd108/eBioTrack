@@ -1,0 +1,1043 @@
+{
+  "header": {
+    "generatedAt": "2026-11-02T22:49:13.335Z",
+    "command": "node performance/run-cold-cache.js --scale medium --repeats 3",
+    "scale": "medium",
+    "postgres": "PostgreSQL 16.15 (Debian 16.15-1.pgdg13+2)",
+    "repeats": 3,
+    "durationSeconds": 105.5,
+    "volatileFields": ["header.generatedAt", "header.durationSeconds", "statements[].*.ms*"]
+  },
+  "statements": [
+    {
+      "slice": "access",
+      "id": "BQ1",
+      "expect": "improve",
+      "baseline": {
+        "topNode": "Seq Scan",
+        "indexesUsed": [],
+        "buffersHit": 0,
+        "buffersRead": 148,
+        "ms": 0.877,
+        "msAll": [0.852, 0.877, 0.904]
+      },
+      "indexed": {
+        "topNode": "Index Only Scan",
+        "indexesUsed": ["idx_project_members_user_id_project_id"],
+        "buffersHit": 3,
+        "buffersRead": 3,
+        "ms": 0.138,
+        "msAll": [0.099, 0.138, 0.148]
+      }
+    },
+    {
+      "slice": "access",
+      "id": "BQ1b",
+      "expect": "unchanged",
+      "baseline": {
+        "topNode": "Index Only Scan",
+        "indexesUsed": ["pk_project_members"],
+        "buffersHit": 3,
+        "buffersRead": 3,
+        "ms": 0.123,
+        "msAll": [0.117, 0.123, 0.141]
+      },
+      "indexed": {
+        "topNode": "Index Only Scan",
+        "indexesUsed": ["pk_project_members"],
+        "buffersHit": 3,
+        "buffersRead": 3,
+        "ms": 0.137,
+        "msAll": [0.123, 0.137, 0.137]
+      }
+    },
+    {
+      "slice": "access",
+      "id": "BQ2",
+      "expect": "improve",
+      "baseline": {
+        "topNode": "Sort",
+        "indexesUsed": [
+          "pk_project_members",
+          "pk_project_sites",
+          "pk_users",
+          "uq_project_members_owner"
+        ],
+        "buffersHit": 271,
+        "buffersRead": 225,
+        "ms": 2.405,
+        "msAll": [2.34, 2.405, 2.468]
+      },
+      "indexed": {
+        "topNode": "Sort",
+        "indexesUsed": [
+          "idx_project_members_user_id_project_id",
+          "pk_project_members",
+          "pk_project_sites",
+          "pk_users",
+          "uq_project_members_owner"
+        ],
+        "buffersHit": 249,
+        "buffersRead": 134,
+        "ms": 3.724,
+        "msAll": [3.615, 3.724, 3.77]
+      }
+    },
+    {
+      "slice": "access",
+      "id": "BQ3a",
+      "expect": "improve",
+      "baseline": {
+        "topNode": "Nested Loop",
+        "indexesUsed": ["pk_users"],
+        "buffersHit": 3401,
+        "buffersRead": 6701,
+        "ms": 22.883,
+        "msAll": [22.561, 22.883, 22.991]
+      },
+      "indexed": {
+        "topNode": "Nested Loop",
+        "indexesUsed": ["idx_audit_logs_entity_type_entity_id_created_at", "pk_users"],
+        "buffersHit": 3401,
+        "buffersRead": 1908,
+        "ms": 73.794,
+        "msAll": [72.292, 73.794, 75.332]
+      }
+    },
+    {
+      "slice": "access",
+      "id": "BQ3b",
+      "expect": "improve",
+      "baseline": {
+        "topNode": "Nested Loop",
+        "indexesUsed": ["pk_users"],
+        "buffersHit": 13,
+        "buffersRead": 6672,
+        "ms": 18.876,
+        "msAll": [18.727, 18.876, 18.894]
+      },
+      "indexed": {
+        "topNode": "Nested Loop",
+        "indexesUsed": ["idx_audit_logs_entity_type_entity_id_created_at", "pk_users"],
+        "buffersHit": 13,
+        "buffersRead": 11,
+        "ms": 0.577,
+        "msAll": [0.444, 0.577, 0.592]
+      }
+    },
+    {
+      "slice": "access",
+      "id": "BQ3c",
+      "expect": "improve",
+      "baseline": {
+        "topNode": "Sort",
+        "indexesUsed": [],
+        "buffersHit": 9,
+        "buffersRead": 6697,
+        "ms": 20.161,
+        "msAll": [20.138, 20.161, 20.163]
+      },
+      "indexed": {
+        "topNode": "Sort",
+        "indexesUsed": ["idx_audit_logs_entity_type_entity_id_created_at"],
+        "buffersHit": 9,
+        "buffersRead": 1904,
+        "ms": 73.308,
+        "msAll": [72.797, 73.308, 75.013]
+      }
+    },
+    {
+      "slice": "access",
+      "id": "BQ4a",
+      "expect": "improve",
+      "baseline": {
+        "topNode": "Sort",
+        "indexesUsed": [],
+        "buffersHit": 6,
+        "buffersRead": 6667,
+        "ms": 21.937,
+        "msAll": [21.763, 21.937, 22.309]
+      },
+      "indexed": {
+        "topNode": "Sort",
+        "indexesUsed": ["idx_audit_logs_entity_type_entity_id_created_at"],
+        "buffersHit": 9,
+        "buffersRead": 6621,
+        "ms": 25.126,
+        "msAll": [24.693, 25.126, 26.094]
+      }
+    },
+    {
+      "slice": "access",
+      "id": "BQ4b",
+      "expect": "improve",
+      "baseline": {
+        "topNode": "Sort",
+        "indexesUsed": [],
+        "buffersHit": 6,
+        "buffersRead": 6667,
+        "ms": 18.611,
+        "msAll": [18.499, 18.611, 18.665]
+      },
+      "indexed": {
+        "topNode": "Sort",
+        "indexesUsed": ["idx_audit_logs_entity_type_entity_id_created_at"],
+        "buffersHit": 9,
+        "buffersRead": 308,
+        "ms": 12.333,
+        "msAll": [9.956, 12.333, 13.005]
+      }
+    },
+    {
+      "slice": "access",
+      "id": "BQ5",
+      "expect": "unchanged",
+      "baseline": {
+        "topNode": "Limit",
+        "indexesUsed": [],
+        "buffersHit": 6,
+        "buffersRead": 6667,
+        "ms": 14.598,
+        "msAll": [14.536, 14.598, 15.023]
+      },
+      "indexed": {
+        "topNode": "Limit",
+        "indexesUsed": [],
+        "buffersHit": 6,
+        "buffersRead": 6667,
+        "ms": 14.544,
+        "msAll": [14.422, 14.544, 14.712]
+      }
+    },
+    {
+      "slice": "access",
+      "id": "BQ6",
+      "expect": "unchanged",
+      "baseline": {
+        "topNode": "Limit",
+        "indexesUsed": [],
+        "buffersHit": 3,
+        "buffersRead": 6667,
+        "ms": 68.222,
+        "msAll": [68.031, 68.222, 68.525]
+      },
+      "indexed": {
+        "topNode": "Limit",
+        "indexesUsed": [],
+        "buffersHit": 3,
+        "buffersRead": 6667,
+        "ms": 68.516,
+        "msAll": [67.769, 68.516, 69.286]
+      }
+    },
+    {
+      "slice": "field",
+      "id": "FQ1",
+      "expect": "unchanged",
+      "baseline": {
+        "topNode": "Index Scan",
+        "indexesUsed": ["samples_sample_code_key"],
+        "buffersHit": 0,
+        "buffersRead": 4,
+        "ms": 0.169,
+        "msAll": [0.167, 0.169, 0.194]
+      },
+      "indexed": {
+        "topNode": "Index Scan",
+        "indexesUsed": ["samples_sample_code_key"],
+        "buffersHit": 0,
+        "buffersRead": 4,
+        "ms": 0.182,
+        "msAll": [0.175, 0.182, 0.183]
+      }
+    },
+    {
+      "slice": "field",
+      "id": "FQ2a",
+      "expect": "unchanged",
+      "baseline": {
+        "topNode": "Seq Scan",
+        "indexesUsed": [],
+        "buffersHit": 0,
+        "buffersRead": 1334,
+        "ms": 7.108,
+        "msAll": [7.108, 7.108, 7.126]
+      },
+      "indexed": {
+        "topNode": "Seq Scan",
+        "indexesUsed": [],
+        "buffersHit": 0,
+        "buffersRead": 1334,
+        "ms": 6.874,
+        "msAll": [6.628, 6.874, 7.202]
+      }
+    },
+    {
+      "slice": "field",
+      "id": "FQ2b",
+      "expect": "unchanged",
+      "baseline": {
+        "topNode": "Seq Scan",
+        "indexesUsed": [],
+        "buffersHit": 0,
+        "buffersRead": 1334,
+        "ms": 7.376,
+        "msAll": [7.28, 7.376, 7.478]
+      },
+      "indexed": {
+        "topNode": "Seq Scan",
+        "indexesUsed": [],
+        "buffersHit": 0,
+        "buffersRead": 1334,
+        "ms": 7.651,
+        "msAll": [7.434, 7.651, 7.764]
+      }
+    },
+    {
+      "slice": "field",
+      "id": "FQ2c",
+      "expect": "unchanged",
+      "baseline": {
+        "topNode": "Seq Scan",
+        "indexesUsed": [],
+        "buffersHit": 0,
+        "buffersRead": 1334,
+        "ms": 10.284,
+        "msAll": [10.054, 10.284, 11.688]
+      },
+      "indexed": {
+        "topNode": "Seq Scan",
+        "indexesUsed": [],
+        "buffersHit": 0,
+        "buffersRead": 1334,
+        "ms": 10.378,
+        "msAll": [10.127, 10.378, 10.599]
+      }
+    },
+    {
+      "slice": "field",
+      "id": "FQ2d",
+      "expect": "unchanged",
+      "baseline": {
+        "topNode": "Seq Scan",
+        "indexesUsed": [],
+        "buffersHit": 0,
+        "buffersRead": 1334,
+        "ms": 7.238,
+        "msAll": [7.137, 7.238, 7.473]
+      },
+      "indexed": {
+        "topNode": "Seq Scan",
+        "indexesUsed": [],
+        "buffersHit": 0,
+        "buffersRead": 1334,
+        "ms": 7.111,
+        "msAll": [7.023, 7.111, 7.153]
+      }
+    },
+    {
+      "slice": "field",
+      "id": "FQ3a",
+      "expect": "improve",
+      "baseline": {
+        "topNode": "Sort",
+        "indexesUsed": [],
+        "buffersHit": 3,
+        "buffersRead": 188,
+        "ms": 1.259,
+        "msAll": [1.203, 1.259, 1.547]
+      },
+      "indexed": {
+        "topNode": "Sort",
+        "indexesUsed": ["idx_collection_events_site_id_collected_at"],
+        "buffersHit": 6,
+        "buffersRead": 66,
+        "ms": 2.631,
+        "msAll": [2.623, 2.631, 4.296]
+      }
+    },
+    {
+      "slice": "field",
+      "id": "FQ3b",
+      "expect": "improve",
+      "baseline": {
+        "topNode": "Sort",
+        "indexesUsed": [],
+        "buffersHit": 3,
+        "buffersRead": 188,
+        "ms": 1.149,
+        "msAll": [1.131, 1.149, 1.208]
+      },
+      "indexed": {
+        "topNode": "Sort",
+        "indexesUsed": ["idx_collection_events_site_id_collected_at"],
+        "buffersHit": 6,
+        "buffersRead": 10,
+        "ms": 0.398,
+        "msAll": [0.381, 0.398, 0.441]
+      }
+    },
+    {
+      "slice": "field",
+      "id": "FQ3c",
+      "expect": "improve",
+      "baseline": {
+        "topNode": "Sort",
+        "indexesUsed": [],
+        "buffersHit": 3,
+        "buffersRead": 188,
+        "ms": 1.075,
+        "msAll": [1.036, 1.075, 1.124]
+      },
+      "indexed": {
+        "topNode": "Sort",
+        "indexesUsed": ["idx_collection_events_site_id_collected_at"],
+        "buffersHit": 6,
+        "buffersRead": 71,
+        "ms": 2.774,
+        "msAll": [2.039, 2.774, 2.922]
+      }
+    },
+    {
+      "slice": "field",
+      "id": "FQ3d",
+      "expect": "unchanged",
+      "baseline": {
+        "topNode": "Sort",
+        "indexesUsed": [],
+        "buffersHit": 3,
+        "buffersRead": 188,
+        "ms": 1.309,
+        "msAll": [1.283, 1.309, 1.327]
+      },
+      "indexed": {
+        "topNode": "Sort",
+        "indexesUsed": [],
+        "buffersHit": 3,
+        "buffersRead": 188,
+        "ms": 1.324,
+        "msAll": [1.305, 1.324, 2.278]
+      }
+    },
+    {
+      "slice": "field",
+      "id": "FQ4a",
+      "expect": "improve",
+      "baseline": {
+        "topNode": "WindowAgg",
+        "indexesUsed": ["pk_sampling_sites", "uq_environmental_measurements_event_parameter"],
+        "buffersHit": 97,
+        "buffersRead": 346,
+        "ms": 6.643,
+        "msAll": [5.256, 6.643, 6.778]
+      },
+      "indexed": {
+        "topNode": "WindowAgg",
+        "indexesUsed": [
+          "idx_collection_events_site_id_collected_at",
+          "pk_sampling_sites",
+          "uq_environmental_measurements_event_parameter"
+        ],
+        "buffersHit": 97,
+        "buffersRead": 229,
+        "ms": 6.22,
+        "msAll": [4.431, 6.22, 6.262]
+      }
+    },
+    {
+      "slice": "field",
+      "id": "FQ4b",
+      "expect": "unchanged",
+      "baseline": {
+        "topNode": "WindowAgg",
+        "indexesUsed": [],
+        "buffersHit": 6,
+        "buffersRead": 1021,
+        "ms": 30.083,
+        "msAll": [30.083, 30.083, 31.138]
+      },
+      "indexed": {
+        "topNode": "WindowAgg",
+        "indexesUsed": [],
+        "buffersHit": 6,
+        "buffersRead": 1021,
+        "ms": 29.931,
+        "msAll": [29.855, 29.931, 30.438]
+      }
+    },
+    {
+      "slice": "field",
+      "id": "FQ5a",
+      "expect": "unchanged",
+      "baseline": {
+        "topNode": "Merge Join",
+        "indexesUsed": ["pk_collection_events"],
+        "buffersHit": 3,
+        "buffersRead": 4672,
+        "ms": 79.572,
+        "msAll": [78.194, 79.572, 79.836]
+      },
+      "indexed": {
+        "topNode": "Merge Join",
+        "indexesUsed": ["pk_collection_events"],
+        "buffersHit": 3,
+        "buffersRead": 4672,
+        "ms": 78.883,
+        "msAll": [78.475, 78.883, 80.424]
+      }
+    },
+    {
+      "slice": "field",
+      "id": "FQ5b",
+      "expect": "unchanged",
+      "baseline": {
+        "topNode": "Seq Scan",
+        "indexesUsed": [],
+        "buffersHit": 0,
+        "buffersRead": 1334,
+        "ms": 5.8,
+        "msAll": [5.694, 5.8, 5.822]
+      },
+      "indexed": {
+        "topNode": "Seq Scan",
+        "indexesUsed": [],
+        "buffersHit": 0,
+        "buffersRead": 1334,
+        "ms": 5.787,
+        "msAll": [5.627, 5.787, 5.801]
+      }
+    },
+    {
+      "slice": "field",
+      "id": "FQ5c",
+      "expect": "unchanged",
+      "baseline": {
+        "topNode": "Sort",
+        "indexesUsed": [],
+        "buffersHit": 3,
+        "buffersRead": 1550,
+        "ms": 48.157,
+        "msAll": [48.013, 48.157, 48.844]
+      },
+      "indexed": {
+        "topNode": "Sort",
+        "indexesUsed": [],
+        "buffersHit": 3,
+        "buffersRead": 1550,
+        "ms": 46.979,
+        "msAll": [46.889, 46.979, 47.276]
+      }
+    },
+    {
+      "slice": "field",
+      "id": "FQ5d",
+      "expect": "unchanged",
+      "baseline": {
+        "topNode": "Aggregate",
+        "indexesUsed": ["pk_sampling_sites", "uq_regions_name_type"],
+        "buffersHit": 9,
+        "buffersRead": 1527,
+        "ms": 11.592,
+        "msAll": [11.472, 11.592, 11.68]
+      },
+      "indexed": {
+        "topNode": "Aggregate",
+        "indexesUsed": [
+          "idx_collection_events_site_id_collected_at",
+          "pk_sampling_sites",
+          "uq_regions_name_type"
+        ],
+        "buffersHit": 9,
+        "buffersRead": 1410,
+        "ms": 13.123,
+        "msAll": [12.351, 13.123, 13.252]
+      }
+    },
+    {
+      "slice": "analysis",
+      "id": "BQ1a",
+      "expect": "improve",
+      "baseline": {
+        "topNode": "Seq Scan",
+        "indexesUsed": [],
+        "buffersHit": 0,
+        "buffersRead": 5156,
+        "ms": 14.848,
+        "msAll": [14.696, 14.848, 15.034]
+      },
+      "indexed": {
+        "topNode": "Bitmap Heap Scan",
+        "indexesUsed": ["idx_taxon_assignments_taxon_id_qc_flag"],
+        "buffersHit": 3,
+        "buffersRead": 4864,
+        "ms": 179.195,
+        "msAll": [119.607, 179.195, 184.305]
+      }
+    },
+    {
+      "slice": "analysis",
+      "id": "BQ1b",
+      "expect": "improve",
+      "baseline": {
+        "topNode": "Seq Scan",
+        "indexesUsed": [],
+        "buffersHit": 0,
+        "buffersRead": 5156,
+        "ms": 13.825,
+        "msAll": [13.796, 13.825, 13.906]
+      },
+      "indexed": {
+        "topNode": "Bitmap Heap Scan",
+        "indexesUsed": ["idx_taxon_assignments_taxon_id_qc_flag"],
+        "buffersHit": 3,
+        "buffersRead": 64,
+        "ms": 2.208,
+        "msAll": [1.584, 2.208, 2.553]
+      }
+    },
+    {
+      "slice": "analysis",
+      "id": "BQ1c",
+      "expect": "improve",
+      "baseline": {
+        "topNode": "Seq Scan",
+        "indexesUsed": [],
+        "buffersHit": 0,
+        "buffersRead": 5156,
+        "ms": 15.662,
+        "msAll": [15.301, 15.662, 15.785]
+      },
+      "indexed": {
+        "topNode": "Bitmap Heap Scan",
+        "indexesUsed": ["idx_taxon_assignments_taxon_id_qc_flag"],
+        "buffersHit": 3,
+        "buffersRead": 2029,
+        "ms": 77.129,
+        "msAll": [68.355, 77.129, 77.506]
+      }
+    },
+    {
+      "slice": "analysis",
+      "id": "BQ2a",
+      "expect": "unchanged",
+      "baseline": {
+        "topNode": "Sort",
+        "indexesUsed": ["pk_taxa"],
+        "buffersHit": 48,
+        "buffersRead": 8708,
+        "ms": 88.571,
+        "msAll": [87.731, 88.571, 88.8]
+      },
+      "indexed": {
+        "topNode": "Sort",
+        "indexesUsed": ["pk_taxa"],
+        "buffersHit": 48,
+        "buffersRead": 8708,
+        "ms": 88.319,
+        "msAll": [87.063, 88.319, 88.481]
+      }
+    },
+    {
+      "slice": "analysis",
+      "id": "BQ2b",
+      "expect": "unchanged",
+      "baseline": {
+        "topNode": "Sort",
+        "indexesUsed": ["pk_taxa"],
+        "buffersHit": 30,
+        "buffersRead": 8708,
+        "ms": 71.747,
+        "msAll": [71.394, 71.747, 72.592]
+      },
+      "indexed": {
+        "topNode": "Sort",
+        "indexesUsed": ["pk_taxa"],
+        "buffersHit": 30,
+        "buffersRead": 8708,
+        "ms": 72.045,
+        "msAll": [71.336, 72.045, 72.298]
+      }
+    },
+    {
+      "slice": "analysis",
+      "id": "BQ3",
+      "expect": "improve",
+      "baseline": {
+        "topNode": "Sort",
+        "indexesUsed": [
+          "pk_analysis_runs",
+          "pk_taxa",
+          "uq_dna_extractions_sample_attempt",
+          "uq_sequencing_libraries_extraction_run"
+        ],
+        "buffersHit": 4095,
+        "buffersRead": 13907,
+        "ms": 106.138,
+        "msAll": [105.896, 106.138, 109.622]
+      },
+      "indexed": {
+        "topNode": "Sort",
+        "indexesUsed": [
+          "idx_collection_events_site_id_collected_at",
+          "idx_taxon_assignments_library_id",
+          "idx_taxon_assignments_taxon_id_qc_flag",
+          "pk_analysis_runs",
+          "pk_collection_events",
+          "pk_dna_extractions",
+          "pk_samples",
+          "pk_sequencing_libraries",
+          "pk_taxa",
+          "uq_dna_extractions_sample_attempt",
+          "uq_sequencing_libraries_extraction_run"
+        ],
+        "buffersHit": 5022,
+        "buffersRead": 2387,
+        "ms": 39.153,
+        "msAll": [34.024, 39.153, 45.152]
+      }
+    },
+    {
+      "slice": "analysis",
+      "id": "BQ4a",
+      "expect": "unchanged",
+      "baseline": {
+        "topNode": "WindowAgg",
+        "indexesUsed": [],
+        "buffersHit": 1525,
+        "buffersRead": 8708,
+        "ms": 147.803,
+        "msAll": [147.79, 147.803, 150.218]
+      },
+      "indexed": {
+        "topNode": "WindowAgg",
+        "indexesUsed": [],
+        "buffersHit": 1525,
+        "buffersRead": 8708,
+        "ms": 148.155,
+        "msAll": [147.844, 148.155, 148.371]
+      }
+    },
+    {
+      "slice": "analysis",
+      "id": "BQ4b",
+      "expect": "improve",
+      "baseline": {
+        "topNode": "WindowAgg",
+        "indexesUsed": [
+          "pk_analysis_runs",
+          "pk_taxa",
+          "uq_dna_extractions_sample_attempt",
+          "uq_sequencing_libraries_extraction_run"
+        ],
+        "buffersHit": 3939,
+        "buffersRead": 6946,
+        "ms": 48.977,
+        "msAll": [47.581, 48.977, 49.466]
+      },
+      "indexed": {
+        "topNode": "WindowAgg",
+        "indexesUsed": [
+          "idx_collection_events_site_id_collected_at",
+          "idx_taxon_assignments_library_id",
+          "pk_taxa",
+          "uq_dna_extractions_sample_attempt",
+          "uq_sequencing_libraries_extraction_run"
+        ],
+        "buffersHit": 3898,
+        "buffersRead": 1753,
+        "ms": 28.314,
+        "msAll": [28.085, 28.314, 31.809]
+      }
+    },
+    {
+      "slice": "analysis",
+      "id": "BQ5a",
+      "expect": "improve",
+      "baseline": {
+        "topNode": "Hash Join",
+        "indexesUsed": [
+          "pk_collection_events",
+          "pk_dna_extractions",
+          "pk_samples",
+          "pk_sequencing_libraries",
+          "pk_taxa",
+          "uq_taxon_assignments_analysis_library_taxon"
+        ],
+        "buffersHit": 4935,
+        "buffersRead": 3418,
+        "ms": 49.545,
+        "msAll": [41.185, 49.545, 50.573]
+      },
+      "indexed": {
+        "topNode": "Hash Join",
+        "indexesUsed": [
+          "idx_taxon_assignments_taxon_id_qc_flag",
+          "pk_collection_events",
+          "pk_dna_extractions",
+          "pk_dna_markers",
+          "pk_samples",
+          "pk_sequencing_libraries",
+          "pk_taxa"
+        ],
+        "buffersHit": 4539,
+        "buffersRead": 3711,
+        "ms": 92.251,
+        "msAll": [91.28, 92.251, 92.496]
+      }
+    },
+    {
+      "slice": "analysis",
+      "id": "BQ5b",
+      "expect": "improve",
+      "baseline": {
+        "topNode": "Nested Loop",
+        "indexesUsed": [
+          "pk_analysis_runs",
+          "pk_sampling_sites",
+          "pk_taxa",
+          "uq_dna_extractions_sample_attempt",
+          "uq_sequencing_libraries_extraction_run"
+        ],
+        "buffersHit": 2417,
+        "buffersRead": 6923,
+        "ms": 42.351,
+        "msAll": [38.375, 42.351, 42.729]
+      },
+      "indexed": {
+        "topNode": "Nested Loop",
+        "indexesUsed": [
+          "idx_collection_events_site_id_collected_at",
+          "idx_taxon_assignments_library_id",
+          "pk_sampling_sites",
+          "pk_taxa",
+          "uq_dna_extractions_sample_attempt",
+          "uq_sequencing_libraries_extraction_run"
+        ],
+        "buffersHit": 2516,
+        "buffersRead": 1730,
+        "ms": 22.492,
+        "msAll": [22.289, 22.492, 25.029]
+      }
+    },
+    {
+      "slice": "analysis",
+      "id": "BQ6",
+      "expect": "unchanged",
+      "baseline": {
+        "topNode": "Index Scan",
+        "indexesUsed": ["uq_taxon_assignments_analysis_library_taxon"],
+        "buffersHit": 3,
+        "buffersRead": 12,
+        "ms": 0.255,
+        "msAll": [0.248, 0.255, 0.27]
+      },
+      "indexed": {
+        "topNode": "Index Scan",
+        "indexesUsed": ["uq_taxon_assignments_analysis_library_taxon"],
+        "buffersHit": 3,
+        "buffersRead": 12,
+        "ms": 0.297,
+        "msAll": [0.294, 0.297, 0.328]
+      }
+    },
+    {
+      "slice": "analysis",
+      "id": "BQ7a",
+      "expect": "improve",
+      "baseline": {
+        "topNode": "Seq Scan",
+        "indexesUsed": [],
+        "buffersHit": 0,
+        "buffersRead": 5156,
+        "ms": 13.598,
+        "msAll": [13.336, 13.598, 13.997]
+      },
+      "indexed": {
+        "topNode": "Index Scan",
+        "indexesUsed": ["idx_taxon_assignments_library_id"],
+        "buffersHit": 3,
+        "buffersRead": 4,
+        "ms": 0.117,
+        "msAll": [0.099, 0.117, 0.138]
+      }
+    },
+    {
+      "slice": "analysis",
+      "id": "BQ7b",
+      "expect": "unchanged",
+      "baseline": {
+        "topNode": "Limit",
+        "indexesUsed": [],
+        "buffersHit": 3,
+        "buffersRead": 5174,
+        "ms": 23.578,
+        "msAll": [23.569, 23.578, 23.739]
+      },
+      "indexed": {
+        "topNode": "Limit",
+        "indexesUsed": [],
+        "buffersHit": 3,
+        "buffersRead": 5174,
+        "ms": 23.625,
+        "msAll": [23.475, 23.625, 23.631]
+      }
+    },
+    {
+      "slice": "analysis",
+      "id": "BQ8",
+      "expect": "unchanged",
+      "baseline": {
+        "topNode": "Aggregate",
+        "indexesUsed": ["uq_taxon_assignments_analysis_library_taxon"],
+        "buffersHit": 3,
+        "buffersRead": 7,
+        "ms": 0.193,
+        "msAll": [0.167, 0.193, 0.214]
+      },
+      "indexed": {
+        "topNode": "Aggregate",
+        "indexesUsed": ["uq_taxon_assignments_analysis_library_taxon"],
+        "buffersHit": 3,
+        "buffersRead": 7,
+        "ms": 0.248,
+        "msAll": [0.242, 0.248, 0.256]
+      }
+    },
+    {
+      "slice": "lab",
+      "id": "BQ1",
+      "expect": "improve",
+      "baseline": {
+        "topNode": "Sort",
+        "indexesUsed": [
+          "pk_collection_events",
+          "pk_dna_extractions",
+          "pk_samples",
+          "pk_sampling_sites",
+          "pk_sequencing_runs"
+        ],
+        "buffersHit": 1178,
+        "buffersRead": 963,
+        "ms": 6.567,
+        "msAll": [6.485, 6.567, 6.644]
+      },
+      "indexed": {
+        "topNode": "Sort",
+        "indexesUsed": [
+          "idx_sequencing_libraries_run_id",
+          "pk_collection_events",
+          "pk_dna_extractions",
+          "pk_samples",
+          "pk_sampling_sites",
+          "pk_sequencing_runs"
+        ],
+        "buffersHit": 1178,
+        "buffersRead": 32,
+        "ms": 1.83,
+        "msAll": [1.384, 1.83, 2.1]
+      }
+    },
+    {
+      "slice": "lab",
+      "id": "BQ2a",
+      "expect": "improve",
+      "baseline": {
+        "topNode": "Seq Scan",
+        "indexesUsed": [],
+        "buffersHit": 0,
+        "buffersRead": 1032,
+        "ms": 4.899,
+        "msAll": [4.896, 4.899, 4.904]
+      },
+      "indexed": {
+        "topNode": "Index Scan",
+        "indexesUsed": ["idx_dna_extractions_batch_id"],
+        "buffersHit": 3,
+        "buffersRead": 3,
+        "ms": 0.083,
+        "msAll": [0.078, 0.083, 0.344]
+      }
+    },
+    {
+      "slice": "lab",
+      "id": "BQ2b",
+      "expect": "unchanged",
+      "baseline": {
+        "topNode": "Sort",
+        "indexesUsed": [],
+        "buffersHit": 6,
+        "buffersRead": 1050,
+        "ms": 20.727,
+        "msAll": [20.292, 20.727, 20.925]
+      },
+      "indexed": {
+        "topNode": "Sort",
+        "indexesUsed": [],
+        "buffersHit": 6,
+        "buffersRead": 1050,
+        "ms": 20.243,
+        "msAll": [20.084, 20.243, 20.465]
+      }
+    },
+    {
+      "slice": "lab",
+      "id": "BQ3a",
+      "expect": "unchanged",
+      "baseline": {
+        "topNode": "Index Scan",
+        "indexesUsed": ["uq_dna_extractions_sample_attempt"],
+        "buffersHit": 3,
+        "buffersRead": 3,
+        "ms": 0.115,
+        "msAll": [0.075, 0.115, 0.209]
+      },
+      "indexed": {
+        "topNode": "Index Scan",
+        "indexesUsed": ["uq_dna_extractions_sample_attempt"],
+        "buffersHit": 3,
+        "buffersRead": 3,
+        "ms": 0.094,
+        "msAll": [0.079, 0.094, 0.276]
+      }
+    },
+    {
+      "slice": "lab",
+      "id": "BQ3b",
+      "expect": "unchanged",
+      "baseline": {
+        "topNode": "Nested Loop",
+        "indexesUsed": [
+          "pk_collection_events",
+          "pk_extraction_batches",
+          "pk_laboratories",
+          "pk_samples",
+          "pk_sampling_sites",
+          "pk_sequencing_runs",
+          "uq_dna_extractions_sample_attempt",
+          "uq_sequencing_libraries_extraction_run"
+        ],
+        "buffersHit": 20,
+        "buffersRead": 19,
+        "ms": 0.654,
+        "msAll": [0.525, 0.654, 0.729]
+      },
+      "indexed": {
+        "topNode": "Nested Loop",
+        "indexesUsed": [
+          "pk_collection_events",
+          "pk_extraction_batches",
+          "pk_laboratories",
+          "pk_samples",
+          "pk_sampling_sites",
+          "pk_sequencing_runs",
+          "uq_dna_extractions_sample_attempt",
+          "uq_sequencing_libraries_extraction_run"
+        ],
+        "buffersHit": 20,
+        "buffersRead": 19,
+        "ms": 0.565,
+        "msAll": [0.433, 0.565, 0.751]
+      }
+    }
+  ]
+}

@@ -21,7 +21,8 @@
     "volume:load": "node fixtures/generate-volume-data.js",
     "volume:clean": "node fixtures/generate-volume-data.js --clean",
     "bench": "node performance/run-benchmarks.js",
-    "bench:small": "node performance/run-benchmarks.js --scale small --out none"
+    "bench:small": "node performance/run-benchmarks.js --scale small --out none",
+    "bench:cold": "node performance/run-cold-cache.js"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
