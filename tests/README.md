@@ -141,3 +141,41 @@ Every race is run twice: against the stored functions with real parallel databas
 - Everything commits, so each file ends with `restoreIfCommitted()` (reseed). The API session cookies die with the reseed: each file logs in again in `beforeAll`.
 
 **Proving the tests can fail.** `setupTestDatabase` re-applies `database/procedures/*.sql` on every run, so a broken variant must be edited into the repo file (never committed), the suite run, then `git checkout` the file. Removing `FOR UPDATE` from `fn_analysis_lock` turns 11 `double-approval` tests red; locking extractions in the caller's order (no sort) turns both `B` tests red with `40P01`.
+
+## Performance (`performance/`, T35)
+
+One scripted comparison of every slice's queries before and after the final index set, measured on volume data with `EXPLAIN (ANALYZE, BUFFERS)`, plus the price of those indexes on the write side with the audit and status-history triggers enabled. Test database only (`assertSafeTarget`).
+
+```bash
+npm run volume:load -- --scale medium     # seed 20260101, about 20 s
+npm run bench                             # both phases, writes performance/results/benchmark-results.{json,md}
+npm run bench:small                       # scale small, prints a table, writes nothing
+npm run test:performance                  # the plan-shape guard (self-contained, a few seconds)
+npm run bench -- --cleanup                # remove rows the preparation added (before volume:clean, after a hand run with keep_prep)
+npm run bench -- --restore-final-indexes  # apply database/indexes/*.sql
+psql "$TEST_DATABASE_URL" -f performance/explain-benchmarks.sql   # the same statements, one text plan each, by hand
+```
+
+Options of `run-benchmarks.js`: `--scale`, `--phase baseline|indexed|both`, `--runs N` (default 5), `--out DIR|none`, `--no-write-cost`, `--keep-prep`. Exit code is non-zero when a result differs between the phases or when a statement marked `mustImprove` has not at least 10% fewer buffers.
+
+**Protocol.** Phase 0 drops every index of the final set (names read from `database/indexes/*.sql`, which must list the same names in their `DROP INDEX` lines), runs `VACUUM (ANALYZE)` and measures; phase 1 runs the index files, `VACUUM (ANALYZE)`, measures again. Each phase checks `pg_indexes` and aborts on a dirty baseline or an incomplete indexed state. Session settings are those of the index authors (`max_parallel_workers_per_gather = 0`, `jit = off`, `plan_cache_mode = force_custom_plan`, plus `TimeZone = UTC` for stable parameter text); no `enable_*` setting is ever changed. Per statement: one checksum execution (row count and `md5` of the sorted rows), one discarded warm-up, `--runs` timed `EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)` runs; the figures are those of the median run. Everything is warm (shared hit): compare **buffers**, time is secondary. At the end the final index set is applied, the added rows are removed, sequences are restored and row counts are compared with the loaded state.
+
+**Files.**
+
+| File                     | Role                                                                                                                                    |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `benchmarks.config.js`   | One source of truth: statements (ids = the labels in the index files), parameter lookups, data preparation, index control, plan reading |
+| `run-benchmarks.js`      | The runner (read side, write side, JSON and Markdown)                                                                                   |
+| `plan-shape.test.js`     | The guard in `npm test`                                                                                                                 |
+| `explain-benchmarks.sql` | The by-hand version (text plans)                                                                                                        |
+| `results/`               | Generated, committed evidence: `benchmark-results.json` and `.md` (never edit by hand)                                                  |
+
+**Result schema.** `benchmark-results.json`: `header` (date, scale, seed, PostgreSQL version, settings, server memory settings, runs, index list with file, prepared rows, the list of `volatileFields`), `statements[]` (`id`, `slice`, `label`, `sql` with `{param}` placeholders, `params`, `resolvedSql`, `expect`, `serves`, `relatesTo`, `keepsIndex`, `documented`, `phases.baseline|indexed` = `{ topNode, scansByRelation, indexesUsed, rows, buffersHit, buffersRead, rowsRemovedByFilter, ms: {median, min, max}, checksum }`, `speedup` = `{ buffers, time }` as before / after, `verdict` = `improved | unchanged | worse | expected-unchanged`, `findings`), `writeCost[]` (`baseline` and `indexed` sides, `multiplier`), `writeSummary`, `findings`. Stable across runs: plans, indexes, rows, checksums, buffers (about +-5%); the volatile fields are times, the date and the multipliers.
+
+**Write cost.** Measured with the triggers enabled and rolled back: bulk `INSERT ... SELECT` of 20 000 and 100 000 rows into a scratch copy (`CREATE TABLE ... (LIKE ... INCLUDING ALL)`, so it carries the indexes that exist in the phase) that has the table's own audit trigger, so `audit_logs` receives one row per row (asserted); direct inserts into `audit_logs`; 500 x `register_sample`, 100 x `create_sequencing_run` of 5 extractions, 50 x `import_detections` of 200 rows. `nextval()` is not rolled back, so the runner snapshots and restores every sequence around each measurement (otherwise rolled-back audit rows would walk the `audit_id` sequence into the volume ids).
+
+**Guard (`plan-shape.test.js`).** Loads scale `small` itself (or uses volume data that is already loaded, any scale), compares the database with and without the final indexes, and puts it back (cleanup failures fail the run). It reads plans with `EXPLAIN (FORMAT JSON)` without `ANALYZE`; it asserts shape and equal results, never milliseconds. Checks: (1) each `expect: 'improve'` statement uses all its `serves` indexes (entries without `smallOk` are skipped at scale small, where the planner may prefer a sequential scan; they run at medium); (2) each `keepsIndex` statement still uses its constraint index and none of the new ones; (3) row count and md5 are equal with and without the indexes for every statement; (4) coverage: every `CREATE INDEX` in `database/indexes/*.sql` is served by a statement and has an unchanged-check, and no statement names an index that is not in the files; (5) the database holds all of the index set or none of it (a hand-dropped index fails, naming it).
+
+**Add a statement or an index.** A new index file entry fails the coverage guard until `benchmarks.config.js` has a statement that `serves` it (`expect: 'improve'`) and one that documents what it must not change (`expect: 'unchanged'`, `relatesTo`, with a `reason`). Parameters are looked up from the data (`ORDER BY count(*) DESC, id`), never hard-coded. Findings for index owners (an index not used, no gain, a regression, a disagreement with the figures documented in the index files) are listed in `benchmark-results.md` and are reported, not fixed here.
+
+**Cold cache (`run-cold-cache.js`, `npm run bench:cold`).** `run-benchmarks.js` is warm. This second script restarts the PostgreSQL container (`--container`, default `ebiotrack-db-1`, so it needs Docker and the compose database) and drops the Linux page cache of the Docker VM before each execution, then runs one `EXPLAIN (ANALYZE, BUFFERS)`; `--repeats N` (default 1, committed results use 3) takes the median. It writes `results/cold-cache-results.{json,md}`, takes about 2 minutes at 3 repeats, and ends with the final indexes applied and the prepared rows removed. The read buffers equal the buffers of the warm run (all pages come from storage), so the interesting column is time: the markdown lists the statements that are slower with the indexes on cold storage. The numbers depend on the machine's storage and the Docker VM.

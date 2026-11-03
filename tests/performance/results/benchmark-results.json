@@ -1,0 +1,3712 @@
+{
+  "header": {
+    "generatedAt": "2026-11-02T22:18:48.465Z",
+    "command": "node performance/run-benchmarks.js --scale medium --phase both --runs 5",
+    "scale": "medium",
+    "seed": 20260101,
+    "postgres": "PostgreSQL 16.15 (Debian 16.15-1.pgdg13+2)",
+    "settings": {
+      "max_parallel_workers_per_gather": "0",
+      "jit": "off",
+      "plan_cache_mode": "force_custom_plan",
+      "TimeZone": "UTC"
+    },
+    "server": {
+      "shared_buffers": "128MB",
+      "work_mem": "4MB",
+      "random_page_cost": "4",
+      "effective_cache_size": "4GB"
+    },
+    "runs": 5,
+    "durationSeconds": 166.6,
+    "indexes": [
+      {
+        "name": "idx_project_members_user_id_project_id",
+        "table": "project_members",
+        "columns": "user_id, project_id",
+        "file": "access_indexes.sql"
+      },
+      {
+        "name": "idx_audit_logs_entity_type_entity_id_created_at",
+        "table": "audit_logs",
+        "columns": "entity_type, entity_id, created_at",
+        "file": "access_indexes.sql"
+      },
+      {
+        "name": "idx_taxon_assignments_taxon_id_qc_flag",
+        "table": "taxon_assignments",
+        "columns": "taxon_id, qc_flag",
+        "file": "analysis_indexes.sql"
+      },
+      {
+        "name": "idx_taxon_assignments_library_id",
+        "table": "taxon_assignments",
+        "columns": "library_id",
+        "file": "analysis_indexes.sql"
+      },
+      {
+        "name": "idx_collection_events_site_id_collected_at",
+        "table": "collection_events",
+        "columns": "site_id, collected_at",
+        "file": "field_indexes.sql"
+      },
+      {
+        "name": "idx_sequencing_libraries_run_id",
+        "table": "sequencing_libraries",
+        "columns": "run_id",
+        "file": "lab_indexes.sql"
+      },
+      {
+        "name": "idx_dna_extractions_batch_id",
+        "table": "dna_extractions",
+        "columns": "batch_id",
+        "file": "lab_indexes.sql"
+      }
+    ],
+    "prepared": {
+      "measurements": 80000,
+      "approvals": 200
+    },
+    "rowCountsUnchanged": true,
+    "volatileFields": [
+      "header.generatedAt",
+      "header.durationSeconds",
+      "statements[].phases.*.ms",
+      "statements[].speedup.time",
+      "writeCost[].baseline.ms",
+      "writeCost[].indexed.ms",
+      "writeCost[].multiplier"
+    ]
+  },
+  "statements": [
+    {
+      "id": "BQ1",
+      "slice": "access",
+      "label": "memberships of one user (authorize.js)",
+      "sql": "SELECT project_id FROM project_members WHERE user_id = {hot_user}",
+      "params": {
+        "hot_user": "1000199"
+      },
+      "resolvedSql": "SELECT project_id FROM project_members WHERE user_id = 1000199",
+      "expect": "improve",
+      "serves": ["idx_project_members_user_id_project_id"],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "selective",
+      "reason": null,
+      "mustImprove": true,
+      "documented": {
+        "rel": "project_members",
+        "baseline": {
+          "node": "Seq Scan",
+          "buffers": 148
+        },
+        "indexed": {
+          "node": "Index Only Scan",
+          "buffers": 3
+        }
+      },
+      "rel": "project_members",
+      "phases": {
+        "baseline": {
+          "topNode": "Seq Scan",
+          "scansByRelation": {
+            "project_members": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 34,
+          "buffersHit": 148,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 19973,
+          "ms": {
+            "median": 0.41,
+            "min": 0.406,
+            "max": 0.415
+          },
+          "checksum": "7c97f8f0ed932af34907253ebc4c6cbc"
+        },
+        "indexed": {
+          "topNode": "Index Only Scan",
+          "scansByRelation": {
+            "project_members": ["Index Only Scan"]
+          },
+          "indexesUsed": ["idx_project_members_user_id_project_id"],
+          "rows": 34,
+          "buffersHit": 3,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 0.007,
+            "min": 0.006,
+            "max": 0.008
+          },
+          "checksum": "7c97f8f0ed932af34907253ebc4c6cbc"
+        }
+      },
+      "speedup": {
+        "buffers": 49.33,
+        "time": 58.57
+      },
+      "verdict": "improved",
+      "findings": []
+    },
+    {
+      "id": "BQ1b",
+      "slice": "access",
+      "label": "members of one project (redundancy: primary key leads with project_id)",
+      "sql": "SELECT user_id FROM project_members WHERE project_id = {hot_project}",
+      "params": {
+        "hot_project": "1000000"
+      },
+      "resolvedSql": "SELECT user_id FROM project_members WHERE project_id = 1000000",
+      "expect": "unchanged",
+      "serves": [],
+      "relatesTo": ["idx_project_members_user_id_project_id"],
+      "keepsIndex": "pk_project_members",
+      "selectivity": "selective",
+      "reason": "project_id is the leading column of pk_project_members; the new index starts with user_id",
+      "mustImprove": false,
+      "documented": null,
+      "rel": "project_members",
+      "phases": {
+        "baseline": {
+          "topNode": "Index Only Scan",
+          "scansByRelation": {
+            "project_members": ["Index Only Scan"]
+          },
+          "indexesUsed": ["pk_project_members"],
+          "rows": 200,
+          "buffersHit": 3,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 0.015,
+            "min": 0.014,
+            "max": 0.016
+          },
+          "checksum": "85bc6232b5d213d573c8717046aa409f"
+        },
+        "indexed": {
+          "topNode": "Index Only Scan",
+          "scansByRelation": {
+            "project_members": ["Index Only Scan"]
+          },
+          "indexesUsed": ["pk_project_members"],
+          "rows": 200,
+          "buffersHit": 3,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 0.017,
+            "min": 0.017,
+            "max": 0.017
+          },
+          "checksum": "85bc6232b5d213d573c8717046aa409f"
+        }
+      },
+      "speedup": {
+        "buffers": 1,
+        "time": 0.88
+      },
+      "verdict": "expected-unchanged",
+      "findings": []
+    },
+    {
+      "id": "BQ2",
+      "slice": "access",
+      "label": "Q1 access_user_projects, one user",
+      "sql": "EXECUTE access_user_projects({hot_user}, NULL)",
+      "params": {
+        "hot_user": "1000199"
+      },
+      "resolvedSql": "EXECUTE access_user_projects(1000199, NULL)",
+      "expect": "improve",
+      "serves": ["idx_project_members_user_id_project_id"],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "selective",
+      "reason": null,
+      "mustImprove": true,
+      "documented": {
+        "rel": "project_members",
+        "baseline": {
+          "node": "Seq Scan",
+          "buffers": 488
+        },
+        "indexed": {
+          "node": "Bitmap Heap Scan",
+          "buffers": 375
+        }
+      },
+      "rel": "project_members",
+      "phases": {
+        "baseline": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "users": ["Index Scan", "Index Scan"],
+            "projects": ["Seq Scan"],
+            "project_members": ["Index Only Scan", "Index Scan", "Seq Scan"],
+            "user_roles": ["Seq Scan", "Seq Scan", "Seq Scan"],
+            "roles": ["Seq Scan", "Seq Scan", "Seq Scan"],
+            "project_sites": ["Index Only Scan"]
+          },
+          "indexesUsed": [
+            "pk_project_members",
+            "pk_project_sites",
+            "pk_users",
+            "uq_project_members_owner"
+          ],
+          "rows": 34,
+          "buffersHit": 487,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 20056,
+          "ms": {
+            "median": 1.059,
+            "min": 1.055,
+            "max": 1.093
+          },
+          "checksum": "486a2a4c5692d0e3d5bd4a28c4562bd8"
+        },
+        "indexed": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "users": ["Index Scan", "Index Scan"],
+            "projects": ["Seq Scan"],
+            "project_members": ["Bitmap Heap Scan", "Index Only Scan", "Index Scan"],
+            "user_roles": ["Seq Scan", "Seq Scan", "Seq Scan"],
+            "roles": ["Seq Scan", "Seq Scan", "Seq Scan"],
+            "project_sites": ["Index Only Scan"]
+          },
+          "indexesUsed": [
+            "idx_project_members_user_id_project_id",
+            "pk_project_members",
+            "pk_project_sites",
+            "pk_users",
+            "uq_project_members_owner"
+          ],
+          "rows": 34,
+          "buffersHit": 374,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 83,
+          "ms": {
+            "median": 0.814,
+            "min": 0.793,
+            "max": 0.859
+          },
+          "checksum": "486a2a4c5692d0e3d5bd4a28c4562bd8"
+        }
+      },
+      "speedup": {
+        "buffers": 1.3,
+        "time": 1.3
+      },
+      "verdict": "improved",
+      "findings": []
+    },
+    {
+      "id": "BQ3a",
+      "slice": "access",
+      "label": "Q3 audit trail, hot sample",
+      "sql": "EXECUTE access_entity_audit_trail('samples', {hot_sample}, NULL, NULL)",
+      "params": {
+        "hot_sample": "1000000"
+      },
+      "resolvedSql": "EXECUTE access_entity_audit_trail('samples', 1000000, NULL, NULL)",
+      "expect": "improve",
+      "serves": ["idx_audit_logs_entity_type_entity_id_created_at"],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "selective",
+      "reason": null,
+      "mustImprove": true,
+      "documented": {
+        "rel": "audit_logs",
+        "baseline": {
+          "node": "Seq Scan",
+          "buffers": 10094
+        },
+        "indexed": {
+          "node": "Bitmap Heap Scan",
+          "buffers": 5279
+        }
+      },
+      "rel": "audit_logs",
+      "phases": {
+        "baseline": {
+          "topNode": "Nested Loop",
+          "scansByRelation": {
+            "audit_logs": ["Seq Scan"],
+            "users": ["Index Scan"]
+          },
+          "indexesUsed": ["pk_users"],
+          "rows": 2154,
+          "buffersHit": 8325,
+          "buffersRead": 1771,
+          "rowsRemovedByFilter": 497846,
+          "ms": {
+            "median": 21.459,
+            "min": 21.266,
+            "max": 22.063
+          },
+          "checksum": "99e0c307a8d794e1d8f78d8ec0dfa11d"
+        },
+        "indexed": {
+          "topNode": "Nested Loop",
+          "scansByRelation": {
+            "audit_logs": ["Bitmap Heap Scan"],
+            "users": ["Index Scan"]
+          },
+          "indexesUsed": ["idx_audit_logs_entity_type_entity_id_created_at", "pk_users"],
+          "rows": 2154,
+          "buffersHit": 5300,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 4.572,
+            "min": 4.362,
+            "max": 4.696
+          },
+          "checksum": "99e0c307a8d794e1d8f78d8ec0dfa11d"
+        }
+      },
+      "speedup": {
+        "buffers": 1.9,
+        "time": 4.69
+      },
+      "verdict": "improved",
+      "findings": []
+    },
+    {
+      "id": "BQ3b",
+      "slice": "access",
+      "label": "Q3 audit trail, cold sample (3 rows)",
+      "sql": "EXECUTE access_entity_audit_trail('samples', {cold_sample}, NULL, NULL)",
+      "params": {
+        "cold_sample": "1000664"
+      },
+      "resolvedSql": "EXECUTE access_entity_audit_trail('samples', 1000664, NULL, NULL)",
+      "expect": "improve",
+      "serves": ["idx_audit_logs_entity_type_entity_id_created_at"],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "selective",
+      "reason": null,
+      "mustImprove": true,
+      "documented": {
+        "rel": "audit_logs",
+        "baseline": {
+          "node": "Seq Scan",
+          "buffers": 6677
+        },
+        "indexed": {
+          "node": "Index Scan",
+          "buffers": 15
+        }
+      },
+      "rel": "audit_logs",
+      "phases": {
+        "baseline": {
+          "topNode": "Nested Loop",
+          "scansByRelation": {
+            "audit_logs": ["Seq Scan"],
+            "users": ["Index Scan"]
+          },
+          "indexesUsed": ["pk_users"],
+          "rows": 3,
+          "buffersHit": 5068,
+          "buffersRead": 1611,
+          "rowsRemovedByFilter": 499997,
+          "ms": {
+            "median": 17.826,
+            "min": 17.695,
+            "max": 17.945
+          },
+          "checksum": "7df04e4d07337a2db67918a78808aef8"
+        },
+        "indexed": {
+          "topNode": "Nested Loop",
+          "scansByRelation": {
+            "audit_logs": ["Index Scan"],
+            "users": ["Index Scan"]
+          },
+          "indexesUsed": ["idx_audit_logs_entity_type_entity_id_created_at", "pk_users"],
+          "rows": 3,
+          "buffersHit": 15,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 0.016,
+            "min": 0.016,
+            "max": 0.019
+          },
+          "checksum": "7df04e4d07337a2db67918a78808aef8"
+        }
+      },
+      "speedup": {
+        "buffers": 445.27,
+        "time": 1114.13
+      },
+      "verdict": "improved",
+      "findings": []
+    },
+    {
+      "id": "BQ3c",
+      "slice": "access",
+      "label": "Q3 audit trail, hot sample, one month",
+      "sql": "EXECUTE access_entity_audit_trail('samples', {hot_sample}, {from_ts}, {to_ts})",
+      "params": {
+        "hot_sample": "1000000",
+        "from_ts": "2019-06-01 00:00:00+00",
+        "to_ts": "2019-07-01 00:00:00+00"
+      },
+      "resolvedSql": "EXECUTE access_entity_audit_trail('samples', 1000000, '2019-06-01 00:00:00+00', '2019-07-01 00:00:00+00')",
+      "expect": "improve",
+      "serves": ["idx_audit_logs_entity_type_entity_id_created_at"],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "selective",
+      "reason": null,
+      "mustImprove": true,
+      "documented": {
+        "rel": "audit_logs",
+        "baseline": {
+          "node": null,
+          "buffers": 6698
+        },
+        "indexed": {
+          "node": null,
+          "buffers": 1883
+        }
+      },
+      "rel": "audit_logs",
+      "phases": {
+        "baseline": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "audit_logs": ["Seq Scan"],
+            "users": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 158,
+          "buffersHit": 5281,
+          "buffersRead": 1419,
+          "rowsRemovedByFilter": 499842,
+          "ms": {
+            "median": 19.109,
+            "min": 18.982,
+            "max": 19.222
+          },
+          "checksum": "1ed4a026a6fda54d884977c7775c5aa4"
+        },
+        "indexed": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "audit_logs": ["Bitmap Heap Scan"],
+            "users": ["Seq Scan"]
+          },
+          "indexesUsed": ["idx_audit_logs_entity_type_entity_id_created_at"],
+          "rows": 158,
+          "buffersHit": 1904,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 1996,
+          "ms": {
+            "median": 1.862,
+            "min": 1.85,
+            "max": 1.911
+          },
+          "checksum": "1ed4a026a6fda54d884977c7775c5aa4"
+        }
+      },
+      "speedup": {
+        "buffers": 3.52,
+        "time": 10.26
+      },
+      "verdict": "improved",
+      "findings": []
+    },
+    {
+      "id": "BQ4a",
+      "slice": "access",
+      "label": "GET /api/audit, largest project trail (~4% of the table)",
+      "sql": "SELECT * FROM audit_logs WHERE entity_type = 'projects' AND entity_id = {hot_project} ORDER BY created_at, audit_id",
+      "params": {
+        "hot_project": "1000000"
+      },
+      "resolvedSql": "SELECT * FROM audit_logs WHERE entity_type = 'projects' AND entity_id = 1000000 ORDER BY created_at, audit_id",
+      "expect": "improve",
+      "serves": ["idx_audit_logs_entity_type_entity_id_created_at"],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "unselective",
+      "reason": "rows of one entity are spread over almost every page: the gain is the avoided filter, not buffers",
+      "mustImprove": false,
+      "documented": {
+        "rel": "audit_logs",
+        "baseline": {
+          "node": null,
+          "buffers": 6668
+        },
+        "indexed": {
+          "node": null,
+          "buffers": 6785
+        }
+      },
+      "rel": "audit_logs",
+      "phases": {
+        "baseline": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "audit_logs": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 21551,
+          "buffersHit": 5539,
+          "buffersRead": 1131,
+          "rowsRemovedByFilter": 478449,
+          "ms": {
+            "median": 20.798,
+            "min": 20.579,
+            "max": 21.102
+          },
+          "checksum": "b97648e998d5c592c909938bc0b8bce2"
+        },
+        "indexed": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "audit_logs": ["Bitmap Heap Scan"]
+          },
+          "indexesUsed": ["idx_audit_logs_entity_type_entity_id_created_at"],
+          "rows": 21551,
+          "buffersHit": 6621,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 7.417,
+            "min": 6.459,
+            "max": 7.613
+          },
+          "checksum": "b97648e998d5c592c909938bc0b8bce2"
+        }
+      },
+      "speedup": {
+        "buffers": 1.01,
+        "time": 2.8
+      },
+      "verdict": "improved",
+      "findings": []
+    },
+    {
+      "id": "BQ4b",
+      "slice": "access",
+      "label": "GET /api/audit, small project trail",
+      "sql": "SELECT * FROM audit_logs WHERE entity_type = 'projects' AND entity_id = {small_project} ORDER BY created_at, audit_id",
+      "params": {
+        "small_project": "1000098"
+      },
+      "resolvedSql": "SELECT * FROM audit_logs WHERE entity_type = 'projects' AND entity_id = 1000098 ORDER BY created_at, audit_id",
+      "expect": "improve",
+      "serves": ["idx_audit_logs_entity_type_entity_id_created_at"],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "selective",
+      "reason": null,
+      "mustImprove": true,
+      "documented": {
+        "rel": "audit_logs",
+        "baseline": {
+          "node": "Seq Scan",
+          "buffers": 6668
+        },
+        "indexed": {
+          "node": "Bitmap Heap Scan",
+          "buffers": 312
+        }
+      },
+      "rel": "audit_logs",
+      "phases": {
+        "baseline": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "audit_logs": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 310,
+          "buffersHit": 5699,
+          "buffersRead": 971,
+          "rowsRemovedByFilter": 499690,
+          "ms": {
+            "median": 17.438,
+            "min": 17.28,
+            "max": 17.662
+          },
+          "checksum": "80ef0365f5aa1ae8b3ec8b7dc44e8fd2"
+        },
+        "indexed": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "audit_logs": ["Bitmap Heap Scan"]
+          },
+          "indexesUsed": ["idx_audit_logs_entity_type_entity_id_created_at"],
+          "rows": 310,
+          "buffersHit": 308,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 0.131,
+            "min": 0.121,
+            "max": 0.138
+          },
+          "checksum": "80ef0365f5aa1ae8b3ec8b7dc44e8fd2"
+        }
+      },
+      "speedup": {
+        "buffers": 21.66,
+        "time": 133.11
+      },
+      "verdict": "improved",
+      "findings": []
+    },
+    {
+      "id": "BQ5",
+      "slice": "access",
+      "label": "audit rows of one actor (actor_id is not indexed)",
+      "sql": "SELECT * FROM audit_logs WHERE actor_id = {hot_user} ORDER BY created_at DESC, audit_id DESC LIMIT 50",
+      "params": {
+        "hot_user": "1000199"
+      },
+      "resolvedSql": "SELECT * FROM audit_logs WHERE actor_id = 1000199 ORDER BY created_at DESC, audit_id DESC LIMIT 50",
+      "expect": "unchanged",
+      "serves": [],
+      "relatesTo": ["idx_audit_logs_entity_type_entity_id_created_at"],
+      "keepsIndex": null,
+      "selectivity": "selective",
+      "reason": "filters on actor_id, which is not a column of the new index",
+      "mustImprove": false,
+      "documented": null,
+      "rel": "audit_logs",
+      "phases": {
+        "baseline": {
+          "topNode": "Limit",
+          "scansByRelation": {
+            "audit_logs": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 50,
+          "buffersHit": 5955,
+          "buffersRead": 715,
+          "rowsRemovedByFilter": 499616,
+          "ms": {
+            "median": 13.214,
+            "min": 12.859,
+            "max": 13.329
+          },
+          "checksum": "291e5a66e0459ba790e2efbd93f2e8b0"
+        },
+        "indexed": {
+          "topNode": "Limit",
+          "scansByRelation": {
+            "audit_logs": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 50,
+          "buffersHit": 6784,
+          "buffersRead": 38,
+          "rowsRemovedByFilter": 499616,
+          "ms": {
+            "median": 15.851,
+            "min": 15.559,
+            "max": 15.946
+          },
+          "checksum": "291e5a66e0459ba790e2efbd93f2e8b0"
+        }
+      },
+      "speedup": {
+        "buffers": 0.98,
+        "time": 0.83
+      },
+      "verdict": "expected-unchanged",
+      "findings": []
+    },
+    {
+      "id": "BQ6",
+      "slice": "access",
+      "label": "dashboard: newest 5 audit rows (created_at is not leading)",
+      "sql": "SELECT audit_id, entity_type, entity_id, action, created_at FROM audit_logs ORDER BY created_at DESC LIMIT 5",
+      "params": {},
+      "resolvedSql": "SELECT audit_id, entity_type, entity_id, action, created_at FROM audit_logs ORDER BY created_at DESC LIMIT 5",
+      "expect": "unchanged",
+      "serves": [],
+      "relatesTo": ["idx_audit_logs_entity_type_entity_id_created_at"],
+      "keepsIndex": null,
+      "selectivity": "unselective",
+      "reason": "no filter on entity_type / entity_id, so created_at is not usable as a leading column",
+      "mustImprove": false,
+      "documented": null,
+      "rel": "audit_logs",
+      "phases": {
+        "baseline": {
+          "topNode": "Limit",
+          "scansByRelation": {
+            "audit_logs": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 5,
+          "buffersHit": 6243,
+          "buffersRead": 427,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 65.992,
+            "min": 63.826,
+            "max": 68.702
+          },
+          "checksum": "655d4287f87ca90fb36364c9694654e7"
+        },
+        "indexed": {
+          "topNode": "Limit",
+          "scansByRelation": {
+            "audit_logs": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 5,
+          "buffersHit": 6822,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 62.933,
+            "min": 62.553,
+            "max": 63.251
+          },
+          "checksum": "655d4287f87ca90fb36364c9694654e7"
+        }
+      },
+      "speedup": {
+        "buffers": 0.98,
+        "time": 1.05
+      },
+      "verdict": "expected-unchanged",
+      "findings": []
+    },
+    {
+      "id": "FQ1",
+      "slice": "field",
+      "label": "sample by exact code (unique index)",
+      "sql": "SELECT * FROM samples WHERE sample_code = {some_code}",
+      "params": {
+        "some_code": "EB-20190728-1010000-000"
+      },
+      "resolvedSql": "SELECT * FROM samples WHERE sample_code = 'EB-20190728-1010000-000'",
+      "expect": "unchanged",
+      "serves": [],
+      "relatesTo": [],
+      "keepsIndex": "samples_sample_code_key",
+      "selectivity": "selective",
+      "reason": "served by the unique constraint index in both phases",
+      "mustImprove": false,
+      "documented": null,
+      "rel": "samples",
+      "phases": {
+        "baseline": {
+          "topNode": "Index Scan",
+          "scansByRelation": {
+            "samples": ["Index Scan"]
+          },
+          "indexesUsed": ["samples_sample_code_key"],
+          "rows": 1,
+          "buffersHit": 4,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 0.005,
+            "min": 0.005,
+            "max": 0.007
+          },
+          "checksum": "422ac4e80830b11fdbebccd531aba83e"
+        },
+        "indexed": {
+          "topNode": "Index Scan",
+          "scansByRelation": {
+            "samples": ["Index Scan"]
+          },
+          "indexesUsed": ["samples_sample_code_key"],
+          "rows": 1,
+          "buffersHit": 4,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 0.006,
+            "min": 0.005,
+            "max": 0.015
+          },
+          "checksum": "422ac4e80830b11fdbebccd531aba83e"
+        }
+      },
+      "speedup": {
+        "buffers": 1,
+        "time": 0.83
+      },
+      "verdict": "expected-unchanged",
+      "findings": []
+    },
+    {
+      "id": "FQ2a",
+      "slice": "field",
+      "label": "prefix search, rarest year",
+      "sql": "SELECT * FROM samples WHERE sample_code LIKE {pfx_rare}",
+      "params": {
+        "pfx_rare": "EB-2025%"
+      },
+      "resolvedSql": "SELECT * FROM samples WHERE sample_code LIKE 'EB-2025%'",
+      "expect": "unchanged",
+      "serves": [],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "selective",
+      "reason": "plain btree cannot answer LIKE under en_US.utf8; the text_pattern_ops candidate is not merged",
+      "mustImprove": false,
+      "documented": null,
+      "rel": "samples",
+      "phases": {
+        "baseline": {
+          "topNode": "Seq Scan",
+          "scansByRelation": {
+            "samples": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 7,
+          "buffersHit": 1334,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 100010,
+          "ms": {
+            "median": 3.701,
+            "min": 3.565,
+            "max": 3.942
+          },
+          "checksum": "ca90d01ff4a6a69225b4316f3106e592"
+        },
+        "indexed": {
+          "topNode": "Seq Scan",
+          "scansByRelation": {
+            "samples": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 7,
+          "buffersHit": 1374,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 100010,
+          "ms": {
+            "median": 3.556,
+            "min": 3.497,
+            "max": 3.797
+          },
+          "checksum": "ca90d01ff4a6a69225b4316f3106e592"
+        }
+      },
+      "speedup": {
+        "buffers": 0.97,
+        "time": 1.04
+      },
+      "verdict": "expected-unchanged",
+      "findings": []
+    },
+    {
+      "id": "FQ2b",
+      "slice": "field",
+      "label": "prefix search, ~12% of the table",
+      "sql": "SELECT * FROM samples WHERE sample_code LIKE {pfx_mid}",
+      "params": {
+        "pfx_mid": "EB-2020%"
+      },
+      "resolvedSql": "SELECT * FROM samples WHERE sample_code LIKE 'EB-2020%'",
+      "expect": "unchanged",
+      "serves": [],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "unselective",
+      "reason": "as FQ2a",
+      "mustImprove": false,
+      "documented": null,
+      "rel": "samples",
+      "phases": {
+        "baseline": {
+          "topNode": "Seq Scan",
+          "scansByRelation": {
+            "samples": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 12400,
+          "buffersHit": 1334,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 87617,
+          "ms": {
+            "median": 4.154,
+            "min": 4.107,
+            "max": 4.28
+          },
+          "checksum": "7dab51a0c185186e4fc7dc6283d707d2"
+        },
+        "indexed": {
+          "topNode": "Seq Scan",
+          "scansByRelation": {
+            "samples": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 12400,
+          "buffersHit": 1374,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 87617,
+          "ms": {
+            "median": 4.138,
+            "min": 3.992,
+            "max": 4.666
+          },
+          "checksum": "7dab51a0c185186e4fc7dc6283d707d2"
+        }
+      },
+      "speedup": {
+        "buffers": 0.97,
+        "time": 1
+      },
+      "verdict": "expected-unchanged",
+      "findings": []
+    },
+    {
+      "id": "FQ2c",
+      "slice": "field",
+      "label": "prefix search, largest year (~88%)",
+      "sql": "SELECT * FROM samples WHERE sample_code LIKE {pfx_big}",
+      "params": {
+        "pfx_big": "EB-2019%"
+      },
+      "resolvedSql": "SELECT * FROM samples WHERE sample_code LIKE 'EB-2019%'",
+      "expect": "unchanged",
+      "serves": [],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "unselective",
+      "reason": "as FQ2a; and a prefix matching most of the table is correctly a sequential scan anyway",
+      "mustImprove": false,
+      "documented": null,
+      "rel": "samples",
+      "phases": {
+        "baseline": {
+          "topNode": "Seq Scan",
+          "scansByRelation": {
+            "samples": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 87600,
+          "buffersHit": 1334,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 12417,
+          "ms": {
+            "median": 8.049,
+            "min": 7.636,
+            "max": 9.435
+          },
+          "checksum": "194d39ca99134ba81647d61516703b59"
+        },
+        "indexed": {
+          "topNode": "Seq Scan",
+          "scansByRelation": {
+            "samples": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 87600,
+          "buffersHit": 1374,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 12417,
+          "ms": {
+            "median": 8.042,
+            "min": 7.696,
+            "max": 9.357
+          },
+          "checksum": "194d39ca99134ba81647d61516703b59"
+        }
+      },
+      "speedup": {
+        "buffers": 0.97,
+        "time": 1
+      },
+      "verdict": "expected-unchanged",
+      "findings": []
+    },
+    {
+      "id": "FQ2d",
+      "slice": "field",
+      "label": "prefix search, the samples of one event",
+      "sql": "SELECT * FROM samples WHERE sample_code LIKE {pfx_event}",
+      "params": {
+        "pfx_event": "EB-20190101-1000000%"
+      },
+      "resolvedSql": "SELECT * FROM samples WHERE sample_code LIKE 'EB-20190101-1000000%'",
+      "expect": "unchanged",
+      "serves": [],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "selective",
+      "reason": "as FQ2a",
+      "mustImprove": false,
+      "documented": null,
+      "rel": "samples",
+      "phases": {
+        "baseline": {
+          "topNode": "Seq Scan",
+          "scansByRelation": {
+            "samples": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 5,
+          "buffersHit": 1334,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 100012,
+          "ms": {
+            "median": 3.832,
+            "min": 3.711,
+            "max": 4.169
+          },
+          "checksum": "d9f9ef617eedfc5b163ea9df10c3ec29"
+        },
+        "indexed": {
+          "topNode": "Seq Scan",
+          "scansByRelation": {
+            "samples": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 5,
+          "buffersHit": 1374,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 100012,
+          "ms": {
+            "median": 4.071,
+            "min": 3.743,
+            "max": 4.094
+          },
+          "checksum": "d9f9ef617eedfc5b163ea9df10c3ec29"
+        }
+      },
+      "speedup": {
+        "buffers": 0.97,
+        "time": 0.94
+      },
+      "verdict": "expected-unchanged",
+      "findings": []
+    },
+    {
+      "id": "FQ3a",
+      "slice": "field",
+      "label": "events of one site in one year",
+      "sql": "SELECT event_id, site_id, collected_at FROM collection_events WHERE site_id = {hot_site} AND collected_at >= {y0} AND collected_at < {y1} ORDER BY collected_at",
+      "params": {
+        "hot_site": "1001500",
+        "y0": "2019-01-01 00:00:00+00",
+        "y1": "2020-01-01 00:00:00+00"
+      },
+      "resolvedSql": "SELECT event_id, site_id, collected_at FROM collection_events WHERE site_id = 1001500 AND collected_at >= '2019-01-01 00:00:00+00' AND collected_at < '2020-01-01 00:00:00+00' ORDER BY collected_at",
+      "expect": "improve",
+      "serves": ["idx_collection_events_site_id_collected_at"],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "selective",
+      "reason": null,
+      "mustImprove": true,
+      "documented": {
+        "rel": "collection_events",
+        "baseline": {
+          "node": "Seq Scan",
+          "buffers": 188
+        },
+        "indexed": {
+          "node": "Bitmap Heap Scan",
+          "buffers": 71
+        }
+      },
+      "rel": "collection_events",
+      "phases": {
+        "baseline": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "collection_events": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 78,
+          "buffersHit": 188,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 19930,
+          "ms": {
+            "median": 0.658,
+            "min": 0.627,
+            "max": 0.663
+          },
+          "checksum": "83fa8480c2c5989a216fe34ce650dd7b"
+        },
+        "indexed": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "collection_events": ["Bitmap Heap Scan"]
+          },
+          "indexesUsed": ["idx_collection_events_site_id_collected_at"],
+          "rows": 78,
+          "buffersHit": 66,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 0.037,
+            "min": 0.032,
+            "max": 0.04
+          },
+          "checksum": "83fa8480c2c5989a216fe34ce650dd7b"
+        }
+      },
+      "speedup": {
+        "buffers": 2.85,
+        "time": 17.78
+      },
+      "verdict": "improved",
+      "findings": []
+    },
+    {
+      "id": "FQ3b",
+      "slice": "field",
+      "label": "events of one site in one month",
+      "sql": "SELECT event_id, site_id, collected_at FROM collection_events WHERE site_id = {hot_site} AND collected_at >= {m0} AND collected_at < {m1} ORDER BY collected_at",
+      "params": {
+        "hot_site": "1001500",
+        "m0": "2019-02-01 00:00:00+00",
+        "m1": "2019-03-01 00:00:00+00"
+      },
+      "resolvedSql": "SELECT event_id, site_id, collected_at FROM collection_events WHERE site_id = 1001500 AND collected_at >= '2019-02-01 00:00:00+00' AND collected_at < '2019-03-01 00:00:00+00' ORDER BY collected_at",
+      "expect": "improve",
+      "serves": ["idx_collection_events_site_id_collected_at"],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "selective",
+      "reason": null,
+      "mustImprove": true,
+      "documented": {
+        "rel": "collection_events",
+        "baseline": {
+          "node": null,
+          "buffers": 188
+        },
+        "indexed": {
+          "node": null,
+          "buffers": 10
+        }
+      },
+      "rel": "collection_events",
+      "phases": {
+        "baseline": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "collection_events": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 9,
+          "buffersHit": 188,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 19999,
+          "ms": {
+            "median": 0.612,
+            "min": 0.585,
+            "max": 0.703
+          },
+          "checksum": "3331ecf1a7eb9a617aefa5f197ae816c"
+        },
+        "indexed": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "collection_events": ["Bitmap Heap Scan"]
+          },
+          "indexesUsed": ["idx_collection_events_site_id_collected_at"],
+          "rows": 9,
+          "buffersHit": 10,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 0.008,
+            "min": 0.008,
+            "max": 0.01
+          },
+          "checksum": "3331ecf1a7eb9a617aefa5f197ae816c"
+        }
+      },
+      "speedup": {
+        "buffers": 18.8,
+        "time": 76.5
+      },
+      "verdict": "improved",
+      "findings": []
+    },
+    {
+      "id": "FQ3c",
+      "slice": "field",
+      "label": "all events of one site, ordered",
+      "sql": "SELECT event_id, site_id, collected_at FROM collection_events WHERE site_id = {hot_site} ORDER BY collected_at",
+      "params": {
+        "hot_site": "1001500"
+      },
+      "resolvedSql": "SELECT event_id, site_id, collected_at FROM collection_events WHERE site_id = 1001500 ORDER BY collected_at",
+      "expect": "improve",
+      "serves": ["idx_collection_events_site_id_collected_at"],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "selective",
+      "reason": null,
+      "mustImprove": true,
+      "documented": {
+        "rel": "collection_events",
+        "baseline": {
+          "node": null,
+          "buffers": 188
+        },
+        "indexed": {
+          "node": null,
+          "buffers": 71
+        }
+      },
+      "rel": "collection_events",
+      "phases": {
+        "baseline": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "collection_events": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 83,
+          "buffersHit": 188,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 19925,
+          "ms": {
+            "median": 0.594,
+            "min": 0.573,
+            "max": 0.609
+          },
+          "checksum": "62ff07a7e29eb8f98bdfecfa8bbff6b6"
+        },
+        "indexed": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "collection_events": ["Bitmap Heap Scan"]
+          },
+          "indexesUsed": ["idx_collection_events_site_id_collected_at"],
+          "rows": 83,
+          "buffersHit": 71,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 0.035,
+            "min": 0.033,
+            "max": 0.044
+          },
+          "checksum": "62ff07a7e29eb8f98bdfecfa8bbff6b6"
+        }
+      },
+      "speedup": {
+        "buffers": 2.65,
+        "time": 16.97
+      },
+      "verdict": "improved",
+      "findings": []
+    },
+    {
+      "id": "FQ3d",
+      "slice": "field",
+      "label": "one month, all sites (leading-column rule)",
+      "sql": "SELECT event_id, site_id, collected_at FROM collection_events WHERE collected_at >= {m0} AND collected_at < {m1} ORDER BY collected_at",
+      "params": {
+        "m0": "2019-02-01 00:00:00+00",
+        "m1": "2019-03-01 00:00:00+00"
+      },
+      "resolvedSql": "SELECT event_id, site_id, collected_at FROM collection_events WHERE collected_at >= '2019-02-01 00:00:00+00' AND collected_at < '2019-03-01 00:00:00+00' ORDER BY collected_at",
+      "expect": "unchanged",
+      "serves": [],
+      "relatesTo": ["idx_collection_events_site_id_collected_at"],
+      "keepsIndex": null,
+      "selectivity": "selective",
+      "reason": "no site_id filter, so the composite index cannot be used (leading column)",
+      "mustImprove": false,
+      "documented": {
+        "rel": "collection_events",
+        "baseline": {
+          "node": "Seq Scan",
+          "buffers": 188
+        },
+        "indexed": {
+          "node": "Seq Scan",
+          "buffers": 188
+        }
+      },
+      "rel": "collection_events",
+      "phases": {
+        "baseline": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "collection_events": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 1344,
+          "buffersHit": 188,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 18664,
+          "ms": {
+            "median": 0.794,
+            "min": 0.776,
+            "max": 0.824
+          },
+          "checksum": "715b7efec1283443b681274dc8deec3a"
+        },
+        "indexed": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "collection_events": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 1344,
+          "buffersHit": 188,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 18664,
+          "ms": {
+            "median": 0.775,
+            "min": 0.772,
+            "max": 0.796
+          },
+          "checksum": "715b7efec1283443b681274dc8deec3a"
+        }
+      },
+      "speedup": {
+        "buffers": 1,
+        "time": 1.02
+      },
+      "verdict": "expected-unchanged",
+      "findings": []
+    },
+    {
+      "id": "FQ4a",
+      "slice": "field",
+      "label": "T14 Q3 moving average, one site",
+      "sql": "EXECUTE field_readings_moving_average('temperature_c', {hot_site}, NULL)",
+      "params": {
+        "hot_site": "1001500"
+      },
+      "resolvedSql": "EXECUTE field_readings_moving_average('temperature_c', 1001500, NULL)",
+      "expect": "improve",
+      "serves": ["idx_collection_events_site_id_collected_at"],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "selective",
+      "reason": null,
+      "mustImprove": true,
+      "documented": {
+        "rel": "collection_events",
+        "baseline": {
+          "node": "Seq Scan",
+          "buffers": 440
+        },
+        "indexed": {
+          "node": "Bitmap Heap Scan",
+          "buffers": 323
+        }
+      },
+      "rel": "collection_events",
+      "phases": {
+        "baseline": {
+          "topNode": "WindowAgg",
+          "scansByRelation": {
+            "sampling_sites": ["Index Scan"],
+            "collection_events": ["Seq Scan"],
+            "environmental_measurements": ["Index Scan"]
+          },
+          "indexesUsed": ["pk_sampling_sites", "uq_environmental_measurements_event_parameter"],
+          "rows": 83,
+          "buffersHit": 440,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 19925,
+          "ms": {
+            "median": 0.611,
+            "min": 0.59,
+            "max": 0.619
+          },
+          "checksum": "ab4e7ff5a059d24ca19f599ef9f6c7a3"
+        },
+        "indexed": {
+          "topNode": "WindowAgg",
+          "scansByRelation": {
+            "sampling_sites": ["Index Scan"],
+            "collection_events": ["Bitmap Heap Scan"],
+            "environmental_measurements": ["Index Scan"]
+          },
+          "indexesUsed": [
+            "idx_collection_events_site_id_collected_at",
+            "pk_sampling_sites",
+            "uq_environmental_measurements_event_parameter"
+          ],
+          "rows": 83,
+          "buffersHit": 323,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 0.176,
+            "min": 0.174,
+            "max": 0.185
+          },
+          "checksum": "ab4e7ff5a059d24ca19f599ef9f6c7a3"
+        }
+      },
+      "speedup": {
+        "buffers": 1.36,
+        "time": 3.47
+      },
+      "verdict": "improved",
+      "findings": []
+    },
+    {
+      "id": "FQ4b",
+      "slice": "field",
+      "label": "T14 Q3 moving average, all sites",
+      "sql": "EXECUTE field_readings_moving_average('temperature_c', NULL, NULL)",
+      "params": {},
+      "resolvedSql": "EXECUTE field_readings_moving_average('temperature_c', NULL, NULL)",
+      "expect": "unchanged",
+      "serves": [],
+      "relatesTo": ["idx_collection_events_site_id_collected_at"],
+      "keepsIndex": null,
+      "selectivity": "unselective",
+      "reason": "reads every event, no index can help",
+      "mustImprove": false,
+      "documented": {
+        "rel": "collection_events",
+        "baseline": {
+          "node": "Seq Scan",
+          "buffers": 1021
+        },
+        "indexed": {
+          "node": "Seq Scan",
+          "buffers": 1021
+        }
+      },
+      "rel": "collection_events",
+      "phases": {
+        "baseline": {
+          "topNode": "WindowAgg",
+          "scansByRelation": {
+            "environmental_measurements": ["Seq Scan"],
+            "collection_events": ["Seq Scan"],
+            "sampling_sites": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 20008,
+          "buffersHit": 1021,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 60024,
+          "ms": {
+            "median": 28.396,
+            "min": 28.123,
+            "max": 30.19
+          },
+          "checksum": "0d8e8b5b691883cd63807a3032c91daa"
+        },
+        "indexed": {
+          "topNode": "WindowAgg",
+          "scansByRelation": {
+            "environmental_measurements": ["Seq Scan"],
+            "collection_events": ["Seq Scan"],
+            "sampling_sites": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 20008,
+          "buffersHit": 1021,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 60024,
+          "ms": {
+            "median": 28.343,
+            "min": 28.329,
+            "max": 29.697
+          },
+          "checksum": "0d8e8b5b691883cd63807a3032c91daa"
+        }
+      },
+      "speedup": {
+        "buffers": 1,
+        "time": 1
+      },
+      "verdict": "expected-unchanged",
+      "findings": []
+    },
+    {
+      "id": "FQ5a",
+      "slice": "field",
+      "label": "Q2 latest status of the samples of one event",
+      "sql": "EXECUTE field_event_samples_latest_status({hot_event})",
+      "params": {
+        "hot_event": "1000000"
+      },
+      "resolvedSql": "EXECUTE field_event_samples_latest_status(1000000)",
+      "expect": "unchanged",
+      "serves": [],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "selective",
+      "reason": "no index of the final set covers it (the T19-D follow-up candidates are not merged); the plan must not change",
+      "mustImprove": false,
+      "documented": null,
+      "rel": "samples",
+      "phases": {
+        "baseline": {
+          "topNode": "Merge Join",
+          "scansByRelation": {
+            "collection_events": ["Index Scan"],
+            "samples": ["Seq Scan"],
+            "sample_status_history": ["Seq Scan"]
+          },
+          "indexesUsed": ["pk_collection_events"],
+          "rows": 5,
+          "buffersHit": 4672,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 100012,
+          "ms": {
+            "median": 68.223,
+            "min": 67.841,
+            "max": 68.393
+          },
+          "checksum": "6d52d857a4330e04619459cc55452d12"
+        },
+        "indexed": {
+          "topNode": "Merge Join",
+          "scansByRelation": {
+            "collection_events": ["Index Scan"],
+            "samples": ["Seq Scan"],
+            "sample_status_history": ["Seq Scan"]
+          },
+          "indexesUsed": ["pk_collection_events"],
+          "rows": 5,
+          "buffersHit": 4737,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 100012,
+          "ms": {
+            "median": 74.641,
+            "min": 73.904,
+            "max": 75.008
+          },
+          "checksum": "6d52d857a4330e04619459cc55452d12"
+        }
+      },
+      "speedup": {
+        "buffers": 0.99,
+        "time": 0.91
+      },
+      "verdict": "expected-unchanged",
+      "findings": []
+    },
+    {
+      "id": "FQ5b",
+      "slice": "field",
+      "label": "samples of one event",
+      "sql": "SELECT * FROM samples WHERE event_id = {hot_event}",
+      "params": {
+        "hot_event": "1000000"
+      },
+      "resolvedSql": "SELECT * FROM samples WHERE event_id = 1000000",
+      "expect": "unchanged",
+      "serves": [],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "selective",
+      "reason": "no index of the final set covers it (the T19-D follow-up candidates are not merged); the plan must not change",
+      "mustImprove": false,
+      "documented": null,
+      "rel": "samples",
+      "phases": {
+        "baseline": {
+          "topNode": "Seq Scan",
+          "scansByRelation": {
+            "samples": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 5,
+          "buffersHit": 1334,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 100012,
+          "ms": {
+            "median": 2.938,
+            "min": 2.9,
+            "max": 3.038
+          },
+          "checksum": "d9f9ef617eedfc5b163ea9df10c3ec29"
+        },
+        "indexed": {
+          "topNode": "Seq Scan",
+          "scansByRelation": {
+            "samples": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 5,
+          "buffersHit": 1374,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 100012,
+          "ms": {
+            "median": 2.931,
+            "min": 2.908,
+            "max": 2.995
+          },
+          "checksum": "d9f9ef617eedfc5b163ea9df10c3ec29"
+        }
+      },
+      "speedup": {
+        "buffers": 0.97,
+        "time": 1
+      },
+      "verdict": "expected-unchanged",
+      "findings": []
+    },
+    {
+      "id": "FQ5c",
+      "slice": "field",
+      "label": "Q1 sample counts, all sites",
+      "sql": "EXECUTE field_site_sample_counts(NULL)",
+      "params": {},
+      "resolvedSql": "EXECUTE field_site_sample_counts(NULL)",
+      "expect": "unchanged",
+      "serves": [],
+      "relatesTo": ["idx_collection_events_site_id_collected_at"],
+      "keepsIndex": null,
+      "selectivity": "unselective",
+      "reason": "reads every sample, no index can help",
+      "mustImprove": false,
+      "documented": null,
+      "rel": "collection_events",
+      "phases": {
+        "baseline": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "samples": ["Seq Scan"],
+            "collection_events": ["Seq Scan"],
+            "sampling_sites": ["Seq Scan"],
+            "regions": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 2005,
+          "buffersHit": 1550,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 43.044,
+            "min": 42.584,
+            "max": 43.173
+          },
+          "checksum": "c1950ef3fcf61338223426f548723f5d"
+        },
+        "indexed": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "samples": ["Seq Scan"],
+            "collection_events": ["Seq Scan"],
+            "sampling_sites": ["Seq Scan"],
+            "regions": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 2005,
+          "buffersHit": 1590,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 44.059,
+            "min": 43.857,
+            "max": 45.05
+          },
+          "checksum": "c1950ef3fcf61338223426f548723f5d"
+        }
+      },
+      "speedup": {
+        "buffers": 0.97,
+        "time": 0.98
+      },
+      "verdict": "expected-unchanged",
+      "findings": []
+    },
+    {
+      "id": "FQ5d",
+      "slice": "field",
+      "label": "v_site_sample_summary, one site",
+      "sql": "SELECT * FROM v_site_sample_summary WHERE site_id = {hot_site}",
+      "params": {
+        "hot_site": "1001500"
+      },
+      "resolvedSql": "SELECT * FROM v_site_sample_summary WHERE site_id = 1001500",
+      "expect": "unchanged",
+      "serves": [],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "selective",
+      "reason": "no index of the final set covers it (the T19-D follow-up candidates are not merged); the plan must not change",
+      "mustImprove": false,
+      "documented": null,
+      "rel": "samples",
+      "phases": {
+        "baseline": {
+          "topNode": "Aggregate",
+          "scansByRelation": {
+            "regions": ["Index Scan"],
+            "sampling_sites": ["Index Scan"],
+            "samples": ["Seq Scan"],
+            "collection_events": ["Seq Scan"]
+          },
+          "indexesUsed": ["pk_sampling_sites", "uq_regions_name_type"],
+          "rows": 1,
+          "buffersHit": 1527,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 19925,
+          "ms": {
+            "median": 7.143,
+            "min": 7.062,
+            "max": 7.555
+          },
+          "checksum": "733a7ec8598919d4e73c38044ea5e0a5"
+        },
+        "indexed": {
+          "topNode": "Aggregate",
+          "scansByRelation": {
+            "regions": ["Index Scan"],
+            "sampling_sites": ["Index Scan"],
+            "samples": ["Seq Scan"],
+            "collection_events": ["Bitmap Heap Scan"]
+          },
+          "indexesUsed": [
+            "idx_collection_events_site_id_collected_at",
+            "pk_sampling_sites",
+            "uq_regions_name_type"
+          ],
+          "rows": 1,
+          "buffersHit": 1450,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 7.839,
+            "min": 7.716,
+            "max": 7.896
+          },
+          "checksum": "733a7ec8598919d4e73c38044ea5e0a5"
+        }
+      },
+      "speedup": {
+        "buffers": 1.05,
+        "time": 0.91
+      },
+      "verdict": "expected-unchanged",
+      "findings": []
+    },
+    {
+      "id": "BQ1a",
+      "slice": "analysis",
+      "label": "detections of the hot taxon",
+      "sql": "SELECT assignment_id, analysis_id, library_id, read_count, confidence, qc_flag FROM taxon_assignments WHERE taxon_id = {hot_taxon}",
+      "params": {
+        "hot_taxon": "1000004"
+      },
+      "resolvedSql": "SELECT assignment_id, analysis_id, library_id, read_count, confidence, qc_flag FROM taxon_assignments WHERE taxon_id = 1000004",
+      "expect": "improve",
+      "serves": ["idx_taxon_assignments_taxon_id_qc_flag"],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "unselective",
+      "reason": "fetching ~2.7% of the rows scattered over the heap limits the gain",
+      "mustImprove": false,
+      "documented": {
+        "rel": "taxon_assignments",
+        "baseline": {
+          "node": "Seq Scan",
+          "buffers": 5156
+        },
+        "indexed": {
+          "node": "Bitmap Heap Scan",
+          "buffers": 4864
+        }
+      },
+      "rel": "taxon_assignments",
+      "phases": {
+        "baseline": {
+          "topNode": "Seq Scan",
+          "scansByRelation": {
+            "taxon_assignments": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 13432,
+          "buffersHit": 545,
+          "buffersRead": 4611,
+          "rowsRemovedByFilter": 486611,
+          "ms": {
+            "median": 20.044,
+            "min": 19.892,
+            "max": 20.375
+          },
+          "checksum": "d2be8e651c035a4e36fe6f3894848247"
+        },
+        "indexed": {
+          "topNode": "Bitmap Heap Scan",
+          "scansByRelation": {
+            "taxon_assignments": ["Bitmap Heap Scan"]
+          },
+          "indexesUsed": ["idx_taxon_assignments_taxon_id_qc_flag"],
+          "rows": 13432,
+          "buffersHit": 4864,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 3.259,
+            "min": 2.961,
+            "max": 3.696
+          },
+          "checksum": "d2be8e651c035a4e36fe6f3894848247"
+        }
+      },
+      "speedup": {
+        "buffers": 1.06,
+        "time": 6.15
+      },
+      "verdict": "improved",
+      "findings": []
+    },
+    {
+      "id": "BQ1b",
+      "slice": "analysis",
+      "label": "detections of the cold taxon",
+      "sql": "SELECT assignment_id, analysis_id, library_id, read_count, confidence, qc_flag FROM taxon_assignments WHERE taxon_id = {cold_taxon}",
+      "params": {
+        "cold_taxon": "1001956"
+      },
+      "resolvedSql": "SELECT assignment_id, analysis_id, library_id, read_count, confidence, qc_flag FROM taxon_assignments WHERE taxon_id = 1001956",
+      "expect": "improve",
+      "serves": ["idx_taxon_assignments_taxon_id_qc_flag"],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "selective",
+      "reason": null,
+      "mustImprove": true,
+      "documented": {
+        "rel": "taxon_assignments",
+        "baseline": {
+          "node": "Seq Scan",
+          "buffers": 5156
+        },
+        "indexed": {
+          "node": "Bitmap Heap Scan",
+          "buffers": 64
+        }
+      },
+      "rel": "taxon_assignments",
+      "phases": {
+        "baseline": {
+          "topNode": "Seq Scan",
+          "scansByRelation": {
+            "taxon_assignments": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 62,
+          "buffersHit": 737,
+          "buffersRead": 4419,
+          "rowsRemovedByFilter": 499981,
+          "ms": {
+            "median": 18.925,
+            "min": 18.849,
+            "max": 19.159
+          },
+          "checksum": "523ef7d30171a8cd6b481f7a51877b02"
+        },
+        "indexed": {
+          "topNode": "Bitmap Heap Scan",
+          "scansByRelation": {
+            "taxon_assignments": ["Bitmap Heap Scan"]
+          },
+          "indexesUsed": ["idx_taxon_assignments_taxon_id_qc_flag"],
+          "rows": 62,
+          "buffersHit": 64,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 0.028,
+            "min": 0.024,
+            "max": 0.038
+          },
+          "checksum": "523ef7d30171a8cd6b481f7a51877b02"
+        }
+      },
+      "speedup": {
+        "buffers": 80.56,
+        "time": 675.89
+      },
+      "verdict": "improved",
+      "findings": []
+    },
+    {
+      "id": "BQ1c",
+      "slice": "analysis",
+      "label": "passing detections of the hot taxon",
+      "sql": "SELECT assignment_id, analysis_id, library_id, read_count, confidence, qc_flag FROM taxon_assignments WHERE taxon_id = {hot_taxon} AND qc_flag = 'pass'",
+      "params": {
+        "hot_taxon": "1000004"
+      },
+      "resolvedSql": "SELECT assignment_id, analysis_id, library_id, read_count, confidence, qc_flag FROM taxon_assignments WHERE taxon_id = 1000004 AND qc_flag = 'pass'",
+      "expect": "improve",
+      "serves": ["idx_taxon_assignments_taxon_id_qc_flag"],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "selective",
+      "reason": null,
+      "mustImprove": true,
+      "documented": {
+        "rel": "taxon_assignments",
+        "baseline": {
+          "node": "Seq Scan",
+          "buffers": 5156
+        },
+        "indexed": {
+          "node": "Bitmap Heap Scan",
+          "buffers": 2029
+        }
+      },
+      "rel": "taxon_assignments",
+      "phases": {
+        "baseline": {
+          "topNode": "Seq Scan",
+          "scansByRelation": {
+            "taxon_assignments": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 2587,
+          "buffersHit": 993,
+          "buffersRead": 4163,
+          "rowsRemovedByFilter": 497456,
+          "ms": {
+            "median": 19.227,
+            "min": 19.041,
+            "max": 19.689
+          },
+          "checksum": "6a882dee009136ef20f0b5b82812a584"
+        },
+        "indexed": {
+          "topNode": "Bitmap Heap Scan",
+          "scansByRelation": {
+            "taxon_assignments": ["Bitmap Heap Scan"]
+          },
+          "indexesUsed": ["idx_taxon_assignments_taxon_id_qc_flag"],
+          "rows": 2587,
+          "buffersHit": 2029,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 0.767,
+            "min": 0.725,
+            "max": 0.803
+          },
+          "checksum": "6a882dee009136ef20f0b5b82812a584"
+        }
+      },
+      "speedup": {
+        "buffers": 2.54,
+        "time": 25.07
+      },
+      "verdict": "improved",
+      "findings": []
+    },
+    {
+      "id": "BQ2a",
+      "slice": "analysis",
+      "label": "detection history, genus subtree",
+      "sql": "EXECUTE analysis_taxon_detection_history({big_genus}, NULL, NULL, NULL)",
+      "params": {
+        "big_genus": "6"
+      },
+      "resolvedSql": "EXECUTE analysis_taxon_detection_history(6, NULL, NULL, NULL)",
+      "expect": "unchanged",
+      "serves": [],
+      "relatesTo": ["idx_taxon_assignments_taxon_id_qc_flag"],
+      "keepsIndex": null,
+      "selectivity": "unselective",
+      "reason": "the plan hash-joins all assignments of the approved runs; no per-taxon index changes it",
+      "mustImprove": false,
+      "documented": null,
+      "rel": "taxon_assignments",
+      "phases": {
+        "baseline": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "taxa": ["Index Only Scan", "Seq Scan", "Seq Scan"],
+            "samples": ["Seq Scan"],
+            "dna_extractions": ["Seq Scan"],
+            "sequencing_libraries": ["Seq Scan"],
+            "taxon_assignments": ["Seq Scan"],
+            "analysis_runs": ["Seq Scan"],
+            "collection_events": ["Seq Scan"],
+            "sampling_sites": ["Seq Scan"]
+          },
+          "indexesUsed": ["pk_taxa"],
+          "rows": 19953,
+          "buffersHit": 4776,
+          "buffersRead": 3971,
+          "rowsRemovedByFilter": 400544,
+          "ms": {
+            "median": 79.637,
+            "min": 78.416,
+            "max": 80.908
+          },
+          "checksum": "22a9e2f335b3a6dd8c394f64afc3705c"
+        },
+        "indexed": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "taxa": ["Index Only Scan", "Seq Scan", "Seq Scan"],
+            "samples": ["Seq Scan"],
+            "dna_extractions": ["Seq Scan"],
+            "sequencing_libraries": ["Seq Scan"],
+            "taxon_assignments": ["Seq Scan"],
+            "analysis_runs": ["Seq Scan"],
+            "collection_events": ["Seq Scan"],
+            "sampling_sites": ["Seq Scan"]
+          },
+          "indexesUsed": ["pk_taxa"],
+          "rows": 19953,
+          "buffersHit": 8707,
+          "buffersRead": 108,
+          "rowsRemovedByFilter": 400544,
+          "ms": {
+            "median": 80.789,
+            "min": 77.922,
+            "max": 138.379
+          },
+          "checksum": "22a9e2f335b3a6dd8c394f64afc3705c"
+        }
+      },
+      "speedup": {
+        "buffers": 0.99,
+        "time": 0.99
+      },
+      "verdict": "expected-unchanged",
+      "findings": []
+    },
+    {
+      "id": "BQ2b",
+      "slice": "analysis",
+      "label": "detection history, hot taxon",
+      "sql": "EXECUTE analysis_taxon_detection_history({hot_approved_taxon}, NULL, NULL, NULL)",
+      "params": {
+        "hot_approved_taxon": "1000004"
+      },
+      "resolvedSql": "EXECUTE analysis_taxon_detection_history(1000004, NULL, NULL, NULL)",
+      "expect": "unchanged",
+      "serves": [],
+      "relatesTo": ["idx_taxon_assignments_taxon_id_qc_flag"],
+      "keepsIndex": null,
+      "selectivity": "unselective",
+      "reason": "as BQ2a",
+      "mustImprove": false,
+      "documented": null,
+      "rel": "taxon_assignments",
+      "phases": {
+        "baseline": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "taxa": ["Index Only Scan", "Seq Scan", "Seq Scan"],
+            "samples": ["Seq Scan"],
+            "dna_extractions": ["Seq Scan"],
+            "sequencing_libraries": ["Seq Scan"],
+            "taxon_assignments": ["Seq Scan"],
+            "analysis_runs": ["Seq Scan"],
+            "collection_events": ["Seq Scan"],
+            "sampling_sites": ["Seq Scan"]
+          },
+          "indexesUsed": ["pk_taxa"],
+          "rows": 514,
+          "buffersHit": 5014,
+          "buffersRead": 3715,
+          "rowsRemovedByFilter": 400544,
+          "ms": {
+            "median": 63.849,
+            "min": 63.406,
+            "max": 65.502
+          },
+          "checksum": "339b85b20862f293c9dd053540d47019"
+        },
+        "indexed": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "taxa": ["Index Only Scan", "Seq Scan", "Seq Scan"],
+            "samples": ["Seq Scan"],
+            "dna_extractions": ["Seq Scan"],
+            "sequencing_libraries": ["Seq Scan"],
+            "taxon_assignments": ["Seq Scan"],
+            "analysis_runs": ["Seq Scan"],
+            "collection_events": ["Seq Scan"],
+            "sampling_sites": ["Seq Scan"]
+          },
+          "indexesUsed": ["pk_taxa"],
+          "rows": 514,
+          "buffersHit": 8797,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 400544,
+          "ms": {
+            "median": 61.688,
+            "min": 61.02,
+            "max": 62.241
+          },
+          "checksum": "339b85b20862f293c9dd053540d47019"
+        }
+      },
+      "speedup": {
+        "buffers": 0.99,
+        "time": 1.04
+      },
+      "verdict": "expected-unchanged",
+      "findings": []
+    },
+    {
+      "id": "BQ3",
+      "slice": "analysis",
+      "label": "taxa at the busiest site",
+      "sql": "EXECUTE analysis_taxa_at_site({busy_site}, NULL, NULL, NULL)",
+      "params": {
+        "busy_site": "1000571"
+      },
+      "resolvedSql": "EXECUTE analysis_taxa_at_site(1000571, NULL, NULL, NULL)",
+      "expect": "improve",
+      "serves": ["idx_taxon_assignments_taxon_id_qc_flag", "idx_taxon_assignments_library_id"],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "selective",
+      "reason": null,
+      "mustImprove": true,
+      "documented": {
+        "rel": "taxon_assignments",
+        "baseline": {
+          "node": null,
+          "buffers": 17996
+        },
+        "indexed": {
+          "node": null,
+          "buffers": 7543
+        }
+      },
+      "rel": "taxon_assignments",
+      "phases": {
+        "baseline": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "taxon_assignments": ["Seq Scan", "Seq Scan"],
+            "samples": ["Seq Scan", "Seq Scan"],
+            "collection_events": ["Seq Scan", "Seq Scan"],
+            "dna_extractions": ["Index Scan", "Seq Scan"],
+            "sequencing_libraries": ["Index Scan", "Seq Scan"],
+            "analysis_runs": ["Index Scan", "Seq Scan"],
+            "taxa": ["Index Scan"]
+          },
+          "indexesUsed": [
+            "pk_analysis_runs",
+            "pk_taxa",
+            "uq_dna_extractions_sample_attempt",
+            "uq_sequencing_libraries_extraction_run"
+          ],
+          "rows": 91,
+          "buffersHit": 11558,
+          "buffersRead": 6438,
+          "rowsRemovedByFilter": 820295,
+          "ms": {
+            "median": 97.549,
+            "min": 97.302,
+            "max": 111.597
+          },
+          "checksum": "d980d99af51fac3c36e6ff27d47ea299"
+        },
+        "indexed": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "samples": ["Index Scan", "Seq Scan"],
+            "collection_events": ["Bitmap Heap Scan", "Index Scan"],
+            "dna_extractions": ["Index Scan", "Index Scan"],
+            "sequencing_libraries": ["Index Scan", "Index Scan"],
+            "taxon_assignments": ["Index Scan", "Index Scan"],
+            "analysis_runs": ["Index Scan", "Seq Scan"],
+            "taxa": ["Index Scan"]
+          },
+          "indexesUsed": [
+            "idx_collection_events_site_id_collected_at",
+            "idx_taxon_assignments_library_id",
+            "idx_taxon_assignments_taxon_id_qc_flag",
+            "pk_analysis_runs",
+            "pk_collection_events",
+            "pk_dna_extractions",
+            "pk_samples",
+            "pk_sequencing_libraries",
+            "pk_taxa",
+            "uq_dna_extractions_sample_attempt",
+            "uq_sequencing_libraries_extraction_run"
+          ],
+          "rows": 91,
+          "buffersHit": 7443,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 807,
+          "ms": {
+            "median": 9.681,
+            "min": 9.571,
+            "max": 10.33
+          },
+          "checksum": "d980d99af51fac3c36e6ff27d47ea299"
+        }
+      },
+      "speedup": {
+        "buffers": 2.42,
+        "time": 10.08
+      },
+      "verdict": "improved",
+      "findings": []
+    },
+    {
+      "id": "BQ4a",
+      "slice": "analysis",
+      "label": "richness by site and year, all sites",
+      "sql": "EXECUTE analysis_richness_by_site_year(NULL, NULL, NULL, NULL)",
+      "params": {},
+      "resolvedSql": "EXECUTE analysis_richness_by_site_year(NULL, NULL, NULL, NULL)",
+      "expect": "unchanged",
+      "serves": [],
+      "relatesTo": ["idx_taxon_assignments_library_id"],
+      "keepsIndex": null,
+      "selectivity": "unselective",
+      "reason": "must read every approved detection; an index cannot help",
+      "mustImprove": false,
+      "documented": null,
+      "rel": "taxon_assignments",
+      "phases": {
+        "baseline": {
+          "topNode": "WindowAgg",
+          "scansByRelation": {
+            "samples": ["Seq Scan", "Seq Scan"],
+            "collection_events": ["Seq Scan", "Seq Scan"],
+            "sampling_sites": ["Seq Scan"],
+            "dna_extractions": ["Seq Scan"],
+            "sequencing_libraries": ["Seq Scan"],
+            "taxon_assignments": ["Seq Scan"],
+            "analysis_runs": ["Seq Scan"],
+            "taxa": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 3296,
+          "buffersHit": 7251,
+          "buffersRead": 2979,
+          "rowsRemovedByFilter": 400553,
+          "ms": {
+            "median": 136.737,
+            "min": 136.422,
+            "max": 137.294
+          },
+          "checksum": "adb2f45f4d7622d8988402cb13c921f3"
+        },
+        "indexed": {
+          "topNode": "WindowAgg",
+          "scansByRelation": {
+            "samples": ["Seq Scan", "Seq Scan"],
+            "collection_events": ["Seq Scan", "Seq Scan"],
+            "sampling_sites": ["Seq Scan"],
+            "dna_extractions": ["Seq Scan"],
+            "sequencing_libraries": ["Seq Scan"],
+            "taxon_assignments": ["Seq Scan"],
+            "analysis_runs": ["Seq Scan"],
+            "taxa": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 3296,
+          "buffersHit": 10338,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 400553,
+          "ms": {
+            "median": 144.457,
+            "min": 143.275,
+            "max": 144.791
+          },
+          "checksum": "adb2f45f4d7622d8988402cb13c921f3"
+        }
+      },
+      "speedup": {
+        "buffers": 0.99,
+        "time": 0.95
+      },
+      "verdict": "expected-unchanged",
+      "findings": []
+    },
+    {
+      "id": "BQ4b",
+      "slice": "analysis",
+      "label": "richness by site and year, one site",
+      "sql": "EXECUTE analysis_richness_by_site_year(NULL, {busy_site}, NULL, NULL)",
+      "params": {
+        "busy_site": "1000571"
+      },
+      "resolvedSql": "EXECUTE analysis_richness_by_site_year(NULL, 1000571, NULL, NULL)",
+      "expect": "improve",
+      "serves": ["idx_taxon_assignments_library_id"],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "selective",
+      "reason": null,
+      "mustImprove": true,
+      "documented": {
+        "rel": "taxon_assignments",
+        "baseline": {
+          "node": null,
+          "buffers": 10882
+        },
+        "indexed": {
+          "node": null,
+          "buffers": 5928
+        }
+      },
+      "rel": "taxon_assignments",
+      "phases": {
+        "baseline": {
+          "topNode": "WindowAgg",
+          "scansByRelation": {
+            "sampling_sites": ["Seq Scan"],
+            "samples": ["Seq Scan", "Seq Scan"],
+            "collection_events": ["Seq Scan", "Seq Scan"],
+            "taxon_assignments": ["Seq Scan"],
+            "dna_extractions": ["Index Scan"],
+            "sequencing_libraries": ["Index Scan"],
+            "analysis_runs": ["Index Scan"],
+            "taxa": ["Index Scan"]
+          },
+          "indexesUsed": [
+            "pk_analysis_runs",
+            "pk_taxa",
+            "uq_dna_extractions_sample_attempt",
+            "uq_sequencing_libraries_extraction_run"
+          ],
+          "rows": 2,
+          "buffersHit": 8095,
+          "buffersRead": 2787,
+          "rowsRemovedByFilter": 439657,
+          "ms": {
+            "median": 37.391,
+            "min": 37.333,
+            "max": 37.879
+          },
+          "checksum": "598913556e4cdcd2c72fea8b39a0067e"
+        },
+        "indexed": {
+          "topNode": "WindowAgg",
+          "scansByRelation": {
+            "sampling_sites": ["Seq Scan"],
+            "samples": ["Seq Scan", "Seq Scan"],
+            "collection_events": ["Bitmap Heap Scan", "Bitmap Heap Scan"],
+            "dna_extractions": ["Index Scan"],
+            "sequencing_libraries": ["Index Scan"],
+            "taxon_assignments": ["Index Scan"],
+            "analysis_runs": ["Seq Scan"],
+            "taxa": ["Index Scan"]
+          },
+          "indexesUsed": [
+            "idx_collection_events_site_id_collected_at",
+            "idx_taxon_assignments_library_id",
+            "pk_taxa",
+            "uq_dna_extractions_sample_attempt",
+            "uq_sequencing_libraries_extraction_run"
+          ],
+          "rows": 2,
+          "buffersHit": 5728,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 806,
+          "ms": {
+            "median": 16.954,
+            "min": 16.667,
+            "max": 17.044
+          },
+          "checksum": "598913556e4cdcd2c72fea8b39a0067e"
+        }
+      },
+      "speedup": {
+        "buffers": 1.9,
+        "time": 2.21
+      },
+      "verdict": "improved",
+      "findings": []
+    },
+    {
+      "id": "BQ5a",
+      "slice": "analysis",
+      "label": "v_approved_detections, hot taxon",
+      "sql": "SELECT * FROM v_approved_detections WHERE taxon_id = {hot_approved_taxon}",
+      "params": {
+        "hot_approved_taxon": "1000004"
+      },
+      "resolvedSql": "SELECT * FROM v_approved_detections WHERE taxon_id = 1000004",
+      "expect": "improve",
+      "serves": ["idx_taxon_assignments_taxon_id_qc_flag"],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "unselective",
+      "reason": "a modest gain (17% fewer buffers documented)",
+      "mustImprove": false,
+      "documented": {
+        "rel": "taxon_assignments",
+        "baseline": {
+          "node": null,
+          "buffers": 9876
+        },
+        "indexed": {
+          "node": null,
+          "buffers": 8247
+        }
+      },
+      "rel": "taxon_assignments",
+      "phases": {
+        "baseline": {
+          "topNode": "Nested Loop",
+          "scansByRelation": {
+            "taxa": ["Index Scan"],
+            "analysis_runs": ["Seq Scan"],
+            "taxon_assignments": ["Index Scan"],
+            "dna_markers": ["Seq Scan"],
+            "sequencing_libraries": ["Index Scan"],
+            "dna_extractions": ["Index Scan"],
+            "samples": ["Index Scan"],
+            "collection_events": ["Index Scan"],
+            "sampling_sites": ["Index Scan"]
+          },
+          "indexesUsed": [
+            "pk_collection_events",
+            "pk_dna_extractions",
+            "pk_samples",
+            "pk_sampling_sites",
+            "pk_sequencing_libraries",
+            "pk_taxa",
+            "uq_taxon_assignments_analysis_library_taxon"
+          ],
+          "rows": 514,
+          "buffersHit": 9877,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 813,
+          "ms": {
+            "median": 3.717,
+            "min": 3.525,
+            "max": 3.842
+          },
+          "checksum": "a5783401d59af52b2fac8ab8bc95e4ba"
+        },
+        "indexed": {
+          "topNode": "Hash Join",
+          "scansByRelation": {
+            "taxa": ["Index Scan"],
+            "taxon_assignments": ["Bitmap Heap Scan"],
+            "analysis_runs": ["Seq Scan"],
+            "dna_markers": ["Index Scan"],
+            "sequencing_libraries": ["Index Scan"],
+            "dna_extractions": ["Index Scan"],
+            "samples": ["Index Scan"],
+            "collection_events": ["Index Scan"],
+            "sampling_sites": ["Seq Scan"]
+          },
+          "indexesUsed": [
+            "idx_taxon_assignments_taxon_id_qc_flag",
+            "pk_collection_events",
+            "pk_dna_extractions",
+            "pk_dna_markers",
+            "pk_samples",
+            "pk_sequencing_libraries",
+            "pk_taxa"
+          ],
+          "rows": 514,
+          "buffersHit": 8247,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 802,
+          "ms": {
+            "median": 2.926,
+            "min": 2.861,
+            "max": 3.225
+          },
+          "checksum": "a5783401d59af52b2fac8ab8bc95e4ba"
+        }
+      },
+      "speedup": {
+        "buffers": 1.2,
+        "time": 1.27
+      },
+      "verdict": "improved",
+      "findings": []
+    },
+    {
+      "id": "BQ5b",
+      "slice": "analysis",
+      "label": "v_approved_detections, busiest site",
+      "sql": "SELECT * FROM v_approved_detections WHERE site_id = {busy_site}",
+      "params": {
+        "busy_site": "1000571"
+      },
+      "resolvedSql": "SELECT * FROM v_approved_detections WHERE site_id = 1000571",
+      "expect": "improve",
+      "serves": ["idx_taxon_assignments_library_id"],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "selective",
+      "reason": null,
+      "mustImprove": true,
+      "documented": {
+        "rel": "taxon_assignments",
+        "baseline": {
+          "node": null,
+          "buffers": 9337
+        },
+        "indexed": {
+          "node": null,
+          "buffers": 4383
+        }
+      },
+      "rel": "taxon_assignments",
+      "phases": {
+        "baseline": {
+          "topNode": "Nested Loop",
+          "scansByRelation": {
+            "sampling_sites": ["Index Scan"],
+            "taxon_assignments": ["Seq Scan"],
+            "samples": ["Seq Scan"],
+            "collection_events": ["Seq Scan"],
+            "dna_extractions": ["Index Scan"],
+            "sequencing_libraries": ["Index Scan"],
+            "analysis_runs": ["Index Scan"],
+            "dna_markers": ["Seq Scan"],
+            "taxa": ["Index Scan"]
+          },
+          "indexesUsed": [
+            "pk_analysis_runs",
+            "pk_sampling_sites",
+            "pk_taxa",
+            "uq_dna_extractions_sample_attempt",
+            "uq_sequencing_libraries_extraction_run"
+          ],
+          "rows": 95,
+          "buffersHit": 7364,
+          "buffersRead": 1973,
+          "rowsRemovedByFilter": 419700,
+          "ms": {
+            "median": 32.582,
+            "min": 32.171,
+            "max": 32.913
+          },
+          "checksum": "8ee4ff2bcba1654fea2c64f81e75810f"
+        },
+        "indexed": {
+          "topNode": "Nested Loop",
+          "scansByRelation": {
+            "sampling_sites": ["Index Scan"],
+            "samples": ["Seq Scan"],
+            "collection_events": ["Bitmap Heap Scan"],
+            "dna_extractions": ["Index Scan"],
+            "sequencing_libraries": ["Index Scan"],
+            "taxon_assignments": ["Index Scan"],
+            "analysis_runs": ["Seq Scan"],
+            "dna_markers": ["Seq Scan"],
+            "taxa": ["Index Scan"]
+          },
+          "indexesUsed": [
+            "idx_collection_events_site_id_collected_at",
+            "idx_taxon_assignments_library_id",
+            "pk_sampling_sites",
+            "pk_taxa",
+            "uq_dna_extractions_sample_attempt",
+            "uq_sequencing_libraries_extraction_run"
+          ],
+          "rows": 95,
+          "buffersHit": 4283,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 806,
+          "ms": {
+            "median": 9.265,
+            "min": 9.016,
+            "max": 9.311
+          },
+          "checksum": "8ee4ff2bcba1654fea2c64f81e75810f"
+        }
+      },
+      "speedup": {
+        "buffers": 2.18,
+        "time": 3.52
+      },
+      "verdict": "improved",
+      "findings": []
+    },
+    {
+      "id": "BQ6",
+      "slice": "analysis",
+      "label": "assignments of one analysis (redundancy: unique constraint index)",
+      "sql": "SELECT assignment_id, library_id, taxon_id, read_count, qc_flag FROM taxon_assignments WHERE analysis_id = {big_analysis}",
+      "params": {
+        "big_analysis": "1000000"
+      },
+      "resolvedSql": "SELECT assignment_id, library_id, taxon_id, read_count, qc_flag FROM taxon_assignments WHERE analysis_id = 1000000",
+      "expect": "unchanged",
+      "serves": [],
+      "relatesTo": ["idx_taxon_assignments_taxon_id_qc_flag", "idx_taxon_assignments_library_id"],
+      "keepsIndex": "uq_taxon_assignments_analysis_library_taxon",
+      "selectivity": "selective",
+      "reason": "analysis_id leads uq_taxon_assignments_analysis_library_taxon",
+      "mustImprove": false,
+      "documented": null,
+      "rel": "taxon_assignments",
+      "phases": {
+        "baseline": {
+          "topNode": "Index Scan",
+          "scansByRelation": {
+            "taxon_assignments": ["Index Scan"]
+          },
+          "indexesUsed": ["uq_taxon_assignments_analysis_library_taxon"],
+          "rows": 500,
+          "buffersHit": 13,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 0.055,
+            "min": 0.049,
+            "max": 0.056
+          },
+          "checksum": "0124671b11789b62dcbe59d89b6a2d15"
+        },
+        "indexed": {
+          "topNode": "Index Scan",
+          "scansByRelation": {
+            "taxon_assignments": ["Index Scan"]
+          },
+          "indexesUsed": ["uq_taxon_assignments_analysis_library_taxon"],
+          "rows": 500,
+          "buffersHit": 13,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 0.053,
+            "min": 0.05,
+            "max": 0.061
+          },
+          "checksum": "0124671b11789b62dcbe59d89b6a2d15"
+        }
+      },
+      "speedup": {
+        "buffers": 1,
+        "time": 1.04
+      },
+      "verdict": "expected-unchanged",
+      "findings": []
+    },
+    {
+      "id": "BQ7a",
+      "slice": "analysis",
+      "label": "detections of one library",
+      "sql": "SELECT assignment_id, analysis_id, taxon_id, read_count, qc_flag FROM taxon_assignments WHERE library_id = {hot_library}",
+      "params": {
+        "hot_library": "1000000"
+      },
+      "resolvedSql": "SELECT assignment_id, analysis_id, taxon_id, read_count, qc_flag FROM taxon_assignments WHERE library_id = 1000000",
+      "expect": "improve",
+      "serves": ["idx_taxon_assignments_library_id"],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "selective",
+      "reason": null,
+      "mustImprove": true,
+      "documented": {
+        "rel": "taxon_assignments",
+        "baseline": {
+          "node": "Seq Scan",
+          "buffers": 5156
+        },
+        "indexed": {
+          "node": "Index Scan",
+          "buffers": 4
+        }
+      },
+      "rel": "taxon_assignments",
+      "phases": {
+        "baseline": {
+          "topNode": "Seq Scan",
+          "scansByRelation": {
+            "taxon_assignments": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 5,
+          "buffersHit": 3407,
+          "buffersRead": 1749,
+          "rowsRemovedByFilter": 500038,
+          "ms": {
+            "median": 17.07,
+            "min": 16.746,
+            "max": 17.105
+          },
+          "checksum": "4c0564b40648a177d780441350193a06"
+        },
+        "indexed": {
+          "topNode": "Index Scan",
+          "scansByRelation": {
+            "taxon_assignments": ["Index Scan"]
+          },
+          "indexesUsed": ["idx_taxon_assignments_library_id"],
+          "rows": 5,
+          "buffersHit": 4,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 0.004,
+            "min": 0.004,
+            "max": 0.005
+          },
+          "checksum": "4c0564b40648a177d780441350193a06"
+        }
+      },
+      "speedup": {
+        "buffers": 1289,
+        "time": 4267.5
+      },
+      "verdict": "improved",
+      "findings": []
+    },
+    {
+      "id": "BQ7b",
+      "slice": "analysis",
+      "label": "approved and pass counts per taxon",
+      "sql": "SELECT ta.taxon_id, count(*) FROM taxon_assignments ta JOIN analysis_runs ar USING (analysis_id) WHERE ar.status = 'approved' AND ta.qc_flag = 'pass' GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 5",
+      "params": {},
+      "resolvedSql": "SELECT ta.taxon_id, count(*) FROM taxon_assignments ta JOIN analysis_runs ar USING (analysis_id) WHERE ar.status = 'approved' AND ta.qc_flag = 'pass' GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 5",
+      "expect": "unchanged",
+      "serves": [],
+      "relatesTo": ["idx_taxon_assignments_taxon_id_qc_flag"],
+      "keepsIndex": null,
+      "selectivity": "unselective",
+      "reason": "scans the table for approved + pass counts of every taxon",
+      "mustImprove": false,
+      "documented": null,
+      "rel": "taxon_assignments",
+      "phases": {
+        "baseline": {
+          "topNode": "Limit",
+          "scansByRelation": {
+            "taxon_assignments": ["Seq Scan"],
+            "analysis_runs": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 5,
+          "buffersHit": 3585,
+          "buffersRead": 1589,
+          "rowsRemovedByFilter": 400544,
+          "ms": {
+            "median": 25.073,
+            "min": 24.906,
+            "max": 25.135
+          },
+          "checksum": "b0c2c9460b94d9b33d569573dc927f79"
+        },
+        "indexed": {
+          "topNode": "Limit",
+          "scansByRelation": {
+            "taxon_assignments": ["Seq Scan"],
+            "analysis_runs": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 5,
+          "buffersHit": 5174,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 400544,
+          "ms": {
+            "median": 23.731,
+            "min": 23.621,
+            "max": 23.779
+          },
+          "checksum": "b0c2c9460b94d9b33d569573dc927f79"
+        }
+      },
+      "speedup": {
+        "buffers": 1,
+        "time": 1.06
+      },
+      "verdict": "expected-unchanged",
+      "findings": []
+    },
+    {
+      "id": "BQ8",
+      "slice": "analysis",
+      "label": "count for one analysis (redundancy: unique constraint index)",
+      "sql": "SELECT count(*) FROM taxon_assignments WHERE analysis_id = {big_analysis}",
+      "params": {
+        "big_analysis": "1000000"
+      },
+      "resolvedSql": "SELECT count(*) FROM taxon_assignments WHERE analysis_id = 1000000",
+      "expect": "unchanged",
+      "serves": [],
+      "relatesTo": ["idx_taxon_assignments_library_id"],
+      "keepsIndex": "uq_taxon_assignments_analysis_library_taxon",
+      "selectivity": "selective",
+      "reason": "analysis_id leads uq_taxon_assignments_analysis_library_taxon",
+      "mustImprove": false,
+      "documented": null,
+      "rel": "taxon_assignments",
+      "phases": {
+        "baseline": {
+          "topNode": "Aggregate",
+          "scansByRelation": {
+            "taxon_assignments": ["Index Only Scan"]
+          },
+          "indexesUsed": ["uq_taxon_assignments_analysis_library_taxon"],
+          "rows": 1,
+          "buffersHit": 8,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 0.045,
+            "min": 0.044,
+            "max": 0.05
+          },
+          "checksum": "c7ffea8c2022b2523add82ab33eb5b1d"
+        },
+        "indexed": {
+          "topNode": "Aggregate",
+          "scansByRelation": {
+            "taxon_assignments": ["Index Only Scan"]
+          },
+          "indexesUsed": ["uq_taxon_assignments_analysis_library_taxon"],
+          "rows": 1,
+          "buffersHit": 8,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 0.046,
+            "min": 0.044,
+            "max": 0.056
+          },
+          "checksum": "c7ffea8c2022b2523add82ab33eb5b1d"
+        }
+      },
+      "speedup": {
+        "buffers": 1,
+        "time": 0.98
+      },
+      "verdict": "expected-unchanged",
+      "findings": []
+    },
+    {
+      "id": "BQ1",
+      "slice": "lab",
+      "label": "Q2 libraries of the biggest run with their samples",
+      "sql": "EXECUTE q2_run_libraries_with_samples({big_run})",
+      "params": {
+        "big_run": "1000000"
+      },
+      "resolvedSql": "EXECUTE q2_run_libraries_with_samples(1000000)",
+      "expect": "improve",
+      "serves": ["idx_sequencing_libraries_run_id"],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "selective",
+      "reason": null,
+      "mustImprove": true,
+      "documented": {
+        "rel": "sequencing_libraries",
+        "baseline": {
+          "node": "Seq Scan",
+          "buffers": 2138
+        },
+        "indexed": {
+          "node": "Index Scan",
+          "buffers": 1207
+        }
+      },
+      "rel": "sequencing_libraries",
+      "phases": {
+        "baseline": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "sequencing_runs": ["Index Scan"],
+            "sequencing_libraries": ["Seq Scan"],
+            "dna_extractions": ["Index Scan"],
+            "samples": ["Index Scan"],
+            "collection_events": ["Index Scan"],
+            "sampling_sites": ["Index Scan"]
+          },
+          "indexesUsed": [
+            "pk_collection_events",
+            "pk_dna_extractions",
+            "pk_samples",
+            "pk_sampling_sites",
+            "pk_sequencing_runs"
+          ],
+          "rows": 100,
+          "buffersHit": 2138,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 99916,
+          "ms": {
+            "median": 2.638,
+            "min": 2.591,
+            "max": 2.769
+          },
+          "checksum": "de190a096c1c178665d600a67f5e094e"
+        },
+        "indexed": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "sequencing_runs": ["Index Scan"],
+            "sequencing_libraries": ["Index Scan"],
+            "dna_extractions": ["Index Scan"],
+            "samples": ["Index Scan"],
+            "collection_events": ["Index Scan"],
+            "sampling_sites": ["Index Scan"]
+          },
+          "indexesUsed": [
+            "idx_sequencing_libraries_run_id",
+            "pk_collection_events",
+            "pk_dna_extractions",
+            "pk_samples",
+            "pk_sampling_sites",
+            "pk_sequencing_runs"
+          ],
+          "rows": 100,
+          "buffersHit": 1207,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 0.294,
+            "min": 0.289,
+            "max": 0.304
+          },
+          "checksum": "de190a096c1c178665d600a67f5e094e"
+        }
+      },
+      "speedup": {
+        "buffers": 1.77,
+        "time": 8.97
+      },
+      "verdict": "improved",
+      "findings": []
+    },
+    {
+      "id": "BQ2a",
+      "slice": "lab",
+      "label": "extractions of one batch (GET /api/extractions?batch_id=)",
+      "sql": "SELECT * FROM dna_extractions WHERE batch_id = {typ_batch}",
+      "params": {
+        "typ_batch": "1000000"
+      },
+      "resolvedSql": "SELECT * FROM dna_extractions WHERE batch_id = 1000000",
+      "expect": "improve",
+      "serves": ["idx_dna_extractions_batch_id"],
+      "relatesTo": [],
+      "keepsIndex": null,
+      "selectivity": "selective",
+      "reason": null,
+      "mustImprove": true,
+      "documented": {
+        "rel": "dna_extractions",
+        "baseline": {
+          "node": "Seq Scan",
+          "buffers": 1032
+        },
+        "indexed": {
+          "node": "Index Scan",
+          "buffers": 3
+        }
+      },
+      "rel": "dna_extractions",
+      "phases": {
+        "baseline": {
+          "topNode": "Seq Scan",
+          "scansByRelation": {
+            "dna_extractions": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 50,
+          "buffersHit": 1032,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 99967,
+          "ms": {
+            "median": 2.917,
+            "min": 2.837,
+            "max": 3.115
+          },
+          "checksum": "e4ccb299b77ac07a3c2281ebf00b4fc8"
+        },
+        "indexed": {
+          "topNode": "Index Scan",
+          "scansByRelation": {
+            "dna_extractions": ["Index Scan"]
+          },
+          "indexesUsed": ["idx_dna_extractions_batch_id"],
+          "rows": 50,
+          "buffersHit": 3,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 0.008,
+            "min": 0.007,
+            "max": 0.009
+          },
+          "checksum": "e4ccb299b77ac07a3c2281ebf00b4fc8"
+        }
+      },
+      "speedup": {
+        "buffers": 344,
+        "time": 364.62
+      },
+      "verdict": "improved",
+      "findings": []
+    },
+    {
+      "id": "BQ2b",
+      "slice": "lab",
+      "label": "Q1 extraction QC by batch, one lab (aggregates every batch)",
+      "sql": "EXECUTE q1_extraction_qc_by_batch({busy_lab})",
+      "params": {
+        "busy_lab": "1"
+      },
+      "resolvedSql": "EXECUTE q1_extraction_qc_by_batch(1)",
+      "expect": "unchanged",
+      "serves": [],
+      "relatesTo": ["idx_dna_extractions_batch_id"],
+      "keepsIndex": null,
+      "selectivity": "unselective",
+      "reason": "aggregates every batch of the lab, so reading all extractions is the right plan",
+      "mustImprove": false,
+      "documented": {
+        "rel": "dna_extractions",
+        "baseline": {
+          "node": "Seq Scan",
+          "buffers": 1050
+        },
+        "indexed": {
+          "node": "Seq Scan",
+          "buffers": 1050
+        }
+      },
+      "rel": "dna_extractions",
+      "phases": {
+        "baseline": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "laboratories": ["Seq Scan"],
+            "dna_extractions": ["Seq Scan"],
+            "extraction_batches": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 1002,
+          "buffersHit": 1050,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 1002,
+          "ms": {
+            "median": 18.826,
+            "min": 18.665,
+            "max": 18.975
+          },
+          "checksum": "0082eaf56380dab248f7dc0389d285a1"
+        },
+        "indexed": {
+          "topNode": "Sort",
+          "scansByRelation": {
+            "laboratories": ["Seq Scan"],
+            "dna_extractions": ["Seq Scan"],
+            "extraction_batches": ["Seq Scan"]
+          },
+          "indexesUsed": [],
+          "rows": 1002,
+          "buffersHit": 1050,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 1002,
+          "ms": {
+            "median": 19.5,
+            "min": 19.088,
+            "max": 19.635
+          },
+          "checksum": "0082eaf56380dab248f7dc0389d285a1"
+        }
+      },
+      "speedup": {
+        "buffers": 1,
+        "time": 0.97
+      },
+      "verdict": "expected-unchanged",
+      "findings": []
+    },
+    {
+      "id": "BQ3a",
+      "slice": "lab",
+      "label": "extractions of one sample (redundancy: unique constraint index)",
+      "sql": "SELECT * FROM dna_extractions WHERE sample_id = {mid_sample}",
+      "params": {
+        "mid_sample": "1050000"
+      },
+      "resolvedSql": "SELECT * FROM dna_extractions WHERE sample_id = 1050000",
+      "expect": "unchanged",
+      "serves": [],
+      "relatesTo": ["idx_dna_extractions_batch_id"],
+      "keepsIndex": "uq_dna_extractions_sample_attempt",
+      "selectivity": "selective",
+      "reason": "sample_id leads uq_dna_extractions_sample_attempt",
+      "mustImprove": false,
+      "documented": {
+        "rel": "dna_extractions",
+        "baseline": {
+          "node": "Index Scan",
+          "buffers": 3
+        },
+        "indexed": {
+          "node": "Index Scan",
+          "buffers": 3
+        }
+      },
+      "rel": "dna_extractions",
+      "phases": {
+        "baseline": {
+          "topNode": "Index Scan",
+          "scansByRelation": {
+            "dna_extractions": ["Index Scan"]
+          },
+          "indexesUsed": ["uq_dna_extractions_sample_attempt"],
+          "rows": 1,
+          "buffersHit": 3,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 0.005,
+            "min": 0.004,
+            "max": 0.007
+          },
+          "checksum": "a17c0674901311721df2d115bf67bcef"
+        },
+        "indexed": {
+          "topNode": "Index Scan",
+          "scansByRelation": {
+            "dna_extractions": ["Index Scan"]
+          },
+          "indexesUsed": ["uq_dna_extractions_sample_attempt"],
+          "rows": 1,
+          "buffersHit": 3,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 0.005,
+            "min": 0.003,
+            "max": 0.005
+          },
+          "checksum": "a17c0674901311721df2d115bf67bcef"
+        }
+      },
+      "speedup": {
+        "buffers": 1,
+        "time": 1
+      },
+      "verdict": "expected-unchanged",
+      "findings": []
+    },
+    {
+      "id": "BQ3b",
+      "slice": "lab",
+      "label": "v_lab_pipeline_status, one sample (redundancy)",
+      "sql": "SELECT * FROM v_lab_pipeline_status WHERE sample_id = {mid_sample}",
+      "params": {
+        "mid_sample": "1050000"
+      },
+      "resolvedSql": "SELECT * FROM v_lab_pipeline_status WHERE sample_id = 1050000",
+      "expect": "unchanged",
+      "serves": [],
+      "relatesTo": ["idx_dna_extractions_batch_id", "idx_sequencing_libraries_run_id"],
+      "keepsIndex": "uq_dna_extractions_sample_attempt",
+      "selectivity": "selective",
+      "reason": "uses the unique indexes on dna_extractions and sequencing_libraries in both phases",
+      "mustImprove": false,
+      "documented": {
+        "rel": "dna_extractions",
+        "baseline": {
+          "node": "Index Only Scan",
+          "buffers": 27
+        },
+        "indexed": {
+          "node": "Index Only Scan",
+          "buffers": 27
+        }
+      },
+      "rel": "dna_extractions",
+      "phases": {
+        "baseline": {
+          "topNode": "Nested Loop",
+          "scansByRelation": {
+            "samples": ["Index Scan"],
+            "collection_events": ["Index Scan"],
+            "sampling_sites": ["Index Scan"],
+            "dna_extractions": ["Index Only Scan", "Index Scan"],
+            "extraction_batches": ["Index Scan"],
+            "laboratories": ["Index Scan"],
+            "sequencing_libraries": ["Index Scan"],
+            "sequencing_runs": ["Index Scan"]
+          },
+          "indexesUsed": [
+            "pk_collection_events",
+            "pk_extraction_batches",
+            "pk_laboratories",
+            "pk_samples",
+            "pk_sampling_sites",
+            "pk_sequencing_runs",
+            "uq_dna_extractions_sample_attempt",
+            "uq_sequencing_libraries_extraction_run"
+          ],
+          "rows": 1,
+          "buffersHit": 27,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 0.034,
+            "min": 0.028,
+            "max": 0.043
+          },
+          "checksum": "9f0863014aa24aa2334443c58781af2c"
+        },
+        "indexed": {
+          "topNode": "Nested Loop",
+          "scansByRelation": {
+            "samples": ["Index Scan"],
+            "collection_events": ["Index Scan"],
+            "sampling_sites": ["Index Scan"],
+            "dna_extractions": ["Index Only Scan", "Index Scan"],
+            "extraction_batches": ["Index Scan"],
+            "laboratories": ["Index Scan"],
+            "sequencing_libraries": ["Index Scan"],
+            "sequencing_runs": ["Index Scan"]
+          },
+          "indexesUsed": [
+            "pk_collection_events",
+            "pk_extraction_batches",
+            "pk_laboratories",
+            "pk_samples",
+            "pk_sampling_sites",
+            "pk_sequencing_runs",
+            "uq_dna_extractions_sample_attempt",
+            "uq_sequencing_libraries_extraction_run"
+          ],
+          "rows": 1,
+          "buffersHit": 27,
+          "buffersRead": 0,
+          "rowsRemovedByFilter": 0,
+          "ms": {
+            "median": 0.036,
+            "min": 0.029,
+            "max": 0.046
+          },
+          "checksum": "9f0863014aa24aa2334443c58781af2c"
+        }
+      },
+      "speedup": {
+        "buffers": 1,
+        "time": 0.94
+      },
+      "verdict": "expected-unchanged",
+      "findings": []
+    }
+  ],
+  "writeCost": [
+    {
+      "id": "W1/project_members/20000",
+      "kind": "bulk-insert",
+      "label": "INSERT ... SELECT of 20000 rows into a scratch copy of project_members with its audit trigger",
+      "table": "project_members",
+      "rows": 20000,
+      "auditRows": 20000,
+      "baseline": {
+        "ms": {
+          "median": 551.22,
+          "min": 528.96,
+          "max": 612.13
+        },
+        "msPer1000": 27.561,
+        "indexesOnTable": ["pk_project_members", "uq_project_members_owner"]
+      },
+      "indexed": {
+        "ms": {
+          "median": 578.91,
+          "min": 571.92,
+          "max": 689.1
+        },
+        "msPer1000": 28.946,
+        "indexesOnTable": [
+          "idx_project_members_user_id_project_id",
+          "pk_project_members",
+          "uq_project_members_owner"
+        ]
+      },
+      "multiplier": 1.05
+    },
+    {
+      "id": "W1/collection_events/20000",
+      "kind": "bulk-insert",
+      "label": "INSERT ... SELECT of 20000 rows into a scratch copy of collection_events with its audit trigger",
+      "table": "collection_events",
+      "rows": 20000,
+      "auditRows": 20000,
+      "baseline": {
+        "ms": {
+          "median": 616.72,
+          "min": 611.15,
+          "max": 622.17
+        },
+        "msPer1000": 30.836,
+        "indexesOnTable": ["pk_collection_events"]
+      },
+      "indexed": {
+        "ms": {
+          "median": 673.4,
+          "min": 644.63,
+          "max": 686.05
+        },
+        "msPer1000": 33.67,
+        "indexesOnTable": ["idx_collection_events_site_id_collected_at", "pk_collection_events"]
+      },
+      "multiplier": 1.09
+    },
+    {
+      "id": "W1/dna_extractions/20000",
+      "kind": "bulk-insert",
+      "label": "INSERT ... SELECT of 20000 rows into a scratch copy of dna_extractions with its audit trigger",
+      "table": "dna_extractions",
+      "rows": 20000,
+      "auditRows": 20000,
+      "baseline": {
+        "ms": {
+          "median": 668.79,
+          "min": 654.29,
+          "max": 681.7
+        },
+        "msPer1000": 33.439,
+        "indexesOnTable": ["pk_dna_extractions", "uq_dna_extractions_sample_attempt"]
+      },
+      "indexed": {
+        "ms": {
+          "median": 669.32,
+          "min": 662.23,
+          "max": 683.44
+        },
+        "msPer1000": 33.466,
+        "indexesOnTable": [
+          "idx_dna_extractions_batch_id",
+          "pk_dna_extractions",
+          "uq_dna_extractions_sample_attempt"
+        ]
+      },
+      "multiplier": 1
+    },
+    {
+      "id": "W1/dna_extractions/100000",
+      "kind": "bulk-insert",
+      "label": "INSERT ... SELECT of 100000 rows into a scratch copy of dna_extractions with its audit trigger",
+      "table": "dna_extractions",
+      "rows": 100000,
+      "auditRows": 100000,
+      "baseline": {
+        "ms": {
+          "median": 3160.64,
+          "min": 3124.74,
+          "max": 3179.09
+        },
+        "msPer1000": 31.606,
+        "indexesOnTable": ["pk_dna_extractions", "uq_dna_extractions_sample_attempt"]
+      },
+      "indexed": {
+        "ms": {
+          "median": 3330.08,
+          "min": 3303.69,
+          "max": 3420.06
+        },
+        "msPer1000": 33.301,
+        "indexesOnTable": [
+          "idx_dna_extractions_batch_id",
+          "pk_dna_extractions",
+          "uq_dna_extractions_sample_attempt"
+        ]
+      },
+      "multiplier": 1.05
+    },
+    {
+      "id": "W1/sequencing_libraries/20000",
+      "kind": "bulk-insert",
+      "label": "INSERT ... SELECT of 20000 rows into a scratch copy of sequencing_libraries with its audit trigger",
+      "table": "sequencing_libraries",
+      "rows": 20000,
+      "auditRows": 20000,
+      "baseline": {
+        "ms": {
+          "median": 610.39,
+          "min": 600.38,
+          "max": 616.69
+        },
+        "msPer1000": 30.519,
+        "indexesOnTable": [
+          "pk_sequencing_libraries",
+          "uq_sequencing_libraries_extraction_run",
+          "uq_sequencing_libraries_library_code"
+        ]
+      },
+      "indexed": {
+        "ms": {
+          "median": 636.91,
+          "min": 632.06,
+          "max": 644.22
+        },
+        "msPer1000": 31.845,
+        "indexesOnTable": [
+          "idx_sequencing_libraries_run_id",
+          "pk_sequencing_libraries",
+          "uq_sequencing_libraries_extraction_run",
+          "uq_sequencing_libraries_library_code"
+        ]
+      },
+      "multiplier": 1.04
+    },
+    {
+      "id": "W1/sequencing_libraries/100000",
+      "kind": "bulk-insert",
+      "label": "INSERT ... SELECT of 100000 rows into a scratch copy of sequencing_libraries with its audit trigger",
+      "table": "sequencing_libraries",
+      "rows": 100000,
+      "auditRows": 100000,
+      "baseline": {
+        "ms": {
+          "median": 2961.04,
+          "min": 2950.84,
+          "max": 3020.48
+        },
+        "msPer1000": 29.61,
+        "indexesOnTable": [
+          "pk_sequencing_libraries",
+          "uq_sequencing_libraries_extraction_run",
+          "uq_sequencing_libraries_library_code"
+        ]
+      },
+      "indexed": {
+        "ms": {
+          "median": 3163.83,
+          "min": 3146.04,
+          "max": 3205.87
+        },
+        "msPer1000": 31.638,
+        "indexesOnTable": [
+          "idx_sequencing_libraries_run_id",
+          "pk_sequencing_libraries",
+          "uq_sequencing_libraries_extraction_run",
+          "uq_sequencing_libraries_library_code"
+        ]
+      },
+      "multiplier": 1.07
+    },
+    {
+      "id": "W1/taxon_assignments/20000",
+      "kind": "bulk-insert",
+      "label": "INSERT ... SELECT of 20000 rows into a scratch copy of taxon_assignments (no audit trigger on this table)",
+      "table": "taxon_assignments",
+      "rows": 20000,
+      "auditRows": 0,
+      "baseline": {
+        "ms": {
+          "median": 42.18,
+          "min": 41.68,
+          "max": 42.57
+        },
+        "msPer1000": 2.109,
+        "indexesOnTable": ["pk_taxon_assignments", "uq_taxon_assignments_analysis_library_taxon"]
+      },
+      "indexed": {
+        "ms": {
+          "median": 40.94,
+          "min": 38.82,
+          "max": 56.98
+        },
+        "msPer1000": 2.047,
+        "indexesOnTable": [
+          "idx_taxon_assignments_library_id",
+          "idx_taxon_assignments_taxon_id_qc_flag",
+          "pk_taxon_assignments",
+          "uq_taxon_assignments_analysis_library_taxon"
+        ]
+      },
+      "multiplier": 0.97
+    },
+    {
+      "id": "W1/taxon_assignments/100000",
+      "kind": "bulk-insert",
+      "label": "INSERT ... SELECT of 100000 rows into a scratch copy of taxon_assignments (no audit trigger on this table)",
+      "table": "taxon_assignments",
+      "rows": 100000,
+      "auditRows": 0,
+      "baseline": {
+        "ms": {
+          "median": 127.92,
+          "min": 126.69,
+          "max": 140.19
+        },
+        "msPer1000": 1.279,
+        "indexesOnTable": ["pk_taxon_assignments", "uq_taxon_assignments_analysis_library_taxon"]
+      },
+      "indexed": {
+        "ms": {
+          "median": 210.45,
+          "min": 204.85,
+          "max": 229.18
+        },
+        "msPer1000": 2.105,
+        "indexesOnTable": [
+          "idx_taxon_assignments_library_id",
+          "idx_taxon_assignments_taxon_id_qc_flag",
+          "pk_taxon_assignments",
+          "uq_taxon_assignments_analysis_library_taxon"
+        ]
+      },
+      "multiplier": 1.65
+    },
+    {
+      "id": "W3/audit_logs/20000",
+      "kind": "audit-insert",
+      "label": "INSERT of 20000 audit_logs rows (the cost every audited write pays)",
+      "table": "audit_logs",
+      "rows": 20000,
+      "auditRows": 20000,
+      "baseline": {
+        "ms": {
+          "median": 137.59,
+          "min": 136.14,
+          "max": 138.69
+        },
+        "msPer1000": 6.88,
+        "indexesOnTable": ["pk_audit_logs"]
+      },
+      "indexed": {
+        "ms": {
+          "median": 164.42,
+          "min": 163.58,
+          "max": 166.02
+        },
+        "msPer1000": 8.221,
+        "indexesOnTable": ["idx_audit_logs_entity_type_entity_id_created_at", "pk_audit_logs"]
+      },
+      "multiplier": 1.19
+    },
+    {
+      "id": "W3/audit_logs/100000",
+      "kind": "audit-insert",
+      "label": "INSERT of 100000 audit_logs rows (the cost every audited write pays)",
+      "table": "audit_logs",
+      "rows": 100000,
+      "auditRows": 100000,
+      "baseline": {
+        "ms": {
+          "median": 694.34,
+          "min": 687.86,
+          "max": 703.85
+        },
+        "msPer1000": 6.943,
+        "indexesOnTable": ["pk_audit_logs"]
+      },
+      "indexed": {
+        "ms": {
+          "median": 847.07,
+          "min": 835.52,
+          "max": 855.54
+        },
+        "msPer1000": 8.471,
+        "indexesOnTable": ["idx_audit_logs_entity_type_entity_id_created_at", "pk_audit_logs"]
+      },
+      "multiplier": 1.22
+    },
+    {
+      "id": "W2/register_sample",
+      "kind": "procedure",
+      "label": "500 x register_sample on volume events (audit + status-history triggers)",
+      "operations": 500,
+      "baseline": {
+        "ms": {
+          "median": 1541.8,
+          "min": 1532.51,
+          "max": 1552.22
+        },
+        "msPerOp": 3.084,
+        "indexesOnTable": ["pk_samples", "samples_sample_code_key"]
+      },
+      "indexed": {
+        "ms": {
+          "median": 1518.31,
+          "min": 1512.34,
+          "max": 1521.81
+        },
+        "msPerOp": 3.037,
+        "indexesOnTable": ["pk_samples", "samples_sample_code_key"]
+      },
+      "multiplier": 0.98
+    },
+    {
+      "id": "W2/create_sequencing_run",
+      "kind": "procedure",
+      "label": "100 x create_sequencing_run of 5 extractions (run + 5 libraries, audited)",
+      "operations": 100,
+      "baseline": {
+        "ms": {
+          "median": 93.5,
+          "min": 91.95,
+          "max": 95.65
+        },
+        "msPerOp": 0.935,
+        "indexesOnTable": [
+          "pk_sequencing_libraries",
+          "uq_sequencing_libraries_extraction_run",
+          "uq_sequencing_libraries_library_code"
+        ]
+      },
+      "indexed": {
+        "ms": {
+          "median": 99.8,
+          "min": 97.85,
+          "max": 102.89
+        },
+        "msPerOp": 0.998,
+        "indexesOnTable": [
+          "idx_sequencing_libraries_run_id",
+          "pk_sequencing_libraries",
+          "uq_sequencing_libraries_extraction_run",
+          "uq_sequencing_libraries_library_code"
+        ]
+      },
+      "multiplier": 1.07
+    },
+    {
+      "id": "W2/import_detections",
+      "kind": "procedure",
+      "label": "50 x import_detections of 200 rows",
+      "operations": 50,
+      "baseline": {
+        "ms": {
+          "median": 526.1,
+          "min": 523.59,
+          "max": 545.84
+        },
+        "msPerOp": 10.522,
+        "indexesOnTable": ["pk_taxon_assignments", "uq_taxon_assignments_analysis_library_taxon"]
+      },
+      "indexed": {
+        "ms": {
+          "median": 534.69,
+          "min": 533.89,
+          "max": 535.05
+        },
+        "msPerOp": 10.694,
+        "indexesOnTable": [
+          "idx_taxon_assignments_library_id",
+          "idx_taxon_assignments_taxon_id_qc_flag",
+          "pk_taxon_assignments",
+          "uq_taxon_assignments_analysis_library_taxon"
+        ]
+      },
+      "multiplier": 1.02
+    }
+  ],
+  "writeSummary": [
+    "`idx_project_members_user_id_project_id` (project_members): bulk insert of 20000 rows 551 -> 579 ms (1.05x, +1.39 ms per 1000 rows); best read gain BQ1 49x fewer buffers, 59x faster; justified.",
+    "`idx_audit_logs_entity_type_entity_id_created_at` (audit_logs): bulk insert of 20000 rows 138 -> 164 ms (1.19x, +1.34 ms per 1000 rows); best read gain BQ3b 445x fewer buffers, 1114x faster; justified.",
+    "`idx_taxon_assignments_taxon_id_qc_flag` (taxon_assignments, together with idx_taxon_assignments_library_id): bulk insert of 20000 rows 42.18 -> 40.94 ms (0.97x, +-0.062 ms per 1000 rows); best read gain BQ1b 81x fewer buffers, 676x faster; justified.",
+    "`idx_taxon_assignments_library_id` (taxon_assignments, together with idx_taxon_assignments_taxon_id_qc_flag): bulk insert of 20000 rows 42.18 -> 40.94 ms (0.97x, +-0.062 ms per 1000 rows); best read gain BQ7a 1289x fewer buffers, 4268x faster; justified.",
+    "`idx_collection_events_site_id_collected_at` (collection_events): bulk insert of 20000 rows 617 -> 673 ms (1.09x, +2.83 ms per 1000 rows); best read gain FQ3b 19x fewer buffers, 77x faster; justified.",
+    "`idx_sequencing_libraries_run_id` (sequencing_libraries): bulk insert of 20000 rows 610 -> 637 ms (1.04x, +1.33 ms per 1000 rows); best read gain BQ1 1.77x fewer buffers, 8.97x faster; justified.",
+    "`idx_dna_extractions_batch_id` (dna_extractions): bulk insert of 20000 rows 669 -> 669 ms (1.00x, +0.027 ms per 1000 rows); best read gain BQ2a 344x fewer buffers, 365x faster; justified."
+  ],
+  "findings": []
+}

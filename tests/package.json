@@ -15,10 +15,14 @@
     "test:concurrency": "vitest run --config vitest.config.js concurrency/",
     "test:authorization": "vitest run --config vitest.config.js authorization/",
     "test:recovery": "vitest run --config vitest.config.js recovery/",
+    "test:performance": "vitest run --config vitest.config.js performance/",
     "lint": "eslint .",
     "format": "prettier --check .",
     "volume:load": "node fixtures/generate-volume-data.js",
-    "volume:clean": "node fixtures/generate-volume-data.js --clean"
+    "volume:clean": "node fixtures/generate-volume-data.js --clean",
+    "bench": "node performance/run-benchmarks.js",
+    "bench:small": "node performance/run-benchmarks.js --scale small --out none",
+    "bench:cold": "node performance/run-cold-cache.js"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
