@@ -85,6 +85,14 @@ jobs:
           cache-dependency-path: |
             backend/package-lock.json
             tests/package-lock.json
+      # The recovery suite runs backup.sh/restore.sh, which call pg_dump/pg_restore/psql. The runner's
+      # default client is newer than the postgres:16 service, and a dump from a newer pg_dump
+      # (SET transaction_timeout) cannot be restored into an older server. Use the 16 client.
+      - name: Install PostgreSQL 16 client tools
+        run: |
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y >/dev/null
+          sudo apt-get install -y -qq postgresql-client-16 >/dev/null
+          echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
       - name: Install backend dependencies
         working-directory: backend
         run: npm ci
