@@ -204,20 +204,19 @@ Findings:
 - **Prefix search needs `text_pattern_ops` unless the column collation is `C`.** The unique index is not used for `LIKE 'EB-2025%'` under `en_US.utf8`: Seq Scan, 1334 buffers. `GET /api/samples?q=` upper-cases `q` and runs `LIKE $6 || '%' ESCAPE '\'` (`backend/src/services/samples.service.js`), a prefix search, so the pattern index is created. The route's own SQL was checked with `PREPARE`: with a custom plan (what the `pg` driver's unnamed statements get) it is an Index Scan on `idx_samples_sample_code_pattern`; a forced generic plan cannot use an index for the `($6 IS NULL OR ...)` form. The unique constraint needs the default operator class, so the pattern index is a second index on the column, not a replacement. A substring search (`LIKE '%x%'`) is served by neither; `pg_trgm` would need an extension and was not created.
 - **Not part of the migration runner.** `backend/src/db/migrate.js` does not run `database/indexes/`; these indexes exist only when the file is applied by hand. Whether the runner should apply the directory is a backend decision, not changed here.
 
-
 ## T40-D: Schema and normalization notes
 
 ### Relation inventory
 
 | Relation | Purpose, key and constraints |
 |---|---|
-| `regions` | Geographic hierarchy; PK `region_id`; optional self-FK `parent_region_id` (delete sets NULL); unique `(name, region_type)`. |
-| `sampling_sites` | Collection locations; PK `site_id`; FK `region_id`; unique `(region_id,name)`; latitude/longitude range checks. |
-| `sample_types` | Controlled sample-type vocabulary; PK `sample_type_id`; unique `type_name`. |
-| `collection_events` | Collection visit; PK `event_id`; FKs to site, collector and project; future-time check; project/site association constraint. |
-| `samples` | Physical samples; PK `sample_id`; FKs to event and type; unique `sample_code`; positive volume and nonnegative depth checks; controlled status. |
-| `environmental_measurements` | Event readings; PK `measurement_id`; FK to event; unique `(event_id,parameter)`. |
-| `sample_status_history` | Status audit trail; PK `history_id`; FK to sample; stores old/new status, actor, time and note. |
+| `regions` | Geographic hierarchy; PK `region_id`; optional self-FK `parent_region_id` (delete sets NULL); unique `(name, region_type)`; `name` and `region_type` (enum `region_type`) NOT NULL. |
+| `sampling_sites` | Collection locations; PK `site_id`; FK `region_id`; unique `(region_id,name)`; latitude/longitude range checks; all columns except `description` NOT NULL; `habitat_type` is an enum; `created_by` references `users` (migration 090). |
+| `sample_types` | Controlled sample-type vocabulary; PK `sample_type_id`; unique `type_name`; NOT NULL. |
+| `collection_events` | Collection visit; PK `event_id`; FKs to site, collector and project; `project_id`, `site_id`, `collector_id`, `collected_at` NOT NULL; `project_id` and `collector_id` reference `projects` and `users`, and `(project_id, site_id)` references `project_sites` so an event can only happen at a site its project may use (all in migration 090); `collected_at` may be at most one day ahead. |
+| `samples` | Physical samples; PK `sample_id`; FKs to event and type; unique `sample_code`; positive volume and nonnegative depth checks; status is the enum `sample_status` (NOT NULL, default `collected`); `volume_ml`, `depth_m` and `storage_location` are optional. |
+| `environmental_measurements` | Event readings; PK `measurement_id`; FK to event; unique `(event_id,parameter)`; `parameter`, `value` and `unit` NOT NULL (`unit` is free text per reading). |
+| `sample_status_history` | Status audit trail; PK `history_id`; FK to sample; stores old/new status (enum `sample_status`; `old_status` NULL for the first row), `changed_by` (nullable, references `users` in migration 090), time and note. |
 
 ### Functional dependencies and normal forms
 
@@ -231,9 +230,11 @@ Under the declared key constraints, each relation is in BCNF: every non-trivial 
 - `environmental_measurements`: `measurement_id → event_id, parameter, value, unit, created_at`; alternate `(event_id,parameter)` determines reading details.
 - `sample_status_history`: `history_id → sample_id, old_status, new_status, changed_by, changed_at, note`.
 
+**Exception, `environmental_measurements`:** the domain suggests `parameter → unit` (pH is always unitless, temperature always °C), but `unit` is stored on every reading and no parameters table exists. If that rule were enforced, the relation would violate 3NF/BCNF, because `parameter` is not a key. This is a deliberate denormalization: the database does not enforce the rule, so it is not a declared dependency; the table is BCNF only under the declared keys. Adding a `parameters(parameter, unit)` table would remove the repetition at the cost of a join and a fixed vocabulary.
+
 These claims rely on declared keys and the stated domain dependencies; they do not assume undocumented business rules. Facts are stored with their owning entity: sites reference regions, events reference sites/projects, samples reference events/types, and measurements/history are child relations. This avoids repeating descriptive parent data and avoids partial/transitive dependencies.
 
-**Intentional duplication:** `samples.status` is the current-state field for efficient reads; `sample_status_history` preserves the audit trail. The two serve different purposes. Views are derived at query time, not persisted duplicate base facts. `sample_code` is a stable unique business identifier generated by the registration procedure.
+**Intentional duplication:** `samples.status` is the current-state field for efficient reads; `sample_status_history` preserves the audit trail. The two serve different purposes. Views are derived at query time, not persisted duplicate base facts. `sample_code` is a stable unique business identifier generated by `register_sample()` in the form `EB-YYYYMMDD-<event_id>-<sequence>`. It repeats the collection date (UTC) and the event id, and the sequence is the sample's position within the event. It is derived data, kept deliberately because the code is printed on labels and must never change, even if the event is later edited; `UNIQUE (sample_code)` is the key, and the procedure is the only writer.
 
 ### ER fragment
 
@@ -260,7 +261,7 @@ erDiagram
 
 `database/transactions/field_transaction.sql` demonstrates one atomic collection event with four measurements and three samples. By default it rolls back; test-only `keep=1` commits the happy path. Failure cases cover uniqueness, FK, CHECK, procedure validation and transition rejection; SAVEPOINT recovery and two-session event locking are demonstrated. Use only in a development/test database.
 
-`database/indexes/field_indexes.sql` includes the unique sample-code index plus indexes for event site/date filtering, samples by event, status history by sample, and sample-code prefix lookup. The index script is applied separately from migrations; a reset database should not be assumed to have these indexes until the script is run. The composite site/date index supports site-scoped chronological event access; event/sample and sample/history indexes support joins and history retrieval. Indexes improve reads but add storage and write maintenance.
+`database/indexes/field_indexes.sql` creates four indexes: `(site_id, collected_at)` on events for site/date filtering, `samples(event_id)`, `sample_status_history(sample_id)` and a `text_pattern_ops` index on `samples(sample_code)` for prefix lookup. The unique sample-code index is not created here: the `UNIQUE` constraint in migration 020 creates it, and the file only documents it. The index script is applied separately from migrations; a reset database should not be assumed to have these indexes until the script is run. The composite site/date index supports site-scoped chronological event access; event/sample and sample/history indexes support joins and history retrieval. Indexes improve reads but add storage and write maintenance.
 
 ### Source files
 
