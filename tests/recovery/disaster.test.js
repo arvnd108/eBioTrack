@@ -298,10 +298,24 @@ describe.skipIf(!dbAvailable)('recovery: disaster scenarios', () => {
       expect(tables).toBe(0);
     });
 
-    it('late truncation (the last 2% missing; the table of contents still reads): non-zero exit and zero tables', async (ctx) => {
+    it('late truncation (table of contents readable, data cut short): non-zero exit and zero tables', async (ctx) => {
       need(ctx);
       const file = await copyDump(false);
-      truncateSync(file, Math.floor(statSync(file).size * 0.98));
+      const full = statSync(file).size;
+      // The cut that matters depends on the file layout, so ask pg_restore itself: the smallest cut
+      // after which --list still works but reading all the data fails.
+      let cut = null;
+      for (const fraction of [0.001, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.3]) {
+        truncateSync(file, Math.floor(full * (1 - fraction)));
+        const list = await runScript('pg_restore', ['--list', file]);
+        if (list.code === null) return ctx.skip('pg_restore is not on PATH');
+        const read = await runScript('pg_restore', ['-f', '/dev/null', file]);
+        if (list.code === 0 && read.code !== 0) {
+          cut = fraction;
+          break;
+        }
+      }
+      expect(cut, 'no truncation found that leaves a listable but unreadable dump').not.toBeNull();
       const { run, tables } = await tryRestore(file);
       expect(run.code, describeRun(run)).not.toBe(EXIT.OK);
       expect(tables).toBe(0);
