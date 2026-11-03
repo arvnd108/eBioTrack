@@ -55,7 +55,7 @@
 --
 -- Audit. approve and reject write one audit_logs row each, action 'approve' / 'reject',
 -- entity_type 'analysis_runs', actor_id = p_actor_id, details as below. import_detections writes
--- none: imported_by records who imported, and the row-level triggers (T17) will log the inserts.
+-- none: imported_by records who imported, and the draft -> imported update is logged by the analysis_runs audit trigger; the detections are not audited row by row.
 -- When the generic audit_row_change() trigger is attached to analysis_runs it also logs an
 -- 'update' row with the column diff for the same statement. The two do not duplicate: the
 -- explicit entry carries the business action and its context (reason, counts, importer), the

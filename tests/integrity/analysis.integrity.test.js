@@ -833,11 +833,69 @@ describe.skipIf(!dbAvailable)('analysis: setup', () => {
     });
   });
 
+  describe('taxonomy shape and library-in-run (EB002)', () => {
+    it('trg_taxa_tree: a child must rank below its parent; skipping ranks is accepted', () =>
+      withRollback(async (c) => {
+        await expectViolation(
+          inSavepoint(c, () => newTaxon(c, { rank: 'kingdom', parent_taxon_id: 7 })),
+          'EB002',
+          undefined,
+          'cannot have a parent of rank species',
+        );
+        await expectViolation(
+          inSavepoint(c, () => newTaxon(c, { rank: 'species', parent_taxon_id: 7 })),
+          'EB002',
+        );
+        await newTaxon(c, { rank: 'species', parent_taxon_id: 3 });
+      }));
+
+    it('trg_taxa_tree: a taxon cannot be moved under its own descendant (rank order rules out cycles)', () =>
+      withRollback(async (c) => {
+        const a = await newTaxon(c, { rank: 'family' });
+        const b = await newTaxon(c, { rank: 'genus', parent_taxon_id: a.taxon_id });
+        const d = await newTaxon(c, { rank: 'species', parent_taxon_id: b.taxon_id });
+        await expectViolation(
+          inSavepoint(c, () =>
+            updateRow(c, 'taxa', 'taxon_id', a.taxon_id, { parent_taxon_id: d.taxon_id }),
+          ),
+          'EB002',
+        );
+        await updateRow(c, 'taxa', 'taxon_id', d.taxon_id, { parent_taxon_id: a.taxon_id });
+      }));
+
+    it('trg_taxa_tree: a rank change that puts a parent at or below its child is refused', () =>
+      withRollback(async (c) => {
+        await expectViolation(
+          inSavepoint(c, () => updateRow(c, 'taxa', 'taxon_id', 6, { rank: 'species' })),
+          'EB002',
+        );
+      }));
+
+    it('trg_taxon_assignments_immutable: a detection whose library belongs to another run is refused', () =>
+      withRollback(async (c) => {
+        // analysis 4 processes run 1; library 9 belongs to run 2
+        await expectViolation(
+          inSavepoint(c, () => newDetection(c, { analysis_id: 4, library_id: 9, taxon_id: 7 })),
+          'EB002',
+          undefined,
+          'belongs to sequencing run 2',
+        );
+        const ok = await newDetection(c, { analysis_id: 4, library_id: 1, taxon_id: 7 });
+        await expectViolation(
+          inSavepoint(c, () =>
+            updateRow(c, 'taxon_assignments', 'assignment_id', ok.assignment_id, { library_id: 9 }),
+          ),
+          'EB002',
+        );
+      }));
+  });
+
   describe('triggers of the Analysis slice are installed', () => {
     const triggers = [
       ['trg_analysis_runs_status', 'analysis_runs'],
       ['trg_analysis_runs_immutable', 'analysis_runs'],
       ['trg_taxon_assignments_immutable', 'taxon_assignments'],
+      ['trg_taxa_tree', 'taxa'],
       ['trg_analysis_runs_audit', 'analysis_runs'],
       ['trg_taxa_audit', 'taxa'],
       ['trg_dna_markers_audit', 'dna_markers'],

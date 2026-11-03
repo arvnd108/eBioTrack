@@ -1222,11 +1222,11 @@ describe.skipIf(!dbAvailable)('analysis queries', () => {
       });
     });
 
-    // cycle safety: a self-parent is rejected by ck_taxa_not_own_parent, so build a 3-level chain and,
-    // because only the direct self-reference is checked, a longer loop A -> B -> C -> A as well.
+    // cycle safety: trg_taxa_tree now refuses loops and a child that does not rank below its parent, so
+    // the tests that exercise the queries' own guards switch it off for their rolled-back transaction.
     async function chain(db) {
-      const a = await newTaxon(db, { rank: 'genus' });
-      const b = await newTaxon(db, { rank: 'species', parent_taxon_id: a.taxon_id });
+      const a = await newTaxon(db, { rank: 'family' });
+      const b = await newTaxon(db, { rank: 'genus', parent_taxon_id: a.taxon_id });
       const c = await newTaxon(db, { rank: 'species', parent_taxon_id: b.taxon_id });
       const x = await newAnalysis(db, { run_id: 1 });
       await newDetection(db, { analysis_id: x.analysis_id, library_id: 1, taxon_id: b.taxon_id });
@@ -1258,6 +1258,7 @@ describe.skipIf(!dbAvailable)('analysis queries', () => {
     it('a longer parent loop (A -> B -> C -> A) still terminates and returns each detection once', async () => {
       await s.rollback(async (db) => {
         const { a, b, c } = await chain(db);
+        await db.query('ALTER TABLE taxa DISABLE TRIGGER trg_taxa_tree');
         await updateRow(db, 'taxa', 'taxon_id', a.taxon_id, { parent_taxon_id: c.taxon_id });
         for (const start of [a, b, c]) {
           const rows = await s.execute('analysis_taxon_detection_history', [
@@ -1381,6 +1382,7 @@ describe.skipIf(!dbAvailable)('analysis queries', () => {
     // C/D. metamorphic
     it('a new child extends the chain by one level and the root stays first', async () => {
       await s.rollback(async (db) => {
+        await db.query('ALTER TABLE taxa DISABLE TRIGGER trg_taxa_tree'); // a species under a species, to extend the chain
         const sub = await newTaxon(db, { rank: 'species', parent_taxon_id: 7 });
         const rows = await s.execute('analysis_taxon_lineage', [sub.taxon_id]);
         expect(rows).toHaveLength(8);
@@ -1396,6 +1398,7 @@ describe.skipIf(!dbAvailable)('analysis queries', () => {
     });
     it('re-parenting a genus moves the whole lineage: Labeo under Gambusia gets depth 5 via the class', async () => {
       await s.rollback(async (db) => {
+        await db.query('ALTER TABLE taxa DISABLE TRIGGER trg_taxa_tree'); // a genus under a genus
         await updateRow(db, 'taxa', 'taxon_id', 6, { parent_taxon_id: 14 });
         expect((await s.execute('analysis_taxon_lineage', [7])).map((r) => r.taxon_id)).toEqual([
           '1',
@@ -1409,6 +1412,7 @@ describe.skipIf(!dbAvailable)('analysis queries', () => {
     });
     it('a parent loop terminates with each taxon once, in a stable order', async () => {
       await s.rollback(async (db) => {
+        await db.query('ALTER TABLE taxa DISABLE TRIGGER trg_taxa_tree');
         const a = await newTaxon(db, { rank: 'genus' });
         const b = await newTaxon(db, { rank: 'species', parent_taxon_id: a.taxon_id });
         await updateRow(db, 'taxa', 'taxon_id', a.taxon_id, { parent_taxon_id: b.taxon_id });
