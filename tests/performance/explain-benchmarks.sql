@@ -83,12 +83,13 @@ EXPLAIN (ANALYZE, BUFFERS) SELECT audit_id, entity_type, entity_id, action, crea
 -- ============================================================================================
 -- T19-D: Field & Samples (results: database/indexes/field_indexes.sql)
 -- ============================================================================================
--- Index: idx_collection_events_site_id_collected_at. Improved: FQ3a-c, FQ4a. Expected unchanged:
--- FQ1 (unique index), FQ3d and FQ4b (leading-column rule, reads every event), FQ5c.
--- The T19-D follow-up indexes (samples(event_id), sample_status_history(sample_id), the
--- text_pattern_ops prefix index) are NOT part of database/indexes/ yet, so FQ2 and FQ5a/b/d are
--- measured as "no index covers it"; once an index file adds them the statements below show the gain
--- without an edit (and benchmarks.config.js names the statements that serve them).
+-- Indexes: idx_collection_events_site_id_collected_at (FQ3a-c, FQ4a), idx_samples_event_id (FQ5b, FQ5d,
+-- FQ5a together with the next one), idx_sample_status_history_sample_id (FQ5a, both needed),
+-- idx_samples_sample_code_pattern (FQ2a, FQ2b, FQ2d). Expected unchanged: FQ1 (unique index), FQ2c (the
+-- prefix matches 88% of the table), FQ3d and FQ4b (leading-column rule, reads every event), FQ5c.
+-- To reproduce the "neither / each / both" table of Q2 (FQ5a), drop the follow-up indexes first
+-- (the DROP lines are in the rollback comment of database/indexes/field_indexes.sql), take the plans,
+-- create them one at a time, VACUUM (ANALYZE) samples, sample_status_history after each, and repeat.
 -- The volume generator creates no environmental_measurements, so the T14 time-series query would
 -- have nothing to read: this section first adds 4 deterministic readings (temperature_c, ph,
 -- dissolved_oxygen_mg_l, turbidity_ntu) to every volume event, once (test database only). Their
@@ -147,7 +148,7 @@ FROM samples WHERE event_id = :hot_event ORDER BY sample_id LIMIT 1 \gset
 
 \echo FQ1 (exact code, unique index samples_sample_code_key)
 EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM samples WHERE sample_code = :'some_code';
-\echo FQ2a (prefix, rarest year; no index covers it)
+\echo FQ2a (prefix, rarest year)
 EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM samples WHERE sample_code LIKE :'pfx_rare';
 \echo FQ2b (prefix, ~12% of the table)
 EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM samples WHERE sample_code LIKE :'pfx_mid';
@@ -171,14 +172,31 @@ WHERE collected_at >= :'m0' AND collected_at < :'m1' ORDER BY collected_at;
 EXPLAIN (ANALYZE, BUFFERS) EXECUTE field_readings_moving_average('temperature_c', :hot_site, NULL);
 \echo FQ4b (T14 Q3, all sites)
 EXPLAIN (ANALYZE, BUFFERS) EXECUTE field_readings_moving_average('temperature_c', NULL, NULL);
-\echo FQ5a (Q2, one event; no index covers it)
+\echo FQ5a (Q2, one event; needs samples(event_id) AND sample_status_history(sample_id))
 EXPLAIN (ANALYZE, BUFFERS) EXECUTE field_event_samples_latest_status(:hot_event);
-\echo FQ5b (samples of one event; no index covers it)
+\echo FQ5b (samples of one event)
 EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM samples WHERE event_id = :hot_event;
 \echo FQ5c (Q1, all sites)
 EXPLAIN (ANALYZE, BUFFERS) EXECUTE field_site_sample_counts(NULL);
-\echo FQ5d (v_site_sample_summary, one site; no index covers it)
+\echo FQ5d (v_site_sample_summary, one site)
 EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM v_site_sample_summary WHERE site_id = :hot_site;
+
+-- FQ6: write cost with the audit and status-history triggers ENABLED. Real tables, rolled-back
+-- transactions, test database only. The triggers must be enabled (tgenabled = 'O'); this lists them.
+SELECT tgrelid::regclass AS table_name, tgname, tgenabled FROM pg_trigger
+WHERE tgrelid IN ('samples'::regclass, 'sample_status_history'::regclass) AND NOT tgisinternal ORDER BY 1, 2;
+-- :fq6_run registers 1 000 samples over 20 volume events with register_sample() (1 000 history rows,
+-- 1 000 audit rows), then changes their status collected -> stored (transition trigger, +1 000 history
+-- rows, +1 000 audit rows), and prints the two timings in milliseconds. Run it five times (the first is
+-- the warm-up) and take the median of the other four, with and without the follow-up indexes.
+-- Rolled-back inserts still consume identity values. The audit and history rows are rolled back too.
+\set fq6_run 'BEGIN; SET LOCAL app.current_user_id = ''3''; DO $$ DECLARE ev bigint[]; ids bigint[]; t0 timestamptz; t1 timestamptz; t2 timestamptz; BEGIN SELECT array_agg(event_id ORDER BY event_id) INTO ev FROM (SELECT event_id FROM collection_events WHERE event_id >= 1000000 ORDER BY event_id LIMIT 20) e; t0 := clock_timestamp(); SELECT array_agg(register_sample(ev[1 + g % 20], 1, 100, 0.5, NULL, 3)) INTO ids FROM generate_series(1, 1000) g; t1 := clock_timestamp(); UPDATE samples SET status = ''stored'' WHERE sample_id = ANY (ids); t2 := clock_timestamp(); PERFORM set_config(''bench.register_ms'', round(extract(epoch FROM t1 - t0) * 1000, 1)::text, true), set_config(''bench.status_ms'', round(extract(epoch FROM t2 - t1) * 1000, 1)::text, true); END $$; SELECT current_setting(''bench.register_ms'') AS register_1000_ms, current_setting(''bench.status_ms'') AS status_change_1000_ms; ROLLBACK;'
+\echo FQ6 register 1000 samples and change their status (run 1 is the warm-up)
+:fq6_run
+:fq6_run
+:fq6_run
+:fq6_run
+:fq6_run
 
 -- ============================================================================================
 -- T19-A: Analysis, Taxonomy & Analytics (results: database/indexes/analysis_indexes.sql)

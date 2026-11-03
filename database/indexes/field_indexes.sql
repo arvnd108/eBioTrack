@@ -1,13 +1,17 @@
 -- Owner: D (Docs & Demo)
--- Purpose: 2 justified indexes: Field & Samples
+-- Purpose: justified indexes: Field & Samples
 --
 -- Issue #40 / T19-D. Applied by hand (the migration runner does not run database/indexes/) and
 -- safe to run more than once (CREATE INDEX IF NOT EXISTS; the second run only prints a NOTICE):
 --
 --   psql "$DATABASE_URL" -f database/indexes/field_indexes.sql
 --
--- The two indexes of this task are (1) the unique index on samples(sample_code), which already
--- exists because of the UNIQUE constraint, and (2) the new composite index below.
+-- T19-D asked for two indexes: (1) the unique index on samples(sample_code), which already exists
+-- because of the UNIQUE constraint, and (2) the composite index idx_collection_events_site_id_collected_at.
+-- The follow-up (same issue, second PR) adds three more, each kept only because it was measured with
+-- the audit and status-history triggers ENABLED (section 6): idx_samples_event_id,
+-- idx_sample_status_history_sample_id and idx_samples_sample_code_pattern. The file creates them
+-- with plain CREATE INDEX IF NOT EXISTS (no CONCURRENTLY: it is applied on an idle database).
 --
 -- When benchmarking, the UNINDEXED BASELINE MUST EXIST first: take the "before" plans, then apply
 -- this file, run VACUUM (ANALYZE) collection_events, and take the "after" plans.
@@ -28,7 +32,8 @@
 -- sample code of sample 1050000. The exact statements are labelled FQ1 ... FQ5 in
 -- tests/performance/explain-benchmarks.sql:
 --   FQ1  SELECT * FROM samples WHERE sample_code = 'EB-20190728-1010000-000'
---   FQ2a SELECT * FROM samples WHERE sample_code LIKE 'EB-2026%'              (10 rows, seed samples)
+--   FQ2a SELECT * FROM samples WHERE sample_code LIKE 'EB-2026%'              (10 rows, seed samples;
+--        the follow-up measured the rarest year in the data, 'EB-2025%', 7 rows)
 --   FQ2b                                           LIKE 'EB-2020%'            (12 400 rows, 12.4%)
 --   FQ2c                                           LIKE 'EB-2019%'            (87 600 rows, 87.6%)
 --   FQ2d                                           LIKE 'EB-20190101-1000000%' (5 rows, one event)
@@ -49,8 +54,9 @@
 -- Indexes that already exist because of constraints (020_field_samples.sql):
 --   pk_samples (sample_id), samples_sample_code_key (sample_code), pk_collection_events (event_id),
 --   uq_environmental_measurements_event_parameter (event_id, parameter), the other primary keys.
---   There is NO index on samples(event_id), collection_events(site_id) (before this task) or
---   sample_status_history(sample_id): PostgreSQL does not index foreign keys.
+--   PostgreSQL does not index foreign keys, so before this task there was NO index on
+--   samples(event_id), collection_events(site_id) or sample_status_history(sample_id); sections 2, 3
+--   and 4 add them.
 
 -- --------------------------------------------------------------------------------------------
 -- 1. samples (sample_code): the unique index samples_sample_code_key (already exists)
@@ -107,58 +113,131 @@
 CREATE INDEX IF NOT EXISTS idx_collection_events_site_id_collected_at ON collection_events (site_id, collected_at);
 
 -- --------------------------------------------------------------------------------------------
--- Prefix search on sample_code (GET /api/samples?q=): locale and text_pattern_ops finding
+-- 3. idx_samples_event_id
 -- --------------------------------------------------------------------------------------------
--- A plain btree index (the unique index above) can answer LIKE 'EB-2026%' only when the column
--- collation is "C"; in any other collation the btree order is not the byte order of the prefix.
--- The test database uses en_US.utf8 (the default of the PostgreSQL 16 image), and there the
--- unique index is NOT used for a prefix: FQ2a is a Seq Scan, 1 334 buffers, 3.447 ms, however
--- selective the prefix is. An index declared with text_pattern_ops is usable in any collation.
--- Experiment (indexes created for the test and dropped again, not kept):
---   CREATE INDEX tmp_samples_code_pattern ON samples (sample_code text_pattern_ops);  -- 3 992 kB
---   CREATE TABLE samples_c AS SELECT sample_id, sample_code COLLATE "C" AS sample_code FROM samples;
---   CREATE INDEX ON samples_c (sample_code);          -- plain btree on a "C"-collated copy
---   prefix (matches)                | default index, en_US | text_pattern_ops index | plain btree, "C"
---   FQ2a 'EB-2026%'         (10)    | Seq Scan  3.447 ms   | Bitmap Index Scan  0.008 ms (4 buf) | Index Scan 0.006 ms (4 buf)
---   FQ2d one event's codes   (5)    | Seq Scan  3.613 ms   | Bitmap Index Scan  0.006 ms (4 buf) | not run
---   FQ2b 'EB-2020%'   (12 400, 12%) | Seq Scan  3.977 ms   | Bitmap Index Scan  1.192 ms (230 buf) | Index Scan 1.182 ms (156 buf)
---   FQ2c 'EB-2019%'   (87 600, 88%) | Seq Scan  6.716 ms   | Seq Scan  6.125 ms (index ignored)  | Seq Scan 5.843 ms
---   Conclusions: (1) the claim holds: a prefix uses a plain btree only under the "C" collation;
---   (2) text_pattern_ops makes it work under en_US.utf8: 430x faster for a selective prefix
---   (3.447 -> 0.008 ms, 1 334 -> 4 buffers), 3.3x for a 12% prefix, and the planner correctly
---   ignores it when the prefix matches most of the table (FQ2c); (3) the pattern index also
---   answers exact lookups, but the UNIQUE constraint needs the default operator class, so it
---   would be a second index, 3 992 kB, not a replacement; (4) a substring search
---   (LIKE '%x%') is not served by either btree. Sample codes are EB-<date>-<event>-<seq>, so a
---   search by year or date is a prefix search.
---   Decision: NOT created here, because T19 asks for two indexes and the route that needs it
---   (GET /api/samples?q=, T21) does not exist yet. It is the recommended third index, to be
---   added with that route if `q` is a prefix search:
---     CREATE INDEX idx_samples_sample_code_pattern ON samples (sample_code text_pattern_ops);
---   Do not rely on the unique index for LIKE under en_US.utf8. Judge a prefix index with a
---   selective prefix: a prefix that matches most of the table (FQ2c) cannot show a benefit.
+-- Serves: every read of the samples of one event: GET /api/samples?event_id=, GET /api/events/:id,
+--   field_event_samples_latest_status (Q2), v_site_sample_summary (the join to collection_events),
+--   and register_sample(), which counts the event's samples under the event lock to choose the next
+--   sequence number on every registration. PostgreSQL does not index foreign keys, and the unique
+--   constraints on samples do not start with event_id, so nothing covered this column.
+-- Redundancy: not a duplicate. The indexes on samples are pk_samples (sample_id) and
+--   samples_sample_code_key (sample_code); event_id is the leading column of none of them.
+-- FQ5b, samples of the hot event (5 rows of 100 017):
+--   before: Seq Scan, total buffers 1 334                                        2.092 ms
+--   after:  Index Scan using idx_samples_event_id, total buffers 3               0.004 ms
+-- FQ5d, v_site_sample_summary for the hot site: 6.196 ms, 1 410 buffers -> 0.219 ms, 329 buffers (28x).
+-- register_sample() count statement (SELECT COUNT(*) + 1 FROM samples WHERE event_id = <hot event>):
+--   2.034 ms, 1 334 buffers -> 0.005 ms, 3 buffers; the whole call, in a rolled-back transaction,
+--   2.333 ms -> 0.157 ms.
+-- FQ5a (Q2) alone: 64.031 ms, 5 160 buffers -> 61.934 ms, 3 962 buffers (the history table is still
+--   scanned: see index 4). FQ5c (Q1, all sites) reads every sample and is unchanged (39.871 ->
+--   40.409 ms, 1 550 buffers).
+-- Size: 1 152 kB (the table is 10 MB).
+-- Write cost with the triggers ON: section 6. Registering 1 000 samples got 27x FASTER
+--   (2 268 ms -> 84 ms with all three indexes; 79 ms with this one alone), because the count under the event lock no longer reads the whole table.
+CREATE INDEX IF NOT EXISTS idx_samples_event_id ON samples (event_id);
 
 -- --------------------------------------------------------------------------------------------
--- Deliberately NOT indexed (two indexes were the decision; these are the measured reasons)
+-- 4. idx_sample_status_history_sample_id
 -- --------------------------------------------------------------------------------------------
--- samples (event_id): the most valuable missing index, reported as the recommended third. Every
---   query that lists the samples of an event reads all of samples without it: FQ5b 3.436 ms,
---   1 334 buffers; with a test index (1 152 kB, dropped again) 0.004 ms, 3 buffers (about 860x).
---   v_site_sample_summary for one site (FQ5d): 6.780 ms, 1 527 buffers -> 0.220 ms, 329 buffers
---   (31x). register_sample() counts the event's samples under the event lock to find the next
---   sequence number, so it pays this scan on every registration. FQ5c (Q1, all sites) reads every
---   sample anyway and is unchanged (40.012 -> 40.362 ms).
--- sample_status_history (sample_id): Q2 (field_event_samples_latest_status, FQ5a) ranks the whole
---   history table before filtering: 62.745 ms, 5 160 buffers for ONE event. With a test index
---   (4 832 kB, dropped again) 2.155 ms, 1 342 buffers (29x); with both this index and
---   samples(event_id) 0.061 ms, 11 buffers (about 1 000x); with samples(event_id) alone nothing
---   changes (60.973 ms). The two indexes only pay off together for Q2.
---   Recommended: CREATE INDEX idx_samples_event_id ON samples (event_id);
---                CREATE INDEX idx_sample_status_history_sample_id ON sample_status_history (sample_id);
---   Re-measure in T35 with the triggers enabled (they write one history row per status change).
--- collection_events (site_id) alone: redundant, the leading column of the index above.
+-- Serves: the history of one sample (GET /api/samples/:id) and Q2 (field_event_samples_latest_status),
+--   which ranks the history rows of the event's samples to find the latest status. Without an index
+--   on the foreign key, Q2 ranks the whole 400 084-row table before filtering.
+-- Q2 (FQ5a, hot event, 5 samples), the four combinations, median of 5:
+--   neither index                       Seq Scan on sample_status_history, 5 160 buffers   64.031 ms
+--   samples (event_id) only             3 962 buffers                                      61.934 ms
+--   sample_status_history only          1 344 buffers                                       2.208 ms
+--   both                                13 buffers                                          0.052 ms
+--   Q2 needs BOTH: the history index finds the rows, the samples index finds the event's samples;
+--   either alone leaves one table scanned in full. Both together: about 1 200x faster, 400x fewer
+--   buffers than neither.
+-- Not used by FQ5b, FQ5c, FQ5d or the FQ2 statements (they do not read the history table).
+-- Size: 4 832 kB (the table is 27 MB). Write cost with the triggers ON: section 6.
+CREATE INDEX IF NOT EXISTS idx_sample_status_history_sample_id ON sample_status_history (sample_id);
+
+-- --------------------------------------------------------------------------------------------
+-- 5. idx_samples_sample_code_pattern: prefix search on sample_code (GET /api/samples?q=)
+-- --------------------------------------------------------------------------------------------
+-- What q does (backend/src/services/samples.service.js): q is a case-insensitive PREFIX of the
+--   sample code (the service upper-cases it and escapes % _ and \), run as
+--   s.sample_code LIKE $6::text || '%' ESCAPE '\'. Sample codes are upper-case EB-<date>-<event>-<seq>,
+--   so a search by year or date is a prefix search. That is why this index is created: it is exactly
+--   the shape a text_pattern_ops btree serves.
+-- Why the unique index is not enough: a plain btree answers LIKE 'EB-2025%' only when the column
+--   collation is "C"; in any other collation (the test database uses en_US.utf8) the btree order is
+--   not the byte order of the prefix. FQ2a is a Seq Scan, 1 334 buffers, however selective the prefix
+--   is. An index with text_pattern_ops is usable in any collation. samples_sample_code_key cannot be
+--   replaced by it: the UNIQUE constraint needs the default operator class, so this is a second
+--   index on the same column (a few more kB), not a replacement.
+-- Measured (hot prefixes chosen from the data, median of 5, before -> after):
+--   FQ2a 'EB-2025%'  (7 rows)             Seq Scan 5.070 ms, 1 334 buf -> Index Scan 0.011 ms, 4 buf
+--   FQ2d one event's codes (5 rows)       Seq Scan 3.460 ms, 1 334 buf -> Index Scan 0.006 ms, 4 buf
+--   FQ2b 'EB-2020%'  (12 400 rows, 12%)   Seq Scan 4.439 ms, 1 334 buf -> Bitmap Heap Scan 2.192 ms, 230 buf
+--   FQ2c 'EB-2019%'  (87 600 rows, 88%)   Seq Scan 6.341 ms, 1 334 buf -> Seq Scan, same plan and buffers
+--                                         (index ignored, as it should be); the time was 8.1 ms in the
+--                                         final set, +1.8 ms on three runs; cause not determined
+--   The planner correctly ignores the index when the prefix matches most of the table; judge a prefix
+--   index with a selective prefix. An exact lookup (FQ1) can be answered by either index at the same cost, and with both present the
+--   planner chose the pattern index in tests/performance/plan-shape.test.js; the lookup stays at
+--   4 buffers either way. The unique index is still required for uniqueness; it is not made redundant.
+-- The route's own SQL (optional filters written as ($6::text IS NULL OR ... LIKE $6 || '%' ESCAPE '\'))
+--   was checked with PREPARE: with a custom plan (what the pg driver's unnamed statements get) the
+--   plan is Index Scan using idx_samples_sample_code_pattern with Index Cond sample_code ~>=~ 'EB-2025'
+--   AND sample_code ~<~ 'EB-2026', 0.048 ms; a forced GENERIC plan cannot use any index for the
+--   ($6 IS NULL OR ...) form and falls back to a Seq Scan. The service sends unnamed statements, so
+--   it gets the custom plan.
+-- A substring search (LIKE '%x%') is served by neither btree, and an ILIKE or lower() search would
+--   need an expression index. q is an upper-cased prefix, so neither applies. (pg_trgm GIN would serve
+--   substrings; it needs an extension, was not measured and is not created.)
+-- Size: 3 992 kB (the table is 10 MB). Write cost with the triggers ON: section 6.
+CREATE INDEX IF NOT EXISTS idx_samples_sample_code_pattern ON samples (sample_code text_pattern_ops);
+
+-- --------------------------------------------------------------------------------------------
+-- 6. Write cost with the audit and status-history triggers ENABLED
+-- --------------------------------------------------------------------------------------------
+-- Measured on the real tables of ebiotrack_test with trg_samples_status_transition,
+-- trg_samples_status_history, trg_samples_audit (and the collection_events audit trigger) enabled
+-- (checked in pg_trigger: tgenabled = 'O'; the volume generator does not leave any trigger off),
+-- in rolled-back transactions with SET LOCAL app.current_user_id = '3', median of 5 after one
+-- warm-up, VACUUM (ANALYZE) between index sets:
+--   (a) SELECT register_sample(<event>, 1, 100, 0.5, NULL, 3) FROM generate_series(1, 1000),
+--       spread over 20 volume events: 1 000 samples, 1 000 history rows, 1 000 audit rows;
+--   (b) UPDATE samples SET status = 'stored' for those 1 000 samples (collected -> stored): fires
+--       the transition trigger, the history trigger (+1 000 history rows) and the audit trigger.
+--   index set                                  (a) register 1 000         (b) 1 000 status changes
+--   none                                       2 267.7 ms (2.27 ms/row)    41.0 ms (0.041 ms/row)
+--   samples(event_id) only                        79.2 ms (0.079 ms/row)    41.8 ms  (+2%)
+--   sample_status_history(sample_id) only      2 265.8 ms                   42.3 ms  (+3%)
+--   samples(sample_code text_pattern_ops) only 2 263.6 ms                   43.9 ms  (+7%)
+--   samples(event_id) + history                   81.0 ms                   42.8 ms  (+4%)
+--   all three                                     83.8 ms (0.084 ms/row)    44.8 ms  (+9%, 0.045 ms/row)
+--   Reading: with all three indexes a status change costs about 4 microseconds more per row (+9%);
+--   that is small next to the work the triggers already do (a history row and an audit row per
+--   change). Registering samples is dominated by the unindexed count of the event's samples
+--   (2.27 ms/row), so the net effect of the indexes is a 27x SPEEDUP; the cost of the other two
+--   indexes on the insert path is inside the run-to-run spread of that figure (66-88 ms). Each run
+--   uses 1 000 rows of a 100 017-row table; other sizes were not measured. The statement is the
+--   FQ6 macro of tests/performance/explain-benchmarks.sql. Rolled-back inserts still consume
+--   identity values (sample ids move on); nothing else is left.
+-- Row sets: counts and md5 checksums of FQ1, FQ2a-d, FQ5a, FQ5b, FQ5c and FQ5d were identical with
+--   no new index, with each one alone and with all of them.
+
+-- --------------------------------------------------------------------------------------------
+-- Not indexed (measured or redundant)
+-- --------------------------------------------------------------------------------------------
+-- collection_events (site_id) alone: redundant, the leading column of
+--   idx_collection_events_site_id_collected_at.
 -- environmental_measurements (event_id): the leading column of
 --   uq_environmental_measurements_event_parameter, which FQ4a already uses.
+-- pg_trgm GIN on samples (sample_code): would serve substring search; q is a prefix search, and it
+--   needs an extension. Not created.
+-- Not part of the migration runner: backend/src/db/migrate.js does not run database/indexes/, so a
+--   real application database gets these indexes only when this file is applied by hand. Whether the
+--   runner should apply the directory is a decision for the backend owner (T21 and T35 read these
+--   tables).
 
 -- Rollback (benchmark reset; do not run in normal use):
+--   DROP INDEX IF EXISTS idx_samples_sample_code_pattern;
+--   DROP INDEX IF EXISTS idx_sample_status_history_sample_id;
+--   DROP INDEX IF EXISTS idx_samples_event_id;
 --   DROP INDEX IF EXISTS idx_collection_events_site_id_collected_at;
