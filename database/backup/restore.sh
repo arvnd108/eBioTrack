@@ -231,6 +231,10 @@ info "client pg_restore $CLIENT_MAJOR, server PostgreSQL $SERVER_MAJOR, target $
 if [[ "$TOOL_MODE" == "native" && "$CLIENT_MAJOR" -lt "$SERVER_MAJOR" ]]; then
   die 6 "pg_restore $CLIENT_MAJOR is older than the server ($SERVER_MAJOR): install the PostgreSQL $SERVER_MAJOR client tools"
 fi
+DUMP_MAJOR=$(sed -n 's/^; *Dumped by pg_dump version: *\([0-9][0-9]*\).*/\1/p' "$LISTING" | head -n 1)
+if [[ -n "$DUMP_MAJOR" && "$DUMP_MAJOR" -gt "$SERVER_MAJOR" ]]; then
+  die 6 "the dump was made by pg_dump $DUMP_MAJOR, newer than the target server ($SERVER_MAJOR): it can contain settings that server does not know (e.g. SET transaction_timeout). Take the backup with the PostgreSQL $SERVER_MAJOR client tools, or restore into a PostgreSQL $DUMP_MAJOR or newer server"
+fi
 
 EXISTS=$(sql postgres -c "SELECT count(*) FROM pg_database WHERE datname = '$TARGET'")
 RELATIONS=0; TABLES=0

@@ -18,7 +18,7 @@
 #         An existing file is never overwritten: a second backup in the same second fails (exit 1).
 #
 # Exit codes: 0 ok | 1 unexpected failure | 2 usage error | 3 refused by a safety check
-#             4 connection or authentication failure | 5 dump invalid | 6 missing or too old client tools
+#             4 connection or authentication failure | 5 dump invalid | 6 missing or client tools of the wrong version (older or newer than the server)
 #
 # What it does: pg_dump --format=custom --no-owner --no-acl in one repeatable-read snapshot. That is a
 # consistent point-in-time copy of a live database; writers are not blocked (no LOCK TABLE). Roles
@@ -202,6 +202,9 @@ SERVER_MAJOR=$((SERVER_NUM / 10000))
 info "client pg_dump $CLIENT_MAJOR, server PostgreSQL $SERVER_MAJOR, database $URL_DB at $URL_HOST:$URL_PORT"
 if [[ "$TOOL_MODE" == "native" && "$CLIENT_MAJOR" -lt "$SERVER_MAJOR" ]]; then
   die 6 "pg_dump $CLIENT_MAJOR is older than the server ($SERVER_MAJOR): it would refuse to dump. Install the PostgreSQL $SERVER_MAJOR client tools (or use the compose db container)"
+fi
+if [[ "$TOOL_MODE" == "native" && "$CLIENT_MAJOR" -gt "$SERVER_MAJOR" ]]; then
+  die 6 "pg_dump $CLIENT_MAJOR is newer than the server ($SERVER_MAJOR): its dump could not be restored into a PostgreSQL $SERVER_MAJOR server (e.g. SET transaction_timeout). Install the PostgreSQL $SERVER_MAJOR client tools (or use the compose db container)"
 fi
 
 umask 077

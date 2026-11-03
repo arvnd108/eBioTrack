@@ -28,7 +28,7 @@ database/backup/restore.sh "$DUMP" --url postgres://ebiotrack:change_me@localhos
 ```
 
 - **Laptop with Docker** (`docker compose up -d db`): if `pg_dump`, `pg_restore` and `psql` are not on the host, the scripts run them inside the compose `db` container and say so (`using docker compose exec`). This only happens when the URL host is `localhost`, `127.0.0.1` or `::1` and the `db` service is running.
-- **Laptop with a local PostgreSQL**: the client tools must be on `PATH`, version at least that of the server.
+- **Laptop with a local PostgreSQL**: the client tools must be on `PATH`, same major version as the server (a newer client writes dumps an older server cannot restore, e.g. `SET transaction_timeout`).
 - **CI** (`postgres:16` service on `localhost:5432`): the `ubuntu-latest` runner has PostgreSQL client tools; use the same command lines.
 
 ## backup.sh
@@ -92,7 +92,7 @@ The dump is taken with `--no-owner --no-acl`, so it contains **no** role names, 
 | 3 | refused by a safety check |
 | 4 | connection or authentication failure |
 | 5 | dump invalid (not listable, checksum mismatch, missing file) |
-| 6 | client tools missing, or `pg_dump` older than the server (a newer client is fine) |
+| 6 | client tools missing, or of the wrong version: `backup.sh` refuses a `pg_dump` older **or newer** than the server; `restore.sh` refuses a dump made by a `pg_dump` newer than the target server |
 
 ## Passwords
 
