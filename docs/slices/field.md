@@ -161,21 +161,45 @@ Part 4 adds a `SAVEPOINT` variant: it recovers from one bad sample without redoi
 
 ## Indexes (T19-D)
 
-`database/indexes/field_indexes.sql` (issue #40, applied by hand and safe to run twice) covers two indexes: the unique index `samples_sample_code_key` that already exists, and the new `idx_collection_events_site_id_collected_at`. The full `EXPLAIN (ANALYZE, BUFFERS)` evidence, the variants tried and the write cost are in the comment blocks of that file; the exact statements are labelled `FQ1` to `FQ5` in `tests/performance/explain-benchmarks.sql`. All figures: `ebiotrack_test` (PostgreSQL 16, collation `en_US.utf8`), `npm run volume:load -- --scale medium` (20 008 events, 100 017 samples, 400 084 status-history rows) plus 80 000 generated measurements, because the volume generator creates none; median of 5 runs after one warm-up, baseline taken before the index.
+`database/indexes/field_indexes.sql` (issue #40, applied by hand and safe to run twice) creates four indexes and documents a fifth that already exists: the unique index `samples_sample_code_key`. T19-D asked for two (the unique index and `idx_collection_events_site_id_collected_at`); the follow-up PR added `idx_samples_event_id`, `idx_sample_status_history_sample_id` and `idx_samples_sample_code_pattern` after measuring them with the audit and status-history triggers enabled. The full `EXPLAIN (ANALYZE, BUFFERS)` evidence, the variants tried and the write cost are in the comment blocks of that file; the exact statements are labelled `FQ1` to `FQ6` in the T19-D section of `tests/performance/explain-benchmarks.sql`. All figures: `ebiotrack_test` (PostgreSQL 16, collation `en_US.utf8`), `npm run volume:load -- --scale medium` (20 008 events, 100 017 samples, 400 084 status-history rows) plus 80 000 generated measurements, because the volume generator creates none; median of 5 runs after one warm-up, baseline taken before each index, `VACUUM (ANALYZE)` before each plan set.
 
-| Index                                                                | Table               | Serves                                                                           | Size    | Before -> after                                                                                                                                           |
-| -------------------------------------------------------------------- | ------------------- | -------------------------------------------------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `samples_sample_code_key` (`sample_code`), from the `UNIQUE`         | `samples`           | exact code lookup (FQ1), uniqueness of codes                                     | 3984 kB | without it: Seq Scan, 1344 buffers, 3.095 ms; with it: Index Scan, 4 buffers, 0.007 ms (about 440x)                                                       |
-| `idx_collection_events_site_id_collected_at` (site_id, collected_at) | `collection_events` | events of a site in a date range, T14 Q3 with a site, `GET /api/events?site_id=` | 632 kB  | one year (78 events) 0.751 -> 0.036 ms (188 -> 66 buffers); one month 0.963 -> 0.010 ms; whole site 0.464 -> 0.039 ms; T14 Q3, one site 0.596 -> 0.168 ms |
+| Index | Table | Serves | Size | Before -> after |
+| --- | --- | --- | --- | --- |
+| `samples_sample_code_key` (`sample_code`), from the `UNIQUE` | `samples` | exact code lookup (FQ1), uniqueness of codes | 4056 kB | without it: Seq Scan, 1344 buffers, 3.095 ms; with it: Index Scan, 4 buffers, 0.007 ms (about 440x) |
+| `idx_collection_events_site_id_collected_at` (site_id, collected_at) | `collection_events` | events of a site in a date range, T14 Q3 with a site, `GET /api/events?site_id=` | 632 kB | one year (78 events) 0.751 -> 0.036 ms (188 -> 66 buffers); one month 0.963 -> 0.010 ms; whole site 0.464 -> 0.039 ms; T14 Q3, one site 0.596 -> 0.168 ms |
+| `idx_samples_event_id` (event_id) | `samples` | samples of one event, `GET /api/events/:id`, `GET /api/samples?event_id=`, `v_site_sample_summary`, the count inside `register_sample()` | 1152 kB | samples of one event (FQ5b) 2.092 ms, 1334 buffers -> 0.004 ms, 3 buffers; `v_site_sample_summary` for one site (FQ5d) 6.196 -> 0.219 ms; `register_sample()` count 2.034 -> 0.005 ms |
+| `idx_sample_status_history_sample_id` (sample_id) | `sample_status_history` | history of one sample, Q2 (`field_event_samples_latest_status`) | 4832 kB | Q2 for one event, with `samples (event_id)`: 64.031 ms, 5160 buffers -> 0.052 ms, 13 buffers (see the table below) |
+| `idx_samples_sample_code_pattern` (sample_code `text_pattern_ops`) | `samples` | `GET /api/samples?q=`, a case-insensitive prefix of the code | 3992 kB | rarest year prefix (FQ2a) 5.070 ms, 1334 buffers -> 0.011 ms, 4 buffers; one event's codes (FQ2d) 3.460 -> 0.006 ms; 12% prefix (FQ2b) 4.439 -> 2.192 ms |
 
-Write cost of the new index (bulk insert of 20 008 rows into a temporary copy, median of 5): 8.353 -> 15.715 ms (+88%, about 0.37 microseconds a row). Events are entered one at a time, so this is negligible. Row counts and `md5` checksums of the results are identical with and without the index.
+Q2 (FQ5a, one event) needs both foreign-key indexes. The four combinations:
+
+| `samples (event_id)` | `sample_status_history (sample_id)` | Time | Buffers |
+| --- | --- | --- | --- |
+| no | no | 64.031 ms | 5160 |
+| yes | no | 61.934 ms | 3962 |
+| no | yes | 2.208 ms | 1344 |
+| yes | yes | 0.052 ms | 13 |
+
+Row counts and `md5` checksums of FQ1, FQ2a-d, FQ5a-d are identical with no new index, with each one alone and with all of them. FQ2c (a prefix matching 88% of the table) and FQ5c (Q1 reads every sample) are unchanged, and FQ1 stays at 4 buffers (with both indexes present the planner may answer an exact code lookup from the pattern index; the unique index is still needed for uniqueness): the planner correctly ignores the pattern index when almost every row matches. FQ5c stays at about 40 ms and FQ2c at a Seq Scan; its time was 6.3 ms before and 8.1 ms with the indexes in place (same plan and buffers, cause not determined).
+
+### Write cost with the triggers enabled
+
+Measured on the real tables with `trg_samples_status_transition`, `trg_samples_status_history` and `trg_samples_audit` enabled, in rolled-back transactions (FQ6 in the benchmark file): (a) `register_sample()` for 1 000 samples spread over 20 events (1 000 samples, history rows and audit rows each), and (b) 1 000 status changes `collected -> stored`, which fire the transition, history and audit triggers. Median of 5 after one warm-up.
+
+| Index set | (a) register 1 000 | (b) 1 000 status changes |
+| --- | --- | --- |
+| none | 2 267.7 ms | 41.0 ms |
+| `samples (event_id)` only | 79.2 ms | 41.8 ms (+2%) |
+| `sample_status_history (sample_id)` only | 2 265.8 ms | 42.3 ms (+3%) |
+| pattern index only | 2 263.6 ms | 43.9 ms (+7%) |
+| event + history | 81.0 ms | 42.8 ms (+4%) |
+| all three | 83.8 ms | 44.8 ms (+9%) |
+
+A status change costs about 4 microseconds more per row with all three (+9%): small next to the history and audit rows the triggers already write. Registering samples is 27 times faster, because `register_sample()` counts the event's existing samples under the event lock and that count no longer reads the whole table. Rolled-back inserts still consume identity values.
 
 Findings:
 
 - **The composite index helps the filter, not the sort.** After the index the plan is a Bitmap Heap Scan followed by a Sort of the 78 rows: they are spread over 64 pages, so the planner fetches them in page order and sorts. A date range without a `site_id` (FQ3d) and the T14 query for all sites (FQ4b, which reads every event) cannot use it: 0.819 ms and 24.824 ms stay unchanged.
-- **Prefix search needs `text_pattern_ops` unless the column collation is `C`.** The unique index is not used for `LIKE 'EB-2026%'` under `en_US.utf8`: Seq Scan, 1334 buffers, 3.447 ms. An experimental `text_pattern_ops` index (3992 kB, dropped again) gives 0.008 ms and 4 buffers (about 430x); a 12% prefix improves 3.3x; and the planner correctly ignores it when the prefix matches 88% of the table. A plain btree on a copy of the column declared `COLLATE "C"` also serves the prefix (0.006 ms), which confirms the locale rule. A substring search (`LIKE '%x%'`) is served by neither. Judge a prefix index with a selective prefix: one that matches almost every row, such as `EB-2019%` (88% of the volume data), cannot show a benefit.
-- **Not created, with numbers.** Because T19 asks for two indexes, three more are reported as recommended for whoever builds the routes (T21):
-  - `CREATE INDEX idx_samples_sample_code_pattern ON samples (sample_code text_pattern_ops)` for `GET /api/samples?q=` if `q` is a prefix search.
-  - `CREATE INDEX idx_samples_event_id ON samples (event_id)`: the samples of one event take 3.436 ms and 1334 buffers without it and 0.004 ms and 3 buffers with it (about 860x); `v_site_sample_summary` for one site goes 6.780 -> 0.220 ms; `register_sample()` counts the event's samples on every registration.
-  - `CREATE INDEX idx_sample_status_history_sample_id ON sample_status_history (sample_id)`: Q2 for one event takes 62.745 ms (5160 buffers). With this index 2.155 ms; with both this and `samples (event_id)` 0.061 ms (about 1000x). With `samples (event_id)` alone nothing changes.
-- T35 should repeat these with the audit and history triggers enabled.
+- **PostgreSQL does not index foreign keys.** `samples.event_id` and `sample_status_history.sample_id` are foreign keys, and nothing indexed them until the follow-up; leading-column rule applies as well: the composite index serves only filters that include `site_id`.
+- **Prefix search needs `text_pattern_ops` unless the column collation is `C`.** The unique index is not used for `LIKE 'EB-2025%'` under `en_US.utf8`: Seq Scan, 1334 buffers. `GET /api/samples?q=` upper-cases `q` and runs `LIKE $6 || '%' ESCAPE '\'` (`backend/src/services/samples.service.js`), a prefix search, so the pattern index is created. The route's own SQL was checked with `PREPARE`: with a custom plan (what the `pg` driver's unnamed statements get) it is an Index Scan on `idx_samples_sample_code_pattern`; a forced generic plan cannot use an index for the `($6 IS NULL OR ...)` form. The unique constraint needs the default operator class, so the pattern index is a second index on the column, not a replacement. A substring search (`LIKE '%x%'`) is served by neither; `pg_trgm` would need an extension and was not created.
+- **Not part of the migration runner.** `backend/src/db/migrate.js` does not run `database/indexes/`; these indexes exist only when the file is applied by hand. Whether the runner should apply the directory is a backend decision, not changed here.
