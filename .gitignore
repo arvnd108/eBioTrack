@@ -9,3 +9,9 @@ coverage/
 __pycache__/
 *.pyc
 .DS_Store
+
+# Database backups (database/backup/backup.sh)
+backups/
+*.dump
+*.dump.partial
+*.dump.sha256
