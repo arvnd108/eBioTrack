@@ -1,5 +1,5 @@
 -- Owner: A (Backend)
--- Purpose: 1 trigger: Analysis, Taxonomy & Analytics
+-- Purpose: Rule and audit triggers: Analysis, Taxonomy & Analytics
 --
 -- T17-A. Rules from CONTRACT 3 (analysis_runs status transitions, supersession), 4.4, 7 and D19:
 -- approved results are the scientific record and are never edited in place; a correction is a new
@@ -203,11 +203,31 @@ BEGIN
 END;
 $$;
 
+-- A detection's library must belong to the sequencing run that the analysis processed. Missing
+-- analysis or library rows return quietly: the foreign keys report them.
+CREATE OR REPLACE FUNCTION fn_taxon_assignments_check_library(p_analysis_id bigint, p_library_id bigint) RETURNS void
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_analysis_run bigint;
+    v_library_run bigint;
+BEGIN
+    SELECT ar.run_id INTO v_analysis_run FROM analysis_runs ar WHERE ar.analysis_id = p_analysis_id;
+    SELECT sl.run_id INTO v_library_run FROM sequencing_libraries sl WHERE sl.library_id = p_library_id;
+    IF v_analysis_run IS NOT NULL AND v_library_run IS NOT NULL AND v_analysis_run <> v_library_run THEN
+        RAISE EXCEPTION 'Library % belongs to sequencing run %, but analysis % processed run %',
+            p_library_id, v_library_run, p_analysis_id, v_analysis_run
+            USING ERRCODE = 'EB002',
+                  DETAIL = 'A detection must refer to a library of the sequencing run that the analysis processed.';
+    END IF;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION fn_taxon_assignments_immutable() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_OP = 'INSERT' THEN
         PERFORM fn_taxon_assignments_check_parent(NEW.analysis_id, 'added to');
+        PERFORM fn_taxon_assignments_check_library(NEW.analysis_id, NEW.library_id);
         RETURN NEW;
     ELSIF TG_OP = 'DELETE' THEN
         PERFORM fn_taxon_assignments_check_parent(OLD.analysis_id, 'deleted');
@@ -224,17 +244,57 @@ BEGIN
         PERFORM fn_taxon_assignments_check_parent(NEW.analysis_id, 'added to');
         PERFORM fn_taxon_assignments_check_parent(OLD.analysis_id, 'changed');
     END IF;
+    IF NEW.analysis_id <> OLD.analysis_id OR NEW.library_id <> OLD.library_id THEN
+        PERFORM fn_taxon_assignments_check_library(NEW.analysis_id, NEW.library_id);
+    END IF;
     RETURN NEW;
 END;
 $$;
 
 COMMENT ON FUNCTION fn_taxon_assignments_immutable() IS
-    'Detections of approved or superseded analyses cannot be inserted, updated, moved or deleted (EB002). The parent is read FOR SHARE so a concurrent approval cannot be overtaken.';
+    'Detections of approved or superseded analyses cannot be inserted, updated, moved or deleted (EB002), and a detection''s library must belong to the sequencing run of its analysis (EB002). The parent is read FOR SHARE so a concurrent approval cannot be overtaken.';
 
 DROP TRIGGER IF EXISTS trg_taxon_assignments_immutable ON taxon_assignments;
 CREATE TRIGGER trg_taxon_assignments_immutable
     BEFORE INSERT OR UPDATE OR DELETE ON taxon_assignments
     FOR EACH ROW EXECUTE FUNCTION fn_taxon_assignments_immutable();
+
+-- --------------------------------------------------------------------------------------------
+-- 3b. Taxonomy shape: a child ranks below its parent, so no cycles (EB002)
+-- --------------------------------------------------------------------------------------------
+-- Ranks may be skipped (a genus directly under a class is fine); the enum order is the rank order.
+-- Ranks strictly decrease from parent to child, so a cycle is impossible and needs no separate walk.
+CREATE OR REPLACE FUNCTION fn_taxa_check_tree() RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+    v_parent_rank taxon_rank;
+BEGIN
+    -- a self-parent is left to ck_taxa_not_own_parent (23514)
+    IF NEW.parent_taxon_id IS NOT NULL AND NEW.parent_taxon_id <> NEW.taxon_id THEN
+        SELECT t.rank INTO v_parent_rank FROM taxa t WHERE t.taxon_id = NEW.parent_taxon_id;
+        IF FOUND AND v_parent_rank >= NEW.rank THEN
+            RAISE EXCEPTION 'Taxon % (%) cannot have a parent of rank %', NEW.scientific_name, NEW.rank, v_parent_rank
+                USING ERRCODE = 'EB002',
+                      DETAIL = 'A child must have a lower rank than its parent.';
+        END IF;
+    END IF;
+    IF TG_OP = 'UPDATE' AND NEW.rank IS DISTINCT FROM OLD.rank
+       AND EXISTS (SELECT 1 FROM taxa c WHERE c.parent_taxon_id = NEW.taxon_id AND c.rank <= NEW.rank) THEN
+        RAISE EXCEPTION 'Taxon % cannot take rank % while it has a child of that rank or higher', NEW.taxon_id, NEW.rank
+            USING ERRCODE = 'EB002',
+                  DETAIL = 'A child must have a lower rank than its parent.';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+COMMENT ON FUNCTION fn_taxa_check_tree() IS
+    'A child has a lower rank than its parent (EB002), which also rules out cycles. Ranks may be skipped.';
+
+DROP TRIGGER IF EXISTS trg_taxa_tree ON taxa;
+CREATE TRIGGER trg_taxa_tree
+    BEFORE INSERT OR UPDATE OF parent_taxon_id, rank ON taxa
+    FOR EACH ROW EXECUTE FUNCTION fn_taxa_check_tree();
 
 -- --------------------------------------------------------------------------------------------
 -- 4. Audit triggers (need audit_row_change() from T17-C)

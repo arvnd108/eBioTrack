@@ -45,7 +45,7 @@
 --          count on taxon_assignments and analysis_runs.
 -- Used by: GET /api/taxa/:id/detections (filter taxon_id, project_id, site_id, collected_at),
 --          species explorer and exports (T23), query-correctness tests (T31).
--- Features: 10-table join, enum filters, cross-slice read (analysis, lab, field) by design.
+-- Features: 9-table join, enum filters, cross-slice read (analysis, lab, field) by design.
 -- Expected for the seed: 24 rows, from analyses 1 (14 pass) and 2 (10 pass) only; analysis 3
 --          (imported) and 4 (draft) contribute none; species 15 (Gambusia affinis), 9 and 13 are
 --          absent; species 8 (Labeo calbasu) occurs at one site only.

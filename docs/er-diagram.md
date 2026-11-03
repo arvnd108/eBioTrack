@@ -242,6 +242,7 @@ erDiagram
         bigint approved_by FK
         timestamptz approved_at
         timestamptz created_at
+        bigint supersedes_analysis_id FK
     }
 
     taxa {
@@ -302,6 +303,7 @@ erDiagram
     analysis_runs ||--o{ taxon_assignments : "produces"
     taxa ||--o{ taxon_assignments : "classifies"
     taxa |o--o{ taxa : "parent_taxon"
+    analysis_runs |o--o| analysis_runs : "supersedes"
 
     %% ==========================================
     %% CROSS-SLICE RELATIONSHIPS (090 MIGRATION)
