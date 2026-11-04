@@ -1,25 +1,56 @@
 # eBioTrack API Reference
 
-> **Owner:** D (Docs & Demo) · T42 · Contract v1.9  
-> This reference is drafted from `planning/CONTRACT.md` §§8–12. Route-level verification and runnable curl examples remain part of finalization.
+> **T42 · Contract v1.9 · Draft**
+>
+> This reference summarizes the API contract in `planning/CONTRACT.md` §§8–12. It is a contract-based guide, not yet a runtime-verified specification. Endpoint details, examples, and implementation behavior must be checked against the API before T42 is accepted.
 
-## Conventions
+## Quick start
 
-- Base path: `/api`; JSON fields use `snake_case`.
-- Authenticated endpoints use the session cookie established by login. Send JSON with `Content-Type: application/json`; successful JSON responses use `{ "data": ... }`. List responses may include `meta` for pagination.
-- List endpoints are paginated and filterable as specified below. Timestamps are UTC ISO-8601.
-- The minimum global role is shown; project membership and project role can further restrict access. Unauthorized or inaccessible project-scoped resources may be hidden as `404`.
-- Errors use `{ "error": { "code": "...", "message": "..." } }`. Validation errors use `422`; missing/inaccessible resources `404`; conflicts or invalid state transitions `409`; unauthenticated `401`; insufficient permission `403`. Oversized CSV uploads return `413 payload_too_large`.
-- Login throttling: after 5 failed sign-ins for the same client IP and email within 15 minutes, login returns `429 too_many_attempts` with `Retry-After` in whole seconds. A successful login resets the count. These are current in-memory implementation values and reset on restart.
-- Analytics and exports include only approved analyses and `pass` detections. Responses include the caveat: “Detection does not indicate abundance; non-detection does not indicate absence.”
+1. Start the API locally and use the configured development credentials.
+2. Log in to establish the session cookie (see [Login](#login)).
+3. Send that cookie with subsequent requests.
+4. For protected routes, access also depends on project membership and project role—not only the global role listed below.
 
-## Endpoints
+Base URL: `http://localhost:3000/api` (replace the host/port for your environment).
 
-“Any” means an authenticated user; project scope and visibility still apply.
+## Shared conventions
+
+- JSON request and response fields use `snake_case`. Send JSON with `Content-Type: application/json`.
+- Successful JSON responses use a `data` envelope. List responses may include `meta` for pagination or import diagnostics. Logout and delete operations may return `204 No Content`.
+- Timestamps are UTC ISO-8601. List routes support the filters shown in the endpoint tables; pagination details should be confirmed against the running API.
+- “Any” means an authenticated user. Project visibility and membership still apply. Some inaccessible project-scoped resources may be returned as `404` to avoid revealing their existence.
+- The minimum global role is shown; project-specific authorization can impose additional restrictions.
+
+### Error responses
+
+The documented error shape is:
+
+```json
+{ "error": { "code": "validation_error", "message": "..." } }
+```
+
+| Status | Meaning |
+|---|---|
+| `400` | Malformed request |
+| `401` | Not authenticated |
+| `403` | Authenticated but not permitted |
+| `404` | Missing or inaccessible resource |
+| `409` | Conflict or invalid state transition |
+| `413` | Upload too large |
+| `422` | Validation failure |
+| `429` | Rate limit exceeded |
+
+Login throttling is documented as 5 failed attempts for the same client IP and email within 15 minutes, followed by `429 too_many_attempts` and a `Retry-After` header. A successful login resets the count. The current contract describes this as in-memory state, so it resets on restart. Verify these details against the implementation.
+
+Analytics and exports include only approved analyses and `pass` detections, with the caveat: “Detection does not indicate abundance; non-detection does not indicate absence.”
+
+## Endpoint reference
+
+The request and success columns are concise summaries, not complete JSON Schemas. Optional fields are marked with `?`.
 
 ### Authentication and users
 
-| Method | Path | Minimum role | Request | Success |
+| Method | Path | Minimum global role | Request / query | Success |
 |---|---|---|---|---|
 | POST | `/auth/login` | Public | `{ email, password }` | User/session |
 | POST | `/auth/logout` | Any | — | `204` |
@@ -31,7 +62,7 @@
 
 ### Projects and access
 
-| Method | Path | Minimum role | Request | Success |
+| Method | Path | Minimum global role | Request / query | Success |
 |---|---|---|---|---|
 | GET | `/projects` | Any | `?status` | Accessible projects |
 | POST | `/projects` | Principal investigator | `{ title, objectives?, start_date? }` | Project |
@@ -45,7 +76,7 @@
 
 ### Field and samples
 
-| Method | Path | Minimum role | Request | Success |
+| Method | Path | Minimum global role | Request / query | Success |
 |---|---|---|---|---|
 | GET | `/regions` | Any | — | Regions |
 | GET | `/sites` | Any | `?project_id&region_id&habitat_type` | Sites |
@@ -65,7 +96,7 @@ Event objects include `collector_name`; sample status-history entries include `c
 
 ### Laboratory and sequencing
 
-| Method | Path | Minimum role | Request | Success |
+| Method | Path | Minimum global role | Request / query | Success |
 |---|---|---|---|---|
 | GET | `/labs` | Any | — | Laboratories |
 | GET | `/markers` | Any | — | DNA markers |
@@ -82,11 +113,11 @@ Event objects include `collector_name`; sample status-history entries include `c
 | POST | `/sequencing-runs/:id/libraries` | Lab technician | `{ extraction_id }` | Library |
 | PATCH | `/sequencing-runs/:id` | Lab technician | `{ status }` | Run |
 
-QC verdict changes are final (409 on attempted change). Run visibility follows the library's project. Batch, QC, extraction and library responses include related names/codes as defined in contract §10.
+QC verdict changes are final (attempted changes return `409`). Run visibility follows the library's project. Batch, QC, extraction, and library responses include related names/codes as defined in contract §10.
 
-### Analysis, taxonomy, analytics and exports
+### Analysis, taxonomy, analytics, and exports
 
-| Method | Path | Minimum role | Request | Success |
+| Method | Path | Minimum global role | Request / query | Success |
 |---|---|---|---|---|
 | GET | `/analyses` | Any | `?run_id&status&marker_id` | Analyses |
 | POST | `/analyses` | Analyst | `{ run_id, marker_id, pipeline_name, pipeline_version, reference_db, reference_db_version?, parameters?, supersedes_analysis_id? }` | Draft analysis |
@@ -103,13 +134,20 @@ QC verdict changes are final (409 on attempted change). Run visibility follows t
 | POST | `/exports` | Any | `{ export_type, project_id, filters? }` | `{ export_id, row_count }` |
 | GET | `/exports/:id/download` | Requester | — | CSV download |
 
-Analysis rows include run/marker/person names and rejection details where applicable. Correction runs use `supersedes_analysis_id`; approved results are not edited in place.
+Analysis rows include run/marker/person names and rejection details where applicable. Corrections use `supersedes_analysis_id`; approved results are not edited in place.
 
 ## Detection CSV import
 
-UTF-8 CSV, maximum 10 MB, header required. Exact columns (any order): `library_code`, `scientific_name`, `taxon_rank`, `read_count`, `confidence`, `qc_flag`. Missing, repeated or extra columns are errors. BOM, CRLF and quoted fields are accepted. Values: non-negative integer read count; confidence 0–1; lowercase `pass|warn|fail`; rank from the contract enum. Library must belong to the analysis run; each library/taxon pair must be unique in the file. Import is all-or-nothing. Errors are `{ row, field, message }` (header is row 1), capped at 100 with `meta.total_errors`. Oversize upload returns 413.
+- Upload UTF-8 CSV, maximum 10 MB, with a header.
+- Required columns, in any order: `library_code`, `scientific_name`, `taxon_rank`, `read_count`, `confidence`, `qc_flag`. Missing, repeated, or extra columns are errors.
+- BOM, CRLF, and quoted fields are accepted.
+- Values: non-negative integer read count; confidence from 0 to 1; lowercase `pass|warn|fail`; rank from the contract enum.
+- Each library must belong to the analysis run; each library/taxon pair must be unique in the file.
+- Import is all-or-nothing. Errors use `{ row, field, message }` (header is row 1), are capped at 100, and include `meta.total_errors`. Oversize uploads return `413`.
 
 ## Examples
+
+Examples below assume a local API at port 3000 and a development account configured by the project. Replace IDs and credentials with valid values. These examples are illustrative until executed against the current implementation.
 
 ### Login
 
@@ -154,6 +192,14 @@ curl -b cookies.txt -o detections.csv \
   http://localhost:3000/api/exports/1/download
 ```
 
-## Verification status
+## Acceptance checklist
 
-This is the contract-based draft. Route-by-route comparison and execution of examples against the running API are still required for final T42 acceptance after T20–T23.
+Before marking T42 complete:
+
+- [ ] Compare every documented method/path, role, request field, and response with the actual route/controller implementation.
+- [ ] Confirm status codes, error shapes, authorization behavior, pagination/filter semantics, and CSV validation against the implementation.
+- [ ] Run the examples against a running API with valid fixtures; update them to match observed behavior.
+- [ ] Add representative success and failure response bodies, plus field-level request/response schemas where needed.
+- [ ] Record the test command/environment and verification result here.
+
+**Current status:** contract-based draft; route-by-route comparison and live example execution are not yet recorded. Do not treat the examples or implementation-specific notes as runtime-verified until the checklist is completed.
