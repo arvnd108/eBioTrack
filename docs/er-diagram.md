@@ -47,6 +47,9 @@ erDiagram
         text full_name
         text email
         text password_hash
+        text organization
+        text job_title
+        text phone
         boolean active
         timestamptz last_login_at
         timestamptz created_at
@@ -335,7 +338,7 @@ erDiagram
 | # | Slice | Table Name | Primary Key | Description |
 |---|---|---|---|---|
 | 1 | 010 Access | `roles` | `role_id` | Application authorization roles |
-| 2 | 010 Access | `users` | `user_id` | Registered user credentials and profile |
+| 2 | 010 Access | `users` | `user_id` | Registered user credentials and profile (optional organization, job title, phone) |
 | 3 | 010 Access | `user_roles` | `(user_id, role_id)` | User-to-role assignment junction |
 | 4 | 010 Access | `projects` | `project_id` | Research studies and investigations |
 | 5 | 010 Access | `project_members` | `(project_id, user_id)` | Project membership and project roles |

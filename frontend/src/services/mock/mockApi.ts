@@ -62,6 +62,7 @@ import {
   type DetectionCsvRow,
 } from '../../utils/detectionCsv';
 import type { HttpMethod } from '../apiClient';
+import { PERMISSIONS, can, type Action } from '../../permissions';
 import {
   hasAnyRole,
   mockAnalyses,
@@ -148,6 +149,8 @@ interface MockRoute {
   auth?: boolean;
   /** Global roles allowed (administrators always pass). Others get 403. */
   roles?: RoleName[];
+  /** Matrix action (src/permissions.ts): a global role OR a granting project role anywhere passes; handlers then check the project. */
+  action?: Action;
   handler: (ctx: MockContext) => MockResponse;
 }
 
@@ -866,18 +869,34 @@ const sampleById = (id: number) => state.samples.find((s) => s.sample_id === id)
  * still a 404); anyone else must be a member (404 with `notFound` otherwise, so existence is not
  * leaked), and a project viewer is read-only (403 on writes).
  */
+/** The matrix action of the route being served: write checks inside its handler use it. */
+let activeAction: Action | undefined;
+
+/** The project roles this user holds in any project. */
+const heldProjectRoles = (user: User): ProjectRole[] =>
+  state.members.filter((m) => m.user_id === user.user_id).map((m) => m.project_role);
+
 function projectAccess(
   user: User,
   projectId: number,
-  { write = false, what = 'Project' }: { write?: boolean; what?: string } = {},
+  {
+    write = false,
+    what = 'Project',
+    action,
+  }: { write?: boolean; what?: string; action?: Action } = {},
 ): MockResponse | null {
   if (isAdmin(user)) {
     return state.projects.some((p) => p.project_id === projectId) ? null : notFound(what);
   }
   const role = roleIn(projectId, user.user_id);
   if (role === null) return notFound(what);
-  if (write && role === 'viewer')
+  const act = action ?? (write ? activeAction : undefined);
+  if ((write || (act && !PERMISSIONS[act].read)) && role === 'viewer') {
     return fail(403, 'forbidden', 'You do not have permission to do this');
+  }
+  if (act && !can(user, act, role)) {
+    return fail(403, 'forbidden', 'You do not have permission to do this');
+  }
   return null;
 }
 
@@ -1225,6 +1244,9 @@ function anyProjectAccess(
   if (write && roles.every((r) => r === 'viewer')) {
     return fail(403, 'forbidden', 'You do not have permission to do this');
   }
+  if (write && activeAction && !roles.some((r) => can(user, activeAction as Action, r))) {
+    return fail(403, 'forbidden', 'You do not have permission to do this');
+  }
   return null;
 }
 
@@ -1341,13 +1363,18 @@ function checkParameters(value: unknown): ApiErrorDetail[] {
     : [];
 }
 
-/** Administrator, PI and analyst may read draft, imported and rejected analyses (CONTRACT 9). */
-const canSeeUnapproved = (user: User) =>
-  hasAnyRole(user, ['administrator', 'principal_investigator', 'analyst']);
+/** Administrator, PI and analyst may read draft, imported and rejected analyses (CONTRACT 9); so may
+ * a project owner, manager or contributor, in that project. */
+const canSeeUnapproved = (user: User, projectIds: number[] = []) =>
+  hasAnyRole(user, ['administrator', 'principal_investigator', 'analyst']) ||
+  projectIds.some((id) => can(user, 'read_unapproved_detections', roleIn(id, user.user_id)));
 
 /** An analysis is visible through any visible project of its run, and its status (above). */
 function analysisVisible(user: User, analysis: AnalysisRunRow): boolean {
-  if (!canSeeUnapproved(user) && !['approved', 'superseded'].includes(analysis.status)) {
+  if (
+    !canSeeUnapproved(user, projectsOfRun(analysis.run_id) ?? []) &&
+    !['approved', 'superseded'].includes(analysis.status)
+  ) {
     return false;
   }
   if (isAdmin(user)) return true;
@@ -1368,7 +1395,10 @@ function authorizeAnalysis(
     what: 'Analysis',
   });
   if (denied) return denied;
-  if (!canSeeUnapproved(user) && !['approved', 'superseded'].includes(analysis.status)) {
+  if (
+    !canSeeUnapproved(user, projectsOfRun(analysis.run_id) ?? []) &&
+    !['approved', 'superseded'].includes(analysis.status)
+  ) {
     return notFound('Analysis');
   }
   return analysis;
@@ -1864,23 +1894,20 @@ function projectDetail(project: Project) {
 }
 
 /**
- * authorize('edit_project') in the API's order: a role outside administrator/PI gets 403 first,
- * then a project the user is not a member of gets 404, a project viewer 403 (read-only), and a
- * role other than owner/manager 403. Calls `edit` with the stored (writable) project.
+ * authorize('edit_project') in the API's order: a project the user is not a member of gets 404,
+ * a project viewer 403 (read-only), and a project role other than owner/manager 403 (the global
+ * role does not matter). Calls `edit` with the stored (writable) project.
  */
 function withProjectEdit(
   { user, params }: MockContext,
   edit: (project: Omit<Project, 'your_role'>) => MockResponse,
 ): MockResponse {
-  if (!isAdmin(user) && !hasAnyRole(user, ['principal_investigator'])) {
-    return fail(403, 'forbidden', 'You do not have permission to do this');
-  }
   const project = state.projects.find((p) => p.project_id === Number(params.id));
   if (!project) return notFound('Project');
   if (!isAdmin(user)) {
     const role = roleIn(project.project_id, user.user_id);
     if (role === null) return notFound('Project');
-    if (role !== 'owner' && role !== 'manager') {
+    if (role === 'viewer' || !can(user, 'edit_project', role)) {
       return fail(403, 'forbidden', 'You do not have permission to do this');
     }
   }
@@ -1924,6 +1951,45 @@ const routes: MockRoute[] = [
       storeSession(user.user_id);
       writeAudit(user.user_id, 'users', user.user_id, 'login'); // auth.service.js recordLogin
       return ok(user);
+    },
+  },
+  {
+    // Mirrors backend routes/auth.routes.js registerBody + auth.service.js register: only
+    // full_name, email and password are required; the new account is a viewer, signed in at once.
+    method: 'POST',
+    path: '/auth/register',
+    auth: false,
+    handler: ({ body }) => {
+      const req = (body ?? {}) as Record<string, unknown>;
+      const optional = (value: unknown, field: string, max: number) =>
+        value === undefined || value === null ? [] : checkText(value, field, max, false);
+      const details = [
+        ...checkText(req.full_name, 'full_name', 200, true),
+        ...checkEmail(req.email),
+        ...checkPassword(req.password),
+        ...optional(req.organization, 'organization', 200),
+        ...optional(req.job_title, 'job_title', 200),
+        ...optional(req.phone, 'phone', 40),
+      ];
+      if (details.length) return fail(422, 'validation_error', details[0].message, details);
+      const email = String(req.email).trim().toLowerCase();
+      if (state.users.some((u) => u.email === email)) {
+        return fail(409, 'email_taken', 'An account with this email already exists', [
+          { field: 'email', message: 'already registered' },
+        ]);
+      }
+      const created: User = {
+        user_id: state.nextUserId++,
+        full_name: String(req.full_name).trim(),
+        email,
+        roles: ['viewer'],
+        active: true,
+      };
+      state.users.push(created);
+      state.passwords.set(created.user_id, String(req.password));
+      storeSession(created.user_id);
+      writeAudit(created.user_id, 'users', created.user_id, 'login');
+      return ok(created, undefined, 201);
     },
   },
   {
@@ -2085,7 +2151,6 @@ const routes: MockRoute[] = [
   {
     method: 'POST',
     path: '/projects',
-    roles: ['principal_investigator'],
     handler: ({ user, body }) => {
       const req = (body ?? {}) as Record<string, unknown>;
       const details = [
@@ -2354,7 +2419,7 @@ const routes: MockRoute[] = [
   {
     method: 'POST',
     path: '/sites',
-    roles: ['principal_investigator', 'field_researcher'],
+    action: 'manage_sites',
     handler: ({ body, user }) => {
       const input = (body ?? {}) as Record<string, unknown>;
       const fields = checkSiteBody(input, true);
@@ -2386,7 +2451,7 @@ const routes: MockRoute[] = [
   {
     method: 'PATCH',
     path: '/sites/:id',
-    roles: ['principal_investigator', 'field_researcher'],
+    action: 'manage_sites',
     handler: ({ params, body, user }) => {
       const input = (body ?? {}) as Record<string, unknown>;
       const fields = checkSiteBody(input, false);
@@ -2472,7 +2537,7 @@ const routes: MockRoute[] = [
     // (services/events.service.js). Any failure keeps nothing (ids still used up).
     method: 'POST',
     path: '/events',
-    roles: ['principal_investigator', 'field_researcher'],
+    action: 'create_event_sample',
     handler: ({ user, body }) => {
       const input = (body ?? {}) as Record<string, unknown>;
       // authorize('create_event_sample', { source: 'body.project_id' }) runs before validation.
@@ -2582,7 +2647,7 @@ const routes: MockRoute[] = [
   {
     method: 'POST',
     path: '/samples',
-    roles: ['principal_investigator', 'field_researcher'],
+    action: 'create_event_sample',
     handler: ({ user, body }) => {
       const input = (body ?? {}) as Record<string, unknown>;
       const bad = [
@@ -2660,7 +2725,7 @@ const routes: MockRoute[] = [
     // `note` is stored on the history row; none (or only spaces) stores NULL (CONTRACT 1.6).
     method: 'PATCH',
     path: '/samples/:id/status',
-    roles: ['principal_investigator', 'field_researcher', 'lab_technician'],
+    action: 'change_sample_status',
     handler: ({ user, params, body }) => {
       const input = (body ?? {}) as Record<string, unknown>;
       const bad = [
@@ -2731,7 +2796,7 @@ const routes: MockRoute[] = [
   {
     method: 'POST',
     path: '/extraction-batches',
-    roles: ['principal_investigator', 'lab_technician'],
+    action: 'record_lab',
     handler: ({ body, user }) => {
       const input = (body ?? {}) as Record<string, unknown>;
       const details = [...checkId(input.lab_id, 'lab_id')];
@@ -2812,7 +2877,7 @@ const routes: MockRoute[] = [
     // one; a failed or discarded sample cannot be extracted; a stored sample becomes extracted.
     method: 'POST',
     path: '/extractions',
-    roles: ['principal_investigator', 'lab_technician'],
+    action: 'record_lab',
     handler: ({ body, user }) => {
       const input = (body ?? {}) as Record<string, unknown>;
       const details = [
@@ -2907,7 +2972,7 @@ const routes: MockRoute[] = [
     // measurements stay editable.
     method: 'PATCH',
     path: '/extractions/:id',
-    roles: ['principal_investigator', 'lab_technician'],
+    action: 'record_lab',
     handler: ({ params, body, user }) => {
       const input = (body ?? {}) as Record<string, unknown>;
       const fieldIssues = [
@@ -3037,7 +3102,7 @@ const routes: MockRoute[] = [
   {
     method: 'POST',
     path: '/qc-results',
-    roles: ['principal_investigator', 'lab_technician'],
+    action: 'record_lab',
     handler: ({ body, user }) => {
       const input = (body ?? {}) as Record<string, unknown>;
       const fieldIssues = [
@@ -3145,7 +3210,7 @@ const routes: MockRoute[] = [
     // gets RUN-<id> and one LIB-<id> per extraction. All or nothing.
     method: 'POST',
     path: '/sequencing-runs',
-    roles: ['principal_investigator', 'lab_technician'],
+    action: 'record_lab',
     handler: ({ body, user }) => {
       const input = (body ?? {}) as Record<string, unknown>;
       const details = [
@@ -3225,7 +3290,7 @@ const routes: MockRoute[] = [
     // assign_extraction_to_run(): only a planned run takes new libraries.
     method: 'POST',
     path: '/sequencing-runs/:id/libraries',
-    roles: ['principal_investigator', 'lab_technician'],
+    action: 'record_lab',
     handler: ({ params, body, user }) => {
       const input = (body ?? {}) as Record<string, unknown>;
       const bad = [
@@ -3272,7 +3337,7 @@ const routes: MockRoute[] = [
   {
     method: 'PATCH',
     path: '/sequencing-runs/:id',
-    roles: ['principal_investigator', 'lab_technician'],
+    action: 'record_lab',
     handler: ({ params, body, user }) => {
       const input = (body ?? {}) as Record<string, unknown>;
       const bad = [
@@ -3365,7 +3430,7 @@ const routes: MockRoute[] = [
   {
     method: 'POST',
     path: '/analyses',
-    roles: ['principal_investigator', 'analyst'],
+    action: 'create_analysis',
     handler: ({ body, user }) => {
       const input = (body ?? {}) as Record<string, unknown>;
       const details = [
@@ -3448,7 +3513,7 @@ const routes: MockRoute[] = [
     // Multipart: analysis_id and file (CONTRACT 12); ?dry_run=true validates only.
     method: 'POST',
     path: '/analyses/import',
-    roles: ['principal_investigator', 'analyst'],
+    action: 'create_analysis',
     handler: ({ query, user, upload }) => {
       const file = upload?.file ?? null;
       if (file && file.size > MAX_IMPORT_BYTES) {
@@ -3539,7 +3604,7 @@ const routes: MockRoute[] = [
   {
     method: 'POST',
     path: '/analyses/:id/approve',
-    roles: ['principal_investigator'],
+    action: 'decide_analysis',
     handler: ({ params, user }) => {
       const bad = checkIdString(params.id, 'id');
       if (bad.length) return validationError(bad);
@@ -3644,7 +3709,7 @@ const routes: MockRoute[] = [
   {
     method: 'POST',
     path: '/analyses/:id/reject',
-    roles: ['principal_investigator'],
+    action: 'decide_analysis',
     handler: ({ params, body, user }) => {
       const input = (body ?? {}) as Record<string, unknown>;
       const bad = [
@@ -4041,11 +4106,22 @@ export async function handleMockRequest(
   if (route.roles && user && !isAdmin(user) && !hasAnyRole(user, route.roles)) {
     return fail(403, 'forbidden', 'You do not have permission to do this');
   }
-  return route.handler({
+  // requireAction: a global role, or a granting project role in some project (the handler then
+  // checks the actual project).
+  if (route.action && user && !can(user, route.action, undefined, heldProjectRoles(user))) {
+    return fail(403, 'forbidden', 'You do not have permission to do this');
+  }
+  const context = {
     params,
     query: new URLSearchParams(search),
     body: copyBody(body),
     user: user as User,
     upload: await readUpload(body),
-  });
+  };
+  activeAction = route.action;
+  try {
+    return await route.handler(context);
+  } finally {
+    activeAction = undefined;
+  }
 }

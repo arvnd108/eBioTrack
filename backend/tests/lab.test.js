@@ -102,13 +102,6 @@ describe.skipIf(!available)('laboratory and sequencing', () => {
     it('refuses other roles (403), bad dates (422) and an unknown lab (422 invalid_reference)', async () => {
       expect(
         (
-          await as.field_researcher
-            .post('/api/extraction-batches')
-            .send({ lab_id: 1, extraction_date: today })
-        ).status,
-      ).toBe(403);
-      expect(
-        (
           await as.viewer
             .post('/api/extraction-batches')
             .send({ lab_id: 1, extraction_date: today })
@@ -201,8 +194,7 @@ describe.skipIf(!available)('laboratory and sequencing', () => {
     });
     it('refuses wrong roles, hidden samples, failed samples and unknown batches', async () => {
       expect(
-        (await as.field_researcher.post('/api/extractions').send({ sample_id: 1, batch_id: 1 }))
-          .status,
+        (await as.viewer.post('/api/extractions').send({ sample_id: 1, batch_id: 1 })).status,
       ).toBe(403);
       expect(
         (await as.outsider.post('/api/extractions').send({ sample_id: 1, batch_id: 1 })).status,
@@ -283,7 +275,7 @@ describe.skipIf(!available)('laboratory and sequencing', () => {
         404,
       );
       expect(
-        (await as.analyst.patch(`/api/extractions/${id}`).send({ qc_status: 'pass' })).status,
+        (await as.viewer.patch(`/api/extractions/${id}`).send({ qc_status: 'pass' })).status,
       ).toBe(403);
     });
   });
@@ -339,7 +331,7 @@ describe.skipIf(!available)('laboratory and sequencing', () => {
       ).toBe(422);
       expect(
         (
-          await as.field_researcher
+          await as.viewer
             .post('/api/qc-results')
             .send({ sample_id: 1, qc_type: 'concentration', result: 'pass' })
         ).status,
@@ -503,7 +495,7 @@ describe.skipIf(!available)('laboratory and sequencing', () => {
             .send({ ...ok, run_date: undefined })
         ).status,
       ).toBe(422);
-      expect((await as.analyst.post('/api/sequencing-runs').send(ok)).status).toBe(403);
+      expect((await as.viewer.post('/api/sequencing-runs').send(ok)).status).toBe(403);
       expect((await as.outsider.post('/api/sequencing-runs').send(ok)).status).toBe(404);
       expect(
         (
@@ -594,7 +586,7 @@ describe.skipIf(!available)('laboratory and sequencing', () => {
           .status,
       ).toBe(404);
       expect(
-        (await as.analyst.patch(`/api/sequencing-runs/${runId}`).send({ status: 'failed' })).status,
+        (await as.viewer.patch(`/api/sequencing-runs/${runId}`).send({ status: 'failed' })).status,
       ).toBe(403);
       expect(
         (await lt().patch('/api/sequencing-runs/999').send({ status: 'running' })).status,

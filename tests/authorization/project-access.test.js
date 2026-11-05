@@ -696,10 +696,12 @@ describe.skipIf(!dbAvailable)('project access: scoping and project roles', () =>
     });
 
     it.each(['field_researcher', 'lab_technician', 'analyst', 'viewer'])(
-      '%s cannot create a project: 403',
+      '%s can create a project (any signed-in user) and owns it',
       async (role) => {
+        committed();
         const res = await u[role].post('/api/projects', { title: `T33 by ${role}` });
-        expect(res.status).toBe(403);
+        expect(res.status).toBe(201);
+        expect(res.body.data.your_role).toBe('owner');
       },
     );
   });

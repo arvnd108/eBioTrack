@@ -2,7 +2,8 @@
 // Purpose: Business logic and calls to SQL objects: login, logout, current session
 import { randomBytes } from 'node:crypto';
 import { query, queryOne, withTransaction } from '../db/query.js';
-import { AppError } from '../middleware/errorHandler.js';
+import { AppError, conflict } from '../middleware/errorHandler.js';
+import { ROLES } from '../middleware/permissions.js';
 import { hashPassword, verifyPassword } from '../utils/passwordHash.js';
 
 // Explicit column lists on purpose: password_hash must never ride along by accident.
@@ -72,4 +73,47 @@ export async function recordLogin(userId) {
     },
     { actorId: userId },
   );
+}
+
+/**
+ * Self-registration. The new account gets only the least-privileged `viewer` role (an
+ * administrator grants more through the users admin routes) and is active at once.
+ * @param {{ full_name: string, email: string, password: string,
+ *           organization?: string, job_title?: string, phone?: string }} input email lower-cased
+ */
+export async function register(input) {
+  const passwordHash = await hashPassword(input.password); // slow: done before the transaction
+  const userId = await withTransaction(async (client) => {
+    let created;
+    try {
+      created = await queryOne(
+        `INSERT INTO users (full_name, email, password_hash, organization, job_title, phone)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING user_id`,
+        [
+          input.full_name,
+          input.email,
+          passwordHash,
+          input.organization ?? null,
+          input.job_title ?? null,
+          input.phone ?? null,
+        ],
+        client,
+      );
+    } catch (err) {
+      if (err.code === '23505') {
+        throw conflict('An account with this email already exists', 'email_taken', [
+          { field: 'email', message: 'already registered' },
+        ]);
+      }
+      throw err;
+    }
+    await query(
+      `INSERT INTO user_roles (user_id, role_id)
+       SELECT $1, role_id FROM roles WHERE role_name = $2`,
+      [created.user_id, ROLES.VIEWER],
+      client,
+    );
+    return created.user_id;
+  });
+  return findUserById(userId);
 }

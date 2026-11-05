@@ -543,9 +543,9 @@ Full write-up: [docs/slices/access.md, Normalization](slices/access.md#normaliza
 - **Normal form:** single-column keys (2NF), one non-prime column (3NF), both determinants are keys. **Highest form: BCNF.**
 - **Design choice:** `role_name` is a second key next to the surrogate, because the API names roles while foreign keys use the id. Roles are rows and not an enumerated type, so an administrator can add one without a migration.
 
-#### `users` (`user_id`, `full_name`, `email`, `password_hash`, `active`, `last_login_at`, `created_at`)
+#### `users` (`user_id`, `full_name`, `email`, `password_hash`, `organization`, `job_title`, `phone`, `active`, `last_login_at`, `created_at`)
 
-- **Candidate keys:** `{user_id}` and `{email}` (`uq_users_email`). `full_name` is not a key.
+- **Candidate keys:** `{user_id}` and `{email}` (`uq_users_email`). `full_name` is not a key. `organization`, `job_title` and `phone` are optional facts about the person (NULL when skipped at registration) and depend only on `user_id`.
 - **Functional dependencies:** each key determines every other column; no other column determines anything.
 - **Does not hold:** equal names, equal `active` values or equal login times say nothing about the rest of the row. A user's roles are rows of `user_roles`, not a column here.
 - **Normal form:** single-column keys, no dependency between the non-prime columns. **Highest form: BCNF.**

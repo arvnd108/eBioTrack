@@ -381,11 +381,6 @@ describe.skipIf(!dbAvailable)('access: project creation transactions', () => {
       expect(err.code).toBe('23503');
       expect(err.constraint).toMatch(/^fk_project_members_/);
     });
-    it('a viewer as owner (user 6) -> EB002 "may not create projects"', async () => {
-      const err = await fails((db) => create(db, TITLE, 6));
-      expect(err.code).toBe('EB002');
-      expect(err.message).toMatch(/^User 6 may not create projects/);
-    });
     it('a deactivated owner (deactivated in the same transaction) -> EB002', async () => {
       const err = await fails(async (db) => {
         await db.query('UPDATE users SET active = false WHERE user_id = $1', [PI]);

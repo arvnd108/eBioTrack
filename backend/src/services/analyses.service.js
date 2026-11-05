@@ -16,9 +16,9 @@
 import { callProcedure, query, queryOne, withTransaction } from '../db/query.js';
 import { AppError, unprocessable } from '../middleware/errorHandler.js';
 import { accessibleProjectIds } from '../middleware/authorize.js';
-import { ROLES } from '../middleware/permissions.js';
+import { ROLES, projectRoleAllows } from '../middleware/permissions.js';
 import { CsvFormatError, checkHeader, parseCsv, validateDetectionRecords } from '../utils/csv.js';
-import { assertAnyProjectAccess, projectIdsOfRun } from './projectAccess.js';
+import { assertAnyProjectAccess, projectIdsOfRun, projectRolesIn } from './projectAccess.js';
 
 const analysisNotFound = () => new AppError(404, 'not_found', 'Analysis not found');
 const runNotFound = () => new AppError(404, 'not_found', 'Sequencing run not found');
@@ -65,13 +65,17 @@ function readAnalysis(analysisId, executor) {
 }
 
 /** The analysis if the caller may see it (and, with `write`, change it); else the shared 404/403. */
-export async function authorizeAnalysis(user, analysisId, { write = false } = {}) {
+export async function authorizeAnalysis(user, analysisId, { write = false, action } = {}) {
   const analysis = await readAnalysis(analysisId);
   if (!analysis) throw analysisNotFound();
   const projectIds = await projectIdsOfRun(analysis.run_id);
-  await assertAnyProjectAccess(user, projectIds, { write, notFound: analysisNotFound });
-  if (!canSeeUnapproved(user) && !['approved', 'superseded'].includes(analysis.status)) {
-    throw analysisNotFound();
+  await assertAnyProjectAccess(user, projectIds, { write, action, notFound: analysisNotFound });
+  if (!['approved', 'superseded'].includes(analysis.status) && !canSeeUnapproved(user)) {
+    // Not allowed by a global role: a project role that reads unapproved detections also counts.
+    const roles = await projectRolesIn(user, projectIds);
+    if (!roles.some((role) => projectRoleAllows('read_unapproved_detections', role))) {
+      throw analysisNotFound();
+    }
   }
   return analysis;
 }
@@ -88,7 +92,13 @@ export async function listAnalyses(user, filters, { limit, offset, sort }) {
               JOIN samples s ON s.sample_id = x.sample_id
               JOIN collection_events e ON e.event_id = s.event_id
              WHERE l.run_id = a.run_id AND e.project_id = ANY($1::bigint[])))
-      AND ($2::boolean OR a.status IN ('approved', 'superseded'))
+      AND ($2::boolean OR a.status IN ('approved', 'superseded') OR EXISTS (
+            SELECT 1 FROM sequencing_libraries l
+              JOIN dna_extractions x ON x.extraction_id = l.extraction_id
+              JOIN samples s ON s.sample_id = x.sample_id
+              JOIN collection_events e ON e.event_id = s.event_id
+              JOIN project_members pm ON pm.project_id = e.project_id AND pm.user_id = $6::bigint
+             WHERE l.run_id = a.run_id AND pm.project_role IN ('owner', 'manager', 'contributor')))
       AND ($3::bigint IS NULL OR a.run_id = $3::bigint)
       AND ($4::analysis_status IS NULL OR a.status = $4::analysis_status)
       AND ($5::bigint IS NULL OR a.marker_id = $5::bigint)`;
@@ -98,9 +108,10 @@ export async function listAnalyses(user, filters, { limit, offset, sort }) {
     filters.run_id ?? null,
     filters.status ?? null,
     filters.marker_id ?? null,
+    user.user_id,
   ];
   const rows = await query(
-    `SELECT ${COLUMNS} ${from} ORDER BY ${column} ${direction}, a.analysis_id ${direction} LIMIT $6 OFFSET $7`,
+    `SELECT ${COLUMNS} ${from} ORDER BY ${column} ${direction}, a.analysis_id ${direction} LIMIT $7 OFFSET $8`,
     [...params, limit, offset],
   );
   const [{ total }] = await query(`SELECT count(*) AS total ${from}`, params);
@@ -128,7 +139,10 @@ export async function getAnalysis(user, analysisId) {
 export async function createAnalysis(body, user) {
   const projectIds = await projectIdsOfRun(body.run_id);
   if (projectIds === null) throw runNotFound();
-  await assertAnyProjectAccess(user, projectIds, { write: true, notFound: runNotFound });
+  await assertAnyProjectAccess(user, projectIds, {
+    action: 'create_analysis',
+    notFound: runNotFound,
+  });
   if (body.supersedes_analysis_id != null) {
     const replaced = await authorizeAnalysis(user, body.supersedes_analysis_id);
     if (replaced.status !== 'approved') {
@@ -164,7 +178,7 @@ export async function createAnalysis(body, user) {
 }
 
 export async function approveAnalysis(analysisId, user) {
-  await authorizeAnalysis(user, analysisId, { write: true });
+  await authorizeAnalysis(user, analysisId, { action: 'decide_analysis' });
   return withTransaction(
     async (client) => {
       await callProcedure('approve_analysis', [analysisId, user.user_id], client);
@@ -175,7 +189,7 @@ export async function approveAnalysis(analysisId, user) {
 }
 
 export async function rejectAnalysis(analysisId, reason, user) {
-  await authorizeAnalysis(user, analysisId, { write: true });
+  await authorizeAnalysis(user, analysisId, { action: 'decide_analysis' });
   return withTransaction(
     async (client) => {
       await callProcedure('reject_analysis', [analysisId, user.user_id, reason], client);
@@ -311,7 +325,7 @@ async function assertImportable(analysis, user) {
  * and stays the final authority. At most MAX_REPORTED_ERRORS are listed, `total_errors` is exact.
  */
 export async function importDetections({ analysisId, buffer, dryRun }, user) {
-  const analysis = await authorizeAnalysis(user, analysisId, { write: true });
+  const analysis = await authorizeAnalysis(user, analysisId, { action: 'create_analysis' });
   await assertImportable(analysis, user);
 
   const records = parseUpload(buffer);

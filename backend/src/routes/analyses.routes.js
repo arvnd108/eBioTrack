@@ -5,10 +5,9 @@ import multer from 'multer';
 import { z } from 'zod';
 import * as controller from '../controllers/analyses.controller.js';
 import { auth } from '../middleware/auth.js';
-import { requireRole } from '../middleware/authorize.js';
+import { requireAction } from '../middleware/authorize.js';
 import { AppError, unprocessable } from '../middleware/errorHandler.js';
 import { pagination } from '../middleware/pagination.js';
-import { ROLES } from '../middleware/permissions.js';
 import { validate } from '../middleware/validate.js';
 import { booleanString, idNumber, idString, pageQuery } from '../utils/schemas.js';
 
@@ -76,8 +75,8 @@ function receiveFile(req, res, next) {
 
 // Gates: global roles here (create_analysis: PI and analyst; decide_analysis: PI; administrator
 // always), then the project check in the service because the project comes from the analysis's run.
-const createRole = requireRole(ROLES.PRINCIPAL_INVESTIGATOR, ROLES.ANALYST);
-const decideRole = requireRole(ROLES.PRINCIPAL_INVESTIGATOR);
+const createRole = requireAction('create_analysis');
+const decideRole = requireAction('decide_analysis');
 
 const router = Router();
 router.get(

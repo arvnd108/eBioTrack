@@ -14,9 +14,9 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import type { LoginRequest, ProjectRole, RoleName, User } from '../types';
+import type { LoginRequest, Project, ProjectRole, RegisterRequest, RoleName, User } from '../types';
 import * as authService from '../services/authService';
-import { isApiError, setUnauthenticatedHandler } from '../services/apiClient';
+import { api, isApiError, setUnauthenticatedHandler } from '../services/apiClient';
 import { can as canDo, canAny as canDoAny, type Action } from '../permissions';
 
 /**
@@ -38,6 +38,8 @@ export interface AuthContextValue {
   /** The error from the last session check when `status` is `unavailable`. */
   sessionError: unknown;
   login: (credentials: LoginRequest) => Promise<User>;
+  /** Creates an account and signs in as it. */
+  register: (details: RegisterRequest) => Promise<User>;
   logout: () => Promise<void>;
   /** Re-runs the session check (Retry after `unavailable`). */
   refresh: () => Promise<void>;
@@ -51,10 +53,23 @@ export interface AuthContextValue {
 
 export const AuthContext = createContext<AuthContextValue | null>(null);
 
+/** The project roles the user holds in any project; empty if the list cannot be read. */
+async function loadHeldRoles(): Promise<ProjectRole[]> {
+  try {
+    const res = await api.get<Project[]>('/projects?limit=100');
+    return [...new Set(res.data.flatMap((p) => (p.your_role ? [p.your_role] : [])))];
+  } catch {
+    return []; // pages that need a project ask for it themselves
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [status, setStatus] = useState<AuthStatus>('loading');
   const [sessionError, setSessionError] = useState<unknown>(null);
+  // The project roles this user holds in any project, so questions without a single project
+  // ("may I create a site at all?") also count roles given by project membership.
+  const [heldRoles, setHeldRoles] = useState<ProjectRole[]>([]);
   // Ignores answers to a session check that a newer check (or login/logout) has replaced.
   const checkId = useRef(0);
 
@@ -64,7 +79,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSessionError(null);
     try {
       const me = await authService.getCurrentUser();
+      const held = await loadHeldRoles();
       if (id !== checkId.current) return;
+      setHeldRoles(held);
       setUser(me);
       setStatus('authenticated');
     } catch (err) {
@@ -106,6 +123,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (credentials: LoginRequest) => {
     checkId.current += 1;
     const me = await authService.login(credentials);
+    setHeldRoles(await loadHeldRoles());
+    setUser(me);
+    setSessionError(null);
+    setStatus('authenticated');
+    return me;
+  }, []);
+
+  const register = useCallback(async (details: RegisterRequest) => {
+    checkId.current += 1;
+    const me = await authService.register(details);
+    setHeldRoles(await loadHeldRoles());
     setUser(me);
     setSessionError(null);
     setStatus('authenticated');
@@ -119,6 +147,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       // Clear locally even if the request failed, so the screen never shows a stale user.
       setUser(null);
+      setHeldRoles([]);
       setStatus('signed_out');
     }
   }, []);
@@ -130,19 +159,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const can = useCallback(
-    (action: Action, projectRole?: ProjectRole | null) => canDo(user, action, projectRole),
-    [user],
+    (action: Action, projectRole?: ProjectRole | null) =>
+      canDo(user, action, projectRole, heldRoles),
+    [user, heldRoles],
   );
 
   const canAny = useCallback(
     (actions: readonly Action[], projectRole?: ProjectRole | null) =>
-      canDoAny(user, actions, projectRole),
-    [user],
+      canDoAny(user, actions, projectRole, heldRoles),
+    [user, heldRoles],
   );
 
   const value = useMemo(
-    () => ({ user, status, sessionError, login, logout, refresh, hasRole, can, canAny }),
-    [user, status, sessionError, login, logout, refresh, hasRole, can, canAny],
+    () => ({ user, status, sessionError, login, register, logout, refresh, hasRole, can, canAny }),
+    [user, status, sessionError, login, register, logout, refresh, hasRole, can, canAny],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

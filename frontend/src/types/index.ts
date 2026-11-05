@@ -143,6 +143,16 @@ export interface UpdateUserRequest {
   role_ids?: number[];
 }
 
+/** `POST /api/auth/register` body: only full_name, email and password are required. */
+export interface RegisterRequest {
+  full_name: string;
+  email: string;
+  password: string;
+  organization?: string;
+  job_title?: string;
+  phone?: string;
+}
+
 export interface LoginRequest {
   email: string;
   password: string;

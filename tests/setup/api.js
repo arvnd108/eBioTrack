@@ -327,13 +327,17 @@ const ALL = ROLE_NAMES;
 export const MATRIX = Object.freeze({
   manage_users: [ADMIN],
   read_audit_log: [ADMIN, PI],
-  create_project: [ADMIN, PI],
+  // Project roles also decide (CONTRACT 9, as amended): every probe targets project 1 where the
+  // PI is the owner, users 3-5 are contributors and user 6 is a viewer, so a contributor may do
+  // every write except edit_project (owner/manager) and decide_analysis (owner/manager), and the
+  // project viewer is read-only. Any signed-in user may create a project.
+  create_project: ALL,
   edit_project: [ADMIN, PI],
-  manage_sites: [ADMIN, PI, FR],
-  create_event_sample: [ADMIN, PI, FR],
-  change_sample_status: [ADMIN, PI, FR, LT],
-  record_lab: [ADMIN, PI, LT],
-  create_analysis: [ADMIN, PI, AN],
+  manage_sites: [ADMIN, PI, FR, LT, AN],
+  create_event_sample: [ADMIN, PI, FR, LT, AN],
+  change_sample_status: [ADMIN, PI, FR, LT, AN],
+  record_lab: [ADMIN, PI, FR, LT, AN],
+  create_analysis: [ADMIN, PI, FR, LT, AN],
   decide_analysis: [ADMIN, PI],
   read_data: ALL,
 });
@@ -350,6 +354,12 @@ export const ENDPOINTS = [
     path: '/api/auth/login',
     action: 'public',
     skip: 'public; session-auth.test.js',
+  },
+  {
+    method: 'POST',
+    path: '/api/auth/register',
+    action: 'public',
+    skip: 'public; auth.test.js (backend)',
   },
   {
     method: 'POST',

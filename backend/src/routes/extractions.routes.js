@@ -4,9 +4,8 @@ import { Router } from 'express';
 import { z } from 'zod';
 import * as controller from '../controllers/extractions.controller.js';
 import { auth } from '../middleware/auth.js';
-import { requireRole } from '../middleware/authorize.js';
+import { requireAction } from '../middleware/authorize.js';
 import { pagination } from '../middleware/pagination.js';
-import { ROLES } from '../middleware/permissions.js';
 import { validate } from '../middleware/validate.js';
 import { atLeastOneKey, calendarDate, idNumber, idString, pageQuery } from '../utils/schemas.js';
 
@@ -88,7 +87,7 @@ const idParams = z.object({ id: idString });
 // Reads: any signed-in user (rows limited to their projects where they have one). Writes: the
 // record_lab role gate (PI, lab technician; administrator always), then the project check in the
 // service, because the project comes from the sample, extraction or analysis.
-const recordLab = requireRole(ROLES.PRINCIPAL_INVESTIGATOR, ROLES.LAB_TECHNICIAN);
+const recordLab = requireAction('record_lab');
 
 export const labsRouter = Router();
 labsRouter.get('/', auth, controller.listLabs);

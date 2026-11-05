@@ -2,7 +2,7 @@
 
 > **T42 · Contract v1.9 · Verified against the running API**
 >
-> This reference follows `planning/CONTRACT.md` §§8–12 (v1.9). Every endpoint, role, status code, error shape and example was run against the real backend on a freshly reset and seeded database; the verification record is at the end.
+> This reference follows `planning/CONTRACT.md` §§8–12 (v2.0). Every endpoint, role, status code, error shape and example was run against the real backend on a freshly reset and seeded database; the verification record is at the end.
 
 ## Quick start
 
@@ -21,7 +21,7 @@ Base URL: `http://localhost:4000/api` (the default `PORT` is 4000; replace the h
 - **Pagination:** `?page=1&limit=25` (default 25). A limit above 100 is silently capped at 100 (the `meta.limit` returned shows the value used); `limit=0` or a non-integer is `422`. Paginated: users, audit, sites, events, samples, extractions, QC results, extraction batches, sequencing runs, analyses, taxa and taxon detections. Not paginated (short reference lists): roles, regions, sample types, labs and markers. Analytics, dashboard and exports return their own shapes.
 - **Invalid ids** such as `/samples/abc` return `422 validation_error`, not `400`.
 - “Any” means an authenticated user. Project visibility and membership still apply. Some inaccessible project-scoped resources may be returned as `404` to avoid revealing their existence.
-- The minimum global role is shown; project-specific authorization can impose additional restrictions.
+- The minimum global role is shown. A **project role** can grant the same action inside a project the caller belongs to: `owner` and `manager` may do everything a project allows (edit, members, sites, approve or reject analyses); `contributor` may also record events, samples, lab work and analyses; `viewer` is read-only. An action is allowed when either the global role or the project role allows it. Not a member of the project: `404`; member without enough rights: `403`.
 
 ### Error responses
 
@@ -58,6 +58,7 @@ The request and success columns are concise summaries, not complete JSON Schemas
 | Method | Path | Minimum global role | Request / query | Success |
 |---|---|---|---|---|
 | POST | `/auth/login` | Public | `{ email, password }` | User/session |
+| POST | `/auth/register` | Public | `{ full_name, email, password, organization?, job_title?, phone? }` | User/session (`201`; new accounts get the global `viewer` role and are signed in; `409 email_taken` if the email exists; `422` for a missing name, bad email or password shorter than 8 characters) |
 | POST | `/auth/logout` | Any | — | `204` |
 | GET | `/auth/me` | Any | — | Current user |
 | GET | `/users` | Administrator | `?active&role` | Users |
@@ -70,7 +71,7 @@ The request and success columns are concise summaries, not complete JSON Schemas
 | Method | Path | Minimum global role | Request / query | Success |
 |---|---|---|---|---|
 | GET | `/projects` | Any | `?status` | Accessible projects |
-| POST | `/projects` | Principal investigator | `{ title, objectives?, start_date? }` | Project |
+| POST | `/projects` | Any (signed in) | `{ title, objectives?, start_date? }` | Project |
 | GET | `/projects/:id` | Project member | — | Project, members, sites |
 | PATCH | `/projects/:id` | Project owner/manager | `{ title?, objectives?, status?, end_date? }` | Project |
 | POST | `/projects/:id/members` | Project owner/manager | `{ user_id, project_role }` | Member |
@@ -128,8 +129,8 @@ QC verdict changes are final (attempted changes return `409`). Run visibility fo
 | POST | `/analyses` | Analyst | `{ run_id, marker_id, pipeline_name, pipeline_version, reference_db, reference_db_version?, parameters?, supersedes_analysis_id? }` | Draft analysis |
 | GET | `/analyses/:id` | Any | — | Analysis and pass/warn/fail counts |
 | POST | `/analyses/import` | Analyst | Multipart `analysis_id`, `file`; optional `?dry_run=true` | Validation result or inserted count |
-| POST | `/analyses/:id/approve` | Principal investigator | — | Approved analysis |
-| POST | `/analyses/:id/reject` | Principal investigator | `{ reason }` | Rejected analysis |
+| POST | `/analyses/:id/approve` | Principal investigator, or project owner/manager | — | Approved analysis |
+| POST | `/analyses/:id/reject` | Principal investigator, or project owner/manager | `{ reason }` | Rejected analysis |
 | GET | `/taxa` | Any | `?q&rank&parent_taxon_id` | Taxa |
 | GET | `/taxa/:id` | Any | — | Taxon with lineage |
 | GET | `/taxa/:id/detections` | Any | `?project_id&site_id&from&to` | Approved, passing detections |

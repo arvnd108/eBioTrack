@@ -356,8 +356,10 @@ describe('T20 write rules match the real API (values checked against backend PR 
       message: 'Project titles are unique.',
     });
 
+    // any signed-in user may create a project and becomes its owner (CONTRACT 9, project roles)
     await as('viewer');
-    expect(await failure(api.post('/projects', { title: 'x' }))).toMatchObject({ status: 403 });
+    const own = await api.post<{ your_role: string }>('/projects', { title: 'Viewer survey' });
+    expect(own.data.your_role).toBe('owner');
   });
 
   it('applies the edit_project gate: role 403, non-member 404, project viewer 403', async () => {
@@ -671,7 +673,7 @@ describe('T22 lab rules match the real API (values checked against backend PR #1
 
   it('records extractions: role and project checks, failed samples, numbering, stored -> extracted', async () => {
     const sampleId = await storedSample();
-    await as('field_researcher');
+    await as('viewer'); // project viewer: read-only whatever the global role
     expect(
       await failure(api.post('/extractions', { sample_id: sampleId, batch_id: 1 })),
     ).toMatchObject(forbidden);
@@ -848,7 +850,7 @@ describe('T22 lab rules match the real API (values checked against backend PR #1
       sample_id: 2,
     });
     expect(freed.data[0].active_run_id).toBeNull();
-    await as('analyst');
+    await as('viewer');
     expect(await failure(api.patch(`/sequencing-runs/${id}`, { status: 'failed' }))).toMatchObject(
       forbidden,
     );
@@ -886,7 +888,7 @@ describe('T22 lab rules match the real API (values checked against backend PR #1
     });
     const list = await api.get<{ qc_id: number }[]>('/qc-results', { limit: 1 });
     expect(list.data[0].qc_id).toBe(1000);
-    await as('analyst');
+    await as('viewer');
     expect(
       await failure(
         api.post('/qc-results', { sample_id: 1, qc_type: 'concentration', result: 'pass' }),

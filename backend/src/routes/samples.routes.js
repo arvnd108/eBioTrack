@@ -4,9 +4,8 @@ import { Router } from 'express';
 import { z } from 'zod';
 import * as controller from '../controllers/samples.controller.js';
 import { auth } from '../middleware/auth.js';
-import { requireRole } from '../middleware/authorize.js';
+import { requireAction } from '../middleware/authorize.js';
 import { pagination } from '../middleware/pagination.js';
-import { ROLES } from '../middleware/permissions.js';
 import { validate } from '../middleware/validate.js';
 import { idNumber, idString, pageQuery } from '../utils/schemas.js';
 
@@ -63,7 +62,7 @@ router.get(
 router.post(
   '/',
   auth,
-  requireRole(ROLES.PRINCIPAL_INVESTIGATOR, ROLES.FIELD_RESEARCHER),
+  requireAction('create_event_sample'),
   validate({ body: createBody }),
   controller.createSample,
 );
@@ -71,7 +70,7 @@ router.get('/:id', auth, validate({ params: idParams }), controller.getSample);
 router.patch(
   '/:id/status',
   auth,
-  requireRole(ROLES.PRINCIPAL_INVESTIGATOR, ROLES.FIELD_RESEARCHER, ROLES.LAB_TECHNICIAN),
+  requireAction('change_sample_status'),
   validate({ params: idParams, body: statusBody }),
   controller.changeSampleStatus,
 );

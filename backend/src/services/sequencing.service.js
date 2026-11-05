@@ -98,7 +98,10 @@ export async function getRun(user, runId) {
 async function assertExtractionWritable(user, extractionId) {
   const projectId = await projectIdOfExtraction(extractionId);
   if (projectId === null) throw extractionNotFound();
-  await assertProjectAccess(user, projectId, { write: true, notFound: extractionNotFound });
+  await assertProjectAccess(user, projectId, {
+    action: 'record_lab',
+    notFound: extractionNotFound,
+  });
 }
 
 export async function createRun(body, user) {
@@ -126,7 +129,7 @@ export async function addLibrary(runId, body, user) {
   // A run that has libraries only in other projects is not the caller's to extend (404 like a read);
   // a still-empty run is open to any writer who can book their own extraction.
   if (projectIds.length > 0) {
-    await assertAnyProjectAccess(user, projectIds, { write: true, notFound: runNotFound });
+    await assertAnyProjectAccess(user, projectIds, { action: 'record_lab', notFound: runNotFound });
   }
   return withTransaction(
     async (client) => {
@@ -149,7 +152,7 @@ export async function addLibrary(runId, body, user) {
 export async function updateRunStatus(runId, body, user) {
   const projectIds = await projectIdsOfRun(runId);
   if (projectIds === null) throw runNotFound();
-  await assertAnyProjectAccess(user, projectIds, { write: true, notFound: runNotFound });
+  await assertAnyProjectAccess(user, projectIds, { action: 'record_lab', notFound: runNotFound });
   return withTransaction(
     async (client) => {
       const run = await queryOne(

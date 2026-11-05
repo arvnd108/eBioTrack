@@ -217,8 +217,16 @@ describe.skipIf(!dbAvailable)('data scope: leakage, IDOR, mass assignment, hosti
 
   // ------------------------------------------------------------------------------------------
   describe('detections that are not approved', () => {
-    const NO_UNAPPROVED = ['field_researcher', 'lab_technician', 'viewer'];
-    const MAY_SEE = ['administrator', 'principal_investigator', 'analyst'];
+    // Project roles count (CONTRACT 9): contributors of project 1 (users 3-5) read unapproved work
+    // through their project role; only the project viewer (user 6) is held back.
+    const NO_UNAPPROVED = ['viewer'];
+    const MAY_SEE = [
+      'administrator',
+      'principal_investigator',
+      'analyst',
+      'field_researcher',
+      'lab_technician',
+    ];
 
     it.each(NO_UNAPPROVED)(
       '%s: analysis 3 (imported) and 4 (draft) are 404 and absent from the list',

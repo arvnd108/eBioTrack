@@ -29,7 +29,6 @@ describe.skipIf(!available)('auth', () => {
     await query('UPDATE users SET active = true, last_login_at = NULL');
     await query("DELETE FROM audit_logs WHERE action = 'login'");
     await query('DELETE FROM session');
-    await closePool();
   });
 
   describe('POST /api/auth/login', () => {
@@ -191,5 +190,87 @@ describe.skipIf(!available)('auth', () => {
         .send({ email: PI_EMAIL, password });
       expect(ok.status).toBe(200);
     });
+  });
+});
+
+describe.skipIf(!available)('POST /api/auth/register', () => {
+  beforeAll(async () => {
+    await resetAndSeedDatabase();
+  });
+  afterEach(() => loginAttempts.clear());
+  afterAll(async () => {
+    // Registered users get ordinary serial ids; reset so later suites see the pristine seed.
+    await resetAndSeedDatabase();
+    await closePool();
+  });
+
+  const register = (body) => request(app).post('/api/auth/register').send(body);
+
+  it('needs only name, email and password; gives the viewer role and signs in', async () => {
+    const res = await register({
+      full_name: 'New Person',
+      email: 'New.Person@Example.org',
+      password: 'a-long-password',
+      organization: '',
+      phone: '  ',
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.data).toMatchObject({
+      full_name: 'New Person',
+      email: 'new.person@example.org',
+      roles: ['viewer'],
+      active: true,
+    });
+    expect(JSON.stringify(res.body)).not.toMatch(/password/);
+    expect(sidCookie(res)).toMatch(/HttpOnly/);
+
+    const [row] = await query('SELECT organization, job_title, phone FROM users WHERE email = $1', [
+      'new.person@example.org',
+    ]);
+    expect(row).toEqual({ organization: null, job_title: null, phone: null });
+
+    const me = await request(app).get('/api/auth/me').set('Cookie', cookieValue(res));
+    expect(me.status).toBe(200);
+    // And the new password works for a normal sign-in.
+    expect((await login('new.person@example.org', 'a-long-password')).status).toBe(200);
+  });
+
+  it('stores the optional details when given', async () => {
+    const res = await register({
+      full_name: 'Detailed Person',
+      email: 'detailed@example.org',
+      password: 'a-long-password',
+      organization: 'Marine Lab',
+      job_title: 'Postdoc',
+      phone: '+1 555 0100',
+    });
+    expect(res.status).toBe(201);
+    const [row] = await query('SELECT organization, job_title, phone FROM users WHERE email = $1', [
+      'detailed@example.org',
+    ]);
+    expect(row).toEqual({ organization: 'Marine Lab', job_title: 'Postdoc', phone: '+1 555 0100' });
+  });
+
+  it('rejects a duplicate email with 409 email_taken', async () => {
+    const res = await register({
+      full_name: 'Dup',
+      email: 'viewer@ebiotrack.test',
+      password: 'a-long-password',
+    });
+    expect(res.status).toBe(409);
+    expect(res.body.error.code).toBe('email_taken');
+  });
+
+  it('validates the required fields', async () => {
+    for (const body of [
+      {},
+      { full_name: 'X', email: 'not-an-email', password: 'a-long-password' },
+      { full_name: 'X', email: 'x@example.org', password: 'short' },
+      { full_name: '  ', email: 'x@example.org', password: 'a-long-password' },
+    ]) {
+      const res = await register(body);
+      expect(res.status).toBe(422);
+      expect(res.body.error.code).toBe('validation_error');
+    }
   });
 });

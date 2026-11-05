@@ -167,8 +167,8 @@ describe.skipIf(!available)('regions and sites', () => {
       expect(res.status).toBe(201);
       expect(res.body.data).toMatchObject({ name: 'Padded name', description: 'near the weir' });
     });
-    it('403 for lab technician, analyst and viewer', async () => {
-      for (const role of ['lab_technician', 'analyst', 'viewer']) {
+    it('403 for a user who is only a project viewer', async () => {
+      for (const role of ['viewer']) {
         expect((await as[role].post('/api/sites').send(body)).status, role).toBe(403);
       }
     });
@@ -256,7 +256,7 @@ describe.skipIf(!available)('regions and sites', () => {
       expect((await as.field_researcher.patch('/api/sites/9999').send({ name: 'x' })).status).toBe(
         404,
       );
-      for (const role of ['lab_technician', 'analyst', 'viewer']) {
+      for (const role of ['viewer']) {
         expect((await as[role].patch('/api/sites/2').send({ name: 'z' })).status, role).toBe(403);
       }
       expect((await as.field_researcher.patch('/api/sites/abc').send({ name: 'z' })).status).toBe(

@@ -121,7 +121,10 @@ export async function getSample(sampleId, user) {
 export async function createSample(body, user) {
   const projectId = await projectIdOfEvent(body.event_id);
   if (projectId === null) throw eventNotFound();
-  await assertProjectAccess(user, projectId, { write: true, notFound: eventNotFound });
+  await assertProjectAccess(user, projectId, {
+    action: 'create_event_sample',
+    notFound: eventNotFound,
+  });
 
   return withTransaction(
     async (client) => {
@@ -155,7 +158,10 @@ export async function createSample(body, user) {
 export async function changeSampleStatus(sampleId, { new_status: newStatus, note }, user) {
   const projectId = await projectIdOfSample(sampleId);
   if (projectId === null) throw sampleNotFound();
-  await assertProjectAccess(user, projectId, { write: true, notFound: sampleNotFound });
+  await assertProjectAccess(user, projectId, {
+    action: 'change_sample_status',
+    notFound: sampleNotFound,
+  });
 
   return withTransaction(
     async (client) => {
