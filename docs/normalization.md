@@ -479,7 +479,7 @@ That is 17 tables. The other 8 hold facts a sample sheet does not record:
 | `audit_logs` | Every audited change, old and new values | A history of the data, not data about a sample |
 | `data_exports` | Export requests | About users and projects, not samples |
 
-17 + 8 = 25. The relationships of all 25 tables, drawn with the same notation as above (foreign key column as label, `[090]` for the cross-slice keys of `090_cross_slice_constraints.sql`, `[096]` for the one in `096_analysis_supersession.sql`); `docs/er-diagram.md` has the same tables with their columns:
+17 + 8 = 25. (A 26th table, `session`, created by `095_sessions.sql`, is the login-session store of the web server; it holds no domain facts and is left out of this report.) The relationships of all 25 tables, drawn with the same notation as above (foreign key column as label, `[090]` for the cross-slice keys of `090_cross_slice_constraints.sql`, `[096]` for the one in `096_analysis_supersession.sql`); `docs/er-diagram.md` has the same tables with their columns:
 
 ```mermaid
 erDiagram
@@ -838,6 +838,7 @@ Recorded here, not fixed in this change; none changes a normal form.
 - **The parameter list is not enforced.** Any parameter text is accepted (P13), and a parameter can appear in two unit spellings (P5).
 - **Two unique constraints do not follow the naming rule.** `sample_types_type_name_key` and `samples_sample_code_key` are PostgreSQL's default names; every other unique constraint is named `uq_<table>_<columns>`.
 - **A sample inserted with plain SQL has no first history row.** `trg_samples_status_history` fires on `UPDATE` only; `register_sample()` (used by the API) and the seed write the first row themselves.
+- **The `session` table is outside the analysis.** It is infrastructure (session id, serialized session data, expiry) managed by the session middleware, so no dependencies were derived for it.
 - **A QC result names the sample, not the extraction attempt** (laboratory slice), so for a re-extracted sample it does not say which attempt was checked.
 
 ## 14. Reproducing the checks
