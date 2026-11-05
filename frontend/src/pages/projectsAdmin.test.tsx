@@ -24,7 +24,7 @@ const rowFor = async (name: string, text: string) =>
   (await rowsOf(name)).find((row) => row.textContent?.includes(text))!;
 
 describe('Projects page', () => {
-  it('lists the projects a member belongs to, with their role, and no New project button', async () => {
+  it('lists the projects a member belongs to, with their role', async () => {
     await signInAs('viewer');
     renderApp('/projects');
     await screen.findByRole('heading', { name: 'Projects' });
@@ -32,7 +32,8 @@ describe('Projects page', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.textContent).toContain('Yamuna Biodiversity Survey');
     expect(rows[0]?.textContent).toContain('Viewer');
-    expect(screen.queryByRole('button', { name: 'New project' })).toBeNull();
+    // any signed-in user may create a project (CONTRACT 9, project roles)
+    expect(screen.getByRole('button', { name: 'New project' })).toBeTruthy();
   });
 
   it('shows every project to an administrator, marked as administrator access', async () => {

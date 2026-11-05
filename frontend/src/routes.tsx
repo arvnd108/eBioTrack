@@ -11,6 +11,7 @@ import App from './App';
 import { ProtectedRoute } from './components/layout/ProtectedRoute';
 import { ADMIN_ACTIONS, IMPORT_ACTIONS } from './navigation';
 import LoginPage from './pages/LoginPage';
+import RegisterPage from './pages/RegisterPage';
 
 // Each signed-in page is its own chunk, loaded when first opened (App shows a loading state), so
 // the first download stays small as pages are added. The login page is in the main bundle.
@@ -46,6 +47,7 @@ function NotFound() {
 /** The route table; exported so tests can mount it in a memory router. */
 export const routes: RouteObject[] = [
   { path: '/login', element: <LoginPage /> },
+  { path: '/register', element: <RegisterPage /> },
   {
     element: <ProtectedRoute />,
     children: [

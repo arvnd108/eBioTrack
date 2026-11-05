@@ -174,12 +174,13 @@ describe.skipIf(!available)('authorize', () => {
   });
 
   describe('authorize (matrix actions)', () => {
-    it('create_project: PI and administrator only', async () => {
+    it('create_project: any signed-in user', async () => {
       expect((await agents.principal_investigator.get('/api/t/matrix/create-project')).status).toBe(
         200,
       );
       expect((await agents.administrator.get('/api/t/matrix/create-project')).status).toBe(200);
-      expect((await agents.field_researcher.get('/api/t/matrix/create-project')).status).toBe(403);
+      expect((await agents.field_researcher.get('/api/t/matrix/create-project')).status).toBe(200);
+      expect((await agents.viewer.get('/api/t/matrix/create-project')).status).toBe(200);
     });
 
     it('manage_users: administrator only', async () => {
@@ -195,10 +196,12 @@ describe.skipIf(!available)('authorize', () => {
       ).toBe(200);
     });
 
-    it('record_lab: lab technician is a member of project 1 but not 2', async () => {
+    it('record_lab: allowed by a global role or by a writing project role; not for a project viewer', async () => {
       expect((await agents.lab_technician.post('/api/t/matrix/record-lab/1')).status).toBe(200);
       expect((await agents.lab_technician.post('/api/t/matrix/record-lab/2')).status).toBe(404);
-      expect((await agents.analyst.post('/api/t/matrix/record-lab/1')).status).toBe(403);
+      // analyst has no lab role but is a contributor of project 1: the project role allows it
+      expect((await agents.analyst.post('/api/t/matrix/record-lab/1')).status).toBe(200);
+      expect((await agents.viewer.post('/api/t/matrix/record-lab/1')).status).toBe(403);
     });
 
     it('read_project_data: any global role, still scoped to membership', async () => {

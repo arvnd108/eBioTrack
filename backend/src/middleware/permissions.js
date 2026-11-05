@@ -2,23 +2,30 @@
 // Purpose: The permission matrix (CONTRACT section 9) as data, in one place for auditing
 //
 // Mirror of section 9. "administrator" passes every action, so it is never listed in `roles`.
-//   Action                                 PI   field  lab   analyst viewer   project-scoped
-//   manage_users                           —    —      —     —       —        no
-//   read_audit_log                         own  —      —     —       —        yes
-//   create_project                         ✓    —      —     —       —        no
-//   edit_project (and members, sites)      own  —      —     —       —        yes, owner/manager
-//   manage_sites (create and edit)         ✓    own    —     —       —        see note
-//   create_event_sample                    own  own    —     —       —        yes
-//   change_sample_status                   own  own    own   —       —        yes
-//   record_lab (extractions, QC, runs)     own  —      own   —       —        yes
-//   create_analysis (import detections)    own  —      —     own     —        yes
-//   decide_analysis (approve or reject)    own  —      —     —       —        yes
-//   read_project_data (samples, lab,
-//     approved detections, analytics)      own  own    own   own     own      yes
-//   read_unapproved_detections             own  —      —     own     —        yes
-// Note: sites belong to no single project, so manage_sites is a global role gate only; the
-// "own" limit for field researchers is the service's concern when it knows the project.
-// Project role `viewer` is read-only on any non-GET route, whatever the global role.
+//
+// Two ways to be allowed an action (either is enough):
+//   1. a GLOBAL role listed in `roles`;
+//   2. a PROJECT role listed in `projectRoles` in the project the action targets.
+// So a user whose only global role is `viewer` can still own a project, or be invited into another
+// one as contributor, and do there what that project role allows. A project `viewer` is read-only
+// whatever the global role.
+//
+//   Action                      global roles        project roles that also allow it   scoped
+//   manage_users                —                   —                                  no
+//   read_audit_log              PI (own)            —                                  yes
+//   create_project              everyone            —                                  no
+//   edit_project (members,sites)—                   owner, manager                     yes
+//   manage_sites (create/edit)  PI, field           owner, manager, contributor (any)  no
+//   create_event_sample         PI, field           owner, manager, contributor        yes
+//   change_sample_status        PI, field, lab      owner, manager, contributor        yes
+//   record_lab                  PI, lab             owner, manager, contributor        yes
+//   create_analysis             PI, analyst         owner, manager, contributor        yes
+//   decide_analysis             PI                  owner, manager                     yes
+//   read_project_data           everyone            everyone (any member)              yes
+//   read_unapproved_detections  PI, analyst         owner, manager, contributor        yes
+// Note: sites belong to no single project, so manage_sites is allowed when the user holds a
+// granting project role in ANY project (or a global role); it is not tied to one project.
+// Every project-scoped action also requires membership of the project (404 otherwise).
 
 export const ROLES = Object.freeze({
   ADMINISTRATOR: 'administrator',
@@ -31,22 +38,48 @@ export const ROLES = Object.freeze({
 
 const { PRINCIPAL_INVESTIGATOR: PI, FIELD_RESEARCHER: FR, LAB_TECHNICIAN: LT, ANALYST: AN } = ROLES;
 
+const WRITERS = ['owner', 'manager', 'contributor'];
+const MANAGERS = ['owner', 'manager'];
+
 /**
  * roles: global roles that may perform the action (administrator always may).
- * project: true when a non-administrator must also be a member of the target project.
- * projectRoles: project roles allowed (omit for any membership).
+ * projectRoles: project roles that may perform it in a project, whatever the global role.
+ * project: true when a non-administrator must be a member of the target project.
+ * anyProject: true when the project roles count in ANY project (the action has no single project).
+ * read: true for reads, which a project `viewer` may do.
  */
 export const PERMISSIONS = Object.freeze({
   manage_users: { roles: [] },
-  read_audit_log: { roles: [PI], project: true },
-  create_project: { roles: [PI] },
-  edit_project: { roles: [PI], project: true, projectRoles: ['owner', 'manager'] },
-  manage_sites: { roles: [PI, FR] },
-  create_event_sample: { roles: [PI, FR], project: true },
-  change_sample_status: { roles: [PI, FR, LT], project: true },
-  record_lab: { roles: [PI, LT], project: true },
-  create_analysis: { roles: [PI, AN], project: true },
-  decide_analysis: { roles: [PI], project: true },
-  read_project_data: { roles: Object.values(ROLES), project: true },
-  read_unapproved_detections: { roles: [PI, AN], project: true },
+  read_audit_log: { roles: [PI], project: true, read: true },
+  create_project: { roles: Object.values(ROLES) },
+  edit_project: { roles: [], projectRoles: MANAGERS, project: true },
+  manage_sites: { roles: [PI, FR], projectRoles: WRITERS, anyProject: true },
+  create_event_sample: { roles: [PI, FR], projectRoles: WRITERS, project: true },
+  change_sample_status: { roles: [PI, FR, LT], projectRoles: WRITERS, project: true },
+  record_lab: { roles: [PI, LT], projectRoles: WRITERS, project: true },
+  create_analysis: { roles: [PI, AN], projectRoles: WRITERS, project: true },
+  decide_analysis: { roles: [PI], projectRoles: MANAGERS, project: true },
+  read_project_data: {
+    roles: Object.values(ROLES),
+    projectRoles: [...WRITERS, 'viewer'],
+    project: true,
+    read: true,
+  },
+  read_unapproved_detections: { roles: [PI, AN], projectRoles: WRITERS, project: true, read: true },
 });
+
+/** Does the user's global role list allow the action? (Administrator always does.) */
+export function globalRoleAllows(user, action) {
+  const rule = PERMISSIONS[action];
+  return (
+    user.roles.includes(ROLES.ADMINISTRATOR) || rule.roles.some((role) => user.roles.includes(role))
+  );
+}
+
+/** Does this project role allow the action in its project? (A project viewer only reads.) */
+export function projectRoleAllows(action, projectRole) {
+  const rule = PERMISSIONS[action];
+  if (!projectRole || !rule.projectRoles) return false;
+  if (projectRole === 'viewer' && !rule.read) return false;
+  return rule.projectRoles.includes(projectRole);
+}

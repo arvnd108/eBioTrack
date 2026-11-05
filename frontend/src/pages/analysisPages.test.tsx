@@ -98,7 +98,7 @@ async function importFile(id: number, text: string) {
 }
 
 describe('Analysis import: who sees what', () => {
-  it.each(['viewer', 'field_researcher', 'lab_technician'])('is not open to a %s', async (role) => {
+  it.each(['viewer'])('is not open to a project %s', async (role) => {
     await signInAs(role);
     renderApp('/analyses/import');
     expect(await screen.findByRole('heading', { name: 'Not permitted' })).toBeTruthy();

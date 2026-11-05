@@ -247,7 +247,7 @@ describe.skipIf(!available)('samples', () => {
         .send({ event_id: 4, sample_type_id: 1 });
       expect(unknown.status).toBe(404);
       expect(hidden.body).toEqual(unknown.body);
-      for (const role of ['lab_technician', 'analyst', 'viewer']) {
+      for (const role of ['viewer']) {
         expect(
           (await as[role].post('/api/samples').send({ event_id: 4, sample_type_id: 1 })).status,
           role,
@@ -366,7 +366,7 @@ describe.skipIf(!available)('samples', () => {
         expect((await patch(b)).status, JSON.stringify(b)).toBe(422);
       }
       expect((await patch({ new_status: 'failed' }, 'abc')).status).toBe(422);
-      for (const role of ['analyst', 'viewer']) {
+      for (const role of ['viewer']) {
         expect((await patch({ new_status: 'failed' }, sampleId, as[role])).status, role).toBe(403);
       }
       const hidden = await patch({ new_status: 'failed' }, 13, as.lab_technician);

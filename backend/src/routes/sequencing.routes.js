@@ -4,9 +4,8 @@ import { Router } from 'express';
 import { z } from 'zod';
 import * as controller from '../controllers/sequencing.controller.js';
 import { auth } from '../middleware/auth.js';
-import { requireRole } from '../middleware/authorize.js';
+import { requireAction } from '../middleware/authorize.js';
 import { pagination } from '../middleware/pagination.js';
-import { ROLES } from '../middleware/permissions.js';
 import { validate } from '../middleware/validate.js';
 import { calendarDate, idNumber, idString, pageQuery } from '../utils/schemas.js';
 
@@ -32,7 +31,7 @@ const libraryBody = z.strictObject({ extraction_id: idNumber });
 const statusBody = z.strictObject({ status: z.enum(RUN_STATUSES) });
 const idParams = z.object({ id: idString });
 
-const recordLab = requireRole(ROLES.PRINCIPAL_INVESTIGATOR, ROLES.LAB_TECHNICIAN);
+const recordLab = requireAction('record_lab');
 
 const router = Router();
 router.get(

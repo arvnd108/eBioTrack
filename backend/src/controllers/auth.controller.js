@@ -39,6 +39,18 @@ export async function login(req, res) {
   return sendSuccess(res, user);
 }
 
+export async function register(req, res) {
+  const user = await authService.register(req.body);
+
+  // Signed in straight away; fresh session ID, same as login.
+  await promisify(req.session.regenerate.bind(req.session))();
+  req.session.user_id = user.user_id;
+  await promisify(req.session.save.bind(req.session))();
+
+  await authService.recordLogin(user.user_id);
+  return sendSuccess(res, user, 201);
+}
+
 export async function logout(req, res) {
   await promisify(req.session.destroy.bind(req.session))();
   res.clearCookie(SESSION_COOKIE_NAME, cookieOptions);

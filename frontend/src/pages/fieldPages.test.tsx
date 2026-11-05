@@ -259,8 +259,8 @@ describe('Collection events page', () => {
   it('shows New event only to roles that may record events', async () => {
     for (const [role, shown] of [
       ['viewer', false],
-      ['lab_technician', false],
-      ['analyst', false],
+      ['lab_technician', true], // project contributor
+      ['analyst', true], // project contributor
       ['field_researcher', true],
       ['principal_investigator', true],
     ] as const) {
@@ -379,7 +379,7 @@ describe('Collection events page', () => {
 
 describe('Sampling map page', () => {
   it('lists the sites with filters, and selects one from the table', async () => {
-    await signInAs('analyst');
+    await signInAs('viewer'); // a project viewer: read-only, no New site / Edit
     const { router, container } = renderApp('/map');
     expect(texts(await rowsOf('Sites'))).toEqual([
       'Dakpathar Barrage',
@@ -405,7 +405,7 @@ describe('Sampling map page', () => {
   });
 
   it('shows a site summary in its popup, with counts from the user’s projects', async () => {
-    await signInAs('lab_technician'); // project 1 only
+    await signInAs('viewer'); // project 1 only, read-only
     renderApp('/map?site_id=1');
     const popup = await waitFor(() => {
       const element = document.querySelector('.leaflet-popup-content');

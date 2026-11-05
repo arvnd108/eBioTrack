@@ -161,7 +161,7 @@ export async function listExtractions(user, filters, { limit, offset, sort }) {
 export async function createExtraction(body, user) {
   const projectId = await projectIdOfSample(body.sample_id);
   if (projectId === null) throw sampleNotFound();
-  await assertProjectAccess(user, projectId, { write: true, notFound: sampleNotFound });
+  await assertProjectAccess(user, projectId, { action: 'record_lab', notFound: sampleNotFound });
 
   return withTransaction(
     async (client) => {
@@ -208,7 +208,10 @@ export async function createExtraction(body, user) {
 export async function updateExtraction(extractionId, body, user) {
   const projectId = await projectIdOfExtraction(extractionId);
   if (projectId === null) throw extractionNotFound();
-  await assertProjectAccess(user, projectId, { write: true, notFound: extractionNotFound });
+  await assertProjectAccess(user, projectId, {
+    action: 'record_lab',
+    notFound: extractionNotFound,
+  });
 
   const has = (key) => body[key] !== undefined;
   return withTransaction(
@@ -295,12 +298,15 @@ export async function createQcResult(body, user) {
   if (body.sample_id !== undefined && body.sample_id !== null) {
     const projectId = await projectIdOfSample(body.sample_id);
     if (projectId === null) throw sampleNotFound();
-    await assertProjectAccess(user, projectId, { write: true, notFound: sampleNotFound });
+    await assertProjectAccess(user, projectId, { action: 'record_lab', notFound: sampleNotFound });
   }
   if (body.analysis_id !== undefined && body.analysis_id !== null) {
     const projectIds = await projectIdsOfAnalysis(body.analysis_id);
     if (projectIds === null) throw analysisNotFound();
-    await assertAnyProjectAccess(user, projectIds, { write: true, notFound: analysisNotFound });
+    await assertAnyProjectAccess(user, projectIds, {
+      action: 'record_lab',
+      notFound: analysisNotFound,
+    });
   }
   return withTransaction(
     async (client) => {

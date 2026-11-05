@@ -135,10 +135,10 @@ describe.skipIf(!dbAvailable)('authentication through the API', () => {
       }
     });
 
-    it('only /api/health and POST /api/auth/login are public: no other row of the matrix is', () => {
+    it('only /api/health, POST /api/auth/login and POST /api/auth/register are public: no other row of the matrix is', () => {
       expect(
         ENDPOINTS.filter((e) => e.action === 'public').map((e) => `${e.method} ${e.path}`),
-      ).toEqual(['POST /api/auth/login']);
+      ).toEqual(['POST /api/auth/login', 'POST /api/auth/register']);
     });
 
     it('unknown paths and methods are a 404 JSON envelope, never an HTML error page', async () => {
@@ -443,8 +443,9 @@ describe.skipIf(!dbAvailable)('authentication through the API', () => {
       const c = await login(SEED.analyst.email);
       expect((await c.post('/api/analyses/import', {})).status).toBe(422);
       await removeGlobalRole(SEED.analyst.user_id, 'analyst');
-      const denied = await c.post('/api/analyses/import', {});
-      expectEnvelope(denied, 403, 'forbidden');
+      // still a contributor of project 1: the project role keeps import open (CONTRACT 9)
+      expect((await c.post('/api/analyses/import', {})).status).toBe(422);
+      expect((await c.post('/api/analyses/abc/approve')).status).toBe(403);
       expect((await c.get('/api/auth/me')).body.data.roles).toEqual([]);
       await addGlobalRole(SEED.analyst.user_id, 'principal_investigator');
       expect((await c.post('/api/analyses/abc/approve')).status).toBe(422);

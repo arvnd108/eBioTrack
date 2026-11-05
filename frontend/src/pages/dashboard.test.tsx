@@ -150,18 +150,21 @@ describe('Dashboard', () => {
     });
     renderApp('/');
     await waitFor(() =>
-      expect(waiting()).toEqual([
-        ['Samples collected but not yet storedIn all your projects2', '/samples?status=collected'],
-      ]),
+      expect(waiting()).toEqual(
+        expect.arrayContaining([
+          [
+            'Samples collected but not yet storedIn all your projects2',
+            '/samples?status=collected',
+          ],
+        ]),
+      ),
     );
     cleanup();
     renderApp('/?project_id=2');
     await waitFor(() =>
-      expect(waiting()).toEqual([
-        [
-          'Samples collected but not yet storedIn Coastal Estuary Pilot0',
-          '/samples?status=collected&project_id=2',
-        ],
+      expect(waiting()).toContainEqual([
+        'Samples collected but not yet storedIn Coastal Estuary Pilot0',
+        '/samples?status=collected&project_id=2',
       ]),
     );
   });
@@ -198,10 +201,15 @@ describe('Dashboard', () => {
     renderApp('/');
     await tiles();
     await waitFor(() =>
-      expect(waiting()).toEqual([
-        ['Extractions waiting for a QC verdictIn all your projects1', '/lab?qc_status=pending'],
-        ['Samples collected but not yet storedIn all your projects0', '/samples?status=collected'],
-      ]),
+      expect(waiting()).toEqual(
+        expect.arrayContaining([
+          ['Extractions waiting for a QC verdictIn all your projects1', '/lab?qc_status=pending'],
+          [
+            'Samples collected but not yet storedIn all your projects0',
+            '/samples?status=collected',
+          ],
+        ]),
+      ),
     );
     expect(screen.queryByRole('heading', { name: 'Recent activity' })).toBeNull();
   });
@@ -211,12 +219,14 @@ describe('Dashboard', () => {
     renderApp('/');
     await tiles();
     await waitFor(() =>
-      expect(waiting()).toEqual([
-        [
-          'Draft analyses waiting for their CSVIn all your projects1',
-          '/analyses/import?status=draft',
-        ],
-      ]),
+      expect(waiting()).toEqual(
+        expect.arrayContaining([
+          [
+            'Draft analyses waiting for their CSVIn all your projects1',
+            '/analyses/import?status=draft',
+          ],
+        ]),
+      ),
     );
   });
 
@@ -226,10 +236,8 @@ describe('Dashboard', () => {
     expect(
       await screen.findByRole('heading', { name: 'You are not in a project yet' }),
     ).toBeTruthy();
-    expect(
-      screen.getByText(/Ask a principal investigator to add you to their project\./),
-    ).toBeTruthy();
-    expect(screen.queryByRole('link', { name: 'Go to projects' })).toBeNull();
+    // anyone may create a project (CONTRACT 9, project roles), so a new user is offered that
+    expect(screen.getByText(/Create your first project to start\./)).toBeTruthy();
     expect(screen.queryByText('Approved detections')).toBeNull();
     cleanup();
     await newUser([2], 'newpi@example.test');

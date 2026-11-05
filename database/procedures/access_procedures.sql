@@ -15,15 +15,12 @@
 --   23514  title is NULL or blank (same meaning as ck_projects_title_not_blank)
 --   23505  title already used (case-sensitive, as uq_projects_title; also the final answer for a
 --          concurrent duplicate, see below)
---   EB002  p_owner_id is NULL; the owner is deactivated (users.active = false); the owner holds
---          neither the global role administrator nor principal_investigator
+--   EB002  p_owner_id is NULL; the owner is deactivated (users.active = false)
 --   23503  p_owner_id is not a user (same meaning as fk_projects_created_by)
 --   No other error code is raised on purpose (no 23502, no P0001).
 --
--- Role check (interpretation, flagged for review): CONTRACT 9 lets administrator and
--- principal_investigator create projects. The signature has one p_owner_id that becomes both
--- created_by and the owner, so the check is applied to that user. To drop it, delete the
--- "allowed to create projects" block below; A's authorize('create_project') still guards the route.
+-- No global role is needed: every active user may create a project and becomes its owner. What a
+-- user may do inside a project is decided by their project role (CONTRACT 9).
 --
 -- All or nothing. The function runs inside the caller's transaction and never COMMITs or ROLLs
 -- BACK. If the membership insert fails after the project insert, PostgreSQL aborts the whole
@@ -46,8 +43,8 @@
 -- Usage (the backend passes these as $1 .. $4):
 --   SELECT create_project_with_owner('New survey', 'Objectives', DATE '2026-06-01', 2);
 --     -> project_id (>= 1000) of a new 'planned' project owned by user 2
---   SELECT create_project_with_owner('New survey', NULL, NULL, 3);
---     -> ERROR EB002: user 3 may not create projects (needs administrator or principal_investigator)
+--   SELECT create_project_with_owner('New survey', NULL, NULL, 99999);
+--     -> ERROR 23503: user 99999 does not exist
 
 -- --------------------------------------------------------------------------------------------
 -- Helper
@@ -75,7 +72,6 @@ CREATE OR REPLACE FUNCTION create_project_with_owner(
 LANGUAGE plpgsql AS $$
 DECLARE
     v_active     boolean;
-    v_may_create boolean;
     v_project_id bigint;
 BEGIN
     -- 1. Title. Only the blank test trims; the stored title is exactly what the caller sent.
@@ -109,20 +105,8 @@ BEGIN
             USING ERRCODE = 'EB002';
     END IF;
 
-    -- 3. Allowed to create projects (CONTRACT 9): administrator or principal_investigator.
-    SELECT EXISTS (
-        SELECT 1
-        FROM user_roles ur
-        JOIN roles r ON r.role_id = ur.role_id
-        WHERE ur.user_id = p_owner_id
-          AND r.role_name IN ('administrator', 'principal_investigator')
-    ) INTO v_may_create;
-    IF NOT v_may_create THEN
-        RAISE EXCEPTION 'User % may not create projects (needs the administrator or principal_investigator role)',
-                p_owner_id
-            USING ERRCODE = 'EB002',
-                  DETAIL = 'Allowed roles: administrator, principal_investigator.';
-    END IF;
+    -- 3. Any active user may create a project and becomes its owner (CONTRACT 9, as amended: what a
+    --    user can do inside a project depends on their PROJECT role, not on a global role).
 
     -- Writes. status stays at its default 'planned'; the ids come from the identity columns.
     PERFORM fn_access_set_actor(p_owner_id);

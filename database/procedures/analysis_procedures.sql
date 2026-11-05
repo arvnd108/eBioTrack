@@ -35,8 +35,8 @@
 --
 -- Acting user and roles (defence in depth; the route's authorize still guards the endpoint, and
 -- project-membership checks stay in the middleware, not here). p_actor_id must exist and be active.
---   import:         administrator, principal_investigator or analyst (CONTRACT 9)
---   approve/reject: administrator or principal_investigator (D17)
+--   import:         administrator, principal_investigator or analyst, or owner/manager/contributor of the run's project (CONTRACT 9)
+--   approve/reject: administrator or principal_investigator, or owner/manager of the run's project (D17)
 -- app.current_user_id is set from p_actor_id only if the caller has not already set it (same
 -- pattern as fn_access_set_actor / fn_lab_set_actor; own copy so this file stands alone).
 --
@@ -112,9 +112,17 @@ BEGIN
 END;
 $$;
 
--- The actor must exist, be active, and hold one of p_roles. p_what completes the message
--- ("user N may not <p_what>"). FOR SHARE keeps the user row stable until the transaction ends.
-CREATE OR REPLACE FUNCTION fn_analysis_check_actor(p_actor_id bigint, p_roles text[], p_what text) RETURNS void
+-- The actor must exist, be active, and hold one of p_roles globally, OR (when p_analysis_id and
+-- p_project_roles are given) hold one of p_project_roles in a project the analysis's run touches.
+-- p_what completes the message ("user N may not <p_what>"). FOR SHARE keeps the user row stable
+-- until the transaction ends.
+CREATE OR REPLACE FUNCTION fn_analysis_check_actor(
+    p_actor_id      bigint,
+    p_roles         text[],
+    p_what          text,
+    p_analysis_id   bigint DEFAULT NULL,
+    p_project_roles text[] DEFAULT NULL
+) RETURNS void
 LANGUAGE plpgsql AS $$
 DECLARE
     v_active boolean;
@@ -129,17 +137,33 @@ BEGIN
     IF NOT v_active THEN
         RAISE EXCEPTION 'User % is deactivated', p_actor_id USING ERRCODE = 'EB002';
     END IF;
-    IF NOT EXISTS (
+    IF EXISTS (
         SELECT 1
         FROM user_roles ur
         JOIN roles r ON r.role_id = ur.role_id
         WHERE ur.user_id = p_actor_id
           AND r.role_name = ANY (p_roles)
     ) THEN
-        RAISE EXCEPTION 'User % may not %', p_actor_id, p_what
-            USING ERRCODE = 'EB002',
-                  DETAIL = format('Allowed roles: %s.', array_to_string(p_roles, ', '));
+        RETURN;
     END IF;
+    IF p_analysis_id IS NOT NULL AND p_project_roles IS NOT NULL AND EXISTS (
+        SELECT 1
+        FROM analysis_runs ar
+        JOIN sequencing_libraries l ON l.run_id = ar.run_id
+        JOIN dna_extractions x ON x.extraction_id = l.extraction_id
+        JOIN samples s ON s.sample_id = x.sample_id
+        JOIN collection_events e ON e.event_id = s.event_id
+        JOIN project_members pm ON pm.project_id = e.project_id AND pm.user_id = p_actor_id
+        WHERE ar.analysis_id = p_analysis_id
+          AND pm.project_role::text = ANY (p_project_roles)
+    ) THEN
+        RETURN;
+    END IF;
+    RAISE EXCEPTION 'User % may not %', p_actor_id, p_what
+        USING ERRCODE = 'EB002',
+              DETAIL = format('Allowed global roles: %s%s.', array_to_string(p_roles, ', '),
+                              CASE WHEN p_project_roles IS NULL THEN ''
+                                   ELSE '; or project role: ' || array_to_string(p_project_roles, ', ') END);
 END;
 $$;
 
@@ -230,7 +254,8 @@ BEGIN
     -- 1. Analysis, actor, status.
     v_analysis := fn_analysis_lock(p_analysis_id);
     PERFORM fn_analysis_check_actor(p_actor_id, ARRAY['administrator', 'principal_investigator', 'analyst'],
-                                    'import detections');
+                                    'import detections', p_analysis_id,
+                                    ARRAY['owner', 'manager', 'contributor']);
     IF v_analysis.status IN ('imported', 'approved') THEN
         RAISE EXCEPTION 'Analysis % is already %', p_analysis_id, v_analysis.status
             USING ERRCODE = 'EB003',
@@ -360,7 +385,7 @@ BEGIN
 
     -- 2. Actor (D17): administrator or principal_investigator.
     PERFORM fn_analysis_check_actor(p_actor_id, ARRAY['administrator', 'principal_investigator'],
-                                    'approve analyses');
+                                    'approve analyses', p_analysis_id, ARRAY['owner', 'manager']);
 
     -- 3. Status.
     IF v_analysis.status = 'approved' THEN
@@ -456,7 +481,7 @@ DECLARE
 BEGIN
     v_analysis := fn_analysis_lock(p_analysis_id);
     PERFORM fn_analysis_check_actor(p_actor_id, ARRAY['administrator', 'principal_investigator'],
-                                    'reject analyses');
+                                    'reject analyses', p_analysis_id, ARRAY['owner', 'manager']);
 
     IF p_reason IS NULL OR btrim(p_reason) = '' THEN
         RAISE EXCEPTION 'A reason is required to reject an analysis' USING ERRCODE = 'EB002';

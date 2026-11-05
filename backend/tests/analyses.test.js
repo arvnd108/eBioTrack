@@ -85,18 +85,19 @@ describe.skipIf(!available)('analyses', () => {
   };
 
   describe('reading', () => {
-    it('shows unapproved analyses only to administrator, PI and analyst', async () => {
+    it('shows unapproved analyses to administrator and to members who can write, not to viewers', async () => {
       const ids = async (agent) =>
         (await agent.get('/api/analyses?limit=100')).body.data.map((a) => a.analysis_id);
       expect(await ids(as.administrator)).toEqual([1, 2, 3, 4]);
       expect(await ids(as.principal_investigator)).toEqual([1, 2, 3, 4]);
       expect(await ids(as.analyst)).toEqual([1, 2, 3, 4]);
-      expect(await ids(as.lab_technician)).toEqual([1, 2]);
+      // project contributors (users 3 and 4) read unapproved work through their project role
+      expect(await ids(as.lab_technician)).toEqual([1, 2, 3, 4]);
+      expect(await ids(as.field_researcher)).toEqual([1, 2, 3, 4]);
       expect(await ids(as.viewer)).toEqual([1, 2]);
-      expect(await ids(as.field_researcher)).toEqual([1, 2]);
       expect(await ids(as.outsider)).toEqual([]);
-      expect((await as.lab_technician.get('/api/analyses/3')).status).toBe(404);
-      expect((await as.lab_technician.get('/api/analyses/4')).status).toBe(404);
+      expect((await as.viewer.get('/api/analyses/3')).status).toBe(404);
+      expect((await as.viewer.get('/api/analyses/4')).status).toBe(404);
       expect((await as.outsider.get('/api/analyses/1')).status).toBe(404);
       expect((await as.analyst.get('/api/analyses/999')).status).toBe(404);
     });
@@ -200,9 +201,8 @@ describe.skipIf(!available)('analyses', () => {
         pipeline_version: '1',
         reference_db: 'r',
       };
-      for (const agent of [as.lab_technician, as.field_researcher, as.viewer]) {
-        expect((await agent.post('/api/analyses').send(body)).status).toBe(403);
-      }
+      // a project viewer is read-only; contributors may create (project role, not global role)
+      expect((await as.viewer.post('/api/analyses').send(body)).status).toBe(403);
       expect((await as.outsider.post('/api/analyses').send(body)).status).toBe(404);
       expect((await as.analyst.post('/api/analyses').send({ ...body, run_id: 999 })).status).toBe(
         404,
@@ -364,9 +364,7 @@ describe.skipIf(!available)('analyses', () => {
       expect((await upload(as.analyst, 'abc', valid)).status).toBe(422);
     });
     it('gates by role and project', async () => {
-      for (const agent of [as.lab_technician, as.field_researcher, as.viewer]) {
-        expect((await upload(agent, 4, valid)).status).toBe(403);
-      }
+      expect((await upload(as.viewer, 4, valid)).status).toBe(403);
       expect((await upload(as.outsider, 4, valid)).status).toBe(404);
       expect((await upload(as.analyst, 999, valid)).status).toBe(404);
       expect(await assignments(4)).toBe(0);

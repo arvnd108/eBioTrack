@@ -316,8 +316,8 @@ describe.skipIf(!available)('events', () => {
       expect(max.body.data.samples).toHaveLength(100);
       expect(max.body.data.samples[99].sample_code.endsWith('-100')).toBe(true);
     });
-    it('authorization: 403 for lab technician, analyst, viewer and a viewer project role; 404 for non-members', async () => {
-      for (const role of ['lab_technician', 'analyst', 'viewer']) {
+    it('authorization: 403 for a viewer project role (contributors may write); 404 for non-members', async () => {
+      for (const role of ['viewer']) {
         expect((await as[role].post('/api/events').send(payload())).status, role).toBe(403);
       }
       // project 1 has user 6 as viewer; give that user the field researcher role to isolate the project check

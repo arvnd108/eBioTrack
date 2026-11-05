@@ -183,12 +183,21 @@ describe.skipIf(!dbAvailable)('permission matrix over the API', () => {
       expect((await approveProbe(users.analyst)).status).toBe(403);
     });
 
-    it('a user left with no role at all is denied every privileged route (but reads stay signed-in only)', async () => {
+    it('a user with no global role keeps what their project role allows, and nothing else', async () => {
       await removeGlobalRole(SEED.analyst.user_id, AN);
-      expect((await importProbe(users.analyst)).status).toBe(403);
       expect((await users.analyst.get('/api/auth/me')).body.data.roles).toEqual([]);
-      await addGlobalRole(SEED.analyst.user_id, AN);
+      // contributor of project 1: may import, may not approve or manage users/sites-less routes
       expect((await importProbe(users.analyst)).status).toBe(422);
+      expect((await approveProbe(users.analyst)).status).toBe(403);
+      expect((await users.analyst.get('/api/users')).status).toBe(403);
+      await addGlobalRole(SEED.analyst.user_id, AN);
+    });
+
+    it('a user who is only a project viewer is denied every write, whatever the global role', async () => {
+      expect((await importProbe(users.viewer)).status).toBe(403);
+      await addGlobalRole(SEED.viewer.user_id, PI);
+      expect((await importProbe(users.viewer)).status).toBe(422); // global PI gate passes pre-check
+      await removeGlobalRole(SEED.viewer.user_id, PI);
     });
 
     it('the administrator passes every global gate and every project gate without being a member', async () => {

@@ -5,6 +5,7 @@
 //   router.post('/', auth, authorize('create_project'), ...)                       // matrix action
 //   router.patch('/:id', auth, authorize('edit_project'), ...)                     // project from :id
 //   router.post('/', auth, authorize('create_event_sample', { source: 'body.project_id' }), ...)
+//   router.post('/', auth, requireAction('record_lab'), ...)                      // project known later
 //   router.get('/', auth, requireRole('analyst', 'principal_investigator'), ...)   // ad hoc role gate
 //   router.get('/:id', auth, requireProjectAccess({ projectRoles: ['owner'] }), ...)
 //
@@ -18,7 +19,7 @@
 //  - anything unexpected denies: a lookup error goes to the error handler and never to next().
 import { query } from '../db/query.js';
 import { AppError } from './errorHandler.js';
-import { PERMISSIONS, ROLES } from './permissions.js';
+import { PERMISSIONS, ROLES, globalRoleAllows, projectRoleAllows } from './permissions.js';
 
 const KNOWN_ROLES = new Set(Object.values(ROLES));
 const PROJECT_ROLES = new Set(['owner', 'manager', 'contributor', 'viewer']);
@@ -105,28 +106,94 @@ export function requireProjectAccess({ source = 'params.id', projectRoles } = {}
   };
 }
 
+/** Does the user hold, in ANY project, one of these project roles? */
+async function holdsProjectRole(userId, projectRoles) {
+  const rows = await query(
+    'SELECT 1 AS ok FROM project_members WHERE user_id = $1 AND project_role = ANY($2::project_role[]) LIMIT 1',
+    [userId, projectRoles],
+  );
+  return rows.length > 0;
+}
+
 /**
- * Enforce one row of the permission matrix by name: global role gate, then the project check when
- * the action is project-scoped.
+ * Cheap pre-check for routes whose project is only known later (it comes from the sample,
+ * extraction or analysis the request names). Passes when a global role allows the action, or the
+ * user holds a granting project role somewhere; the service then checks the real project with
+ * `assertProjectAccess(user, projectId, { action })`.
+ * @param {keyof typeof PERMISSIONS} action
+ */
+export function requireAction(action) {
+  const rule = PERMISSIONS[action];
+  if (!rule) throw new Error(`requireAction: unknown action "${action}"`);
+
+  return async (req, _res, next) => {
+    try {
+      const user = req.user;
+      if (!user?.roles) throw unauthenticated();
+      if (globalRoleAllows(user, action)) return next();
+      if (rule.projectRoles && (await holdsProjectRole(user.user_id, rule.projectRoles))) {
+        return next();
+      }
+      throw forbidden();
+    } catch (err) {
+      return next(err);
+    }
+  };
+}
+
+/**
+ * Enforce one row of the permission matrix by name. The action is allowed when a global role OR
+ * the user's role in the target project allows it (see permissions.js).
+ *   - project-scoped actions: not a member / unknown project is 404, a project `viewer` writing
+ *     is 403, a role that does not allow the action is 403; sets `req.projectId`/`req.projectRole`;
+ *   - other actions: a global role, or (`anyProject`) a granting role in any project.
  * @param {keyof typeof PERMISSIONS} action
  * @param {{ source?: string }} [options] where the project id lives (see requireProjectAccess)
  */
-export function authorize(action, { source } = {}) {
+export function authorize(action, { source = 'params.id' } = {}) {
   const rule = PERMISSIONS[action];
   if (!rule) throw new Error(`authorize: unknown action "${action}"`);
 
-  const gates = [requireRole(...rule.roles)];
-  if (rule.project) {
-    gates.push(requireProjectAccess({ source, projectRoles: rule.projectRoles }));
+  if (!rule.project) return requireAction(action);
+
+  if (!/^(params|body|query)\.\w+$/.test(source)) {
+    throw new Error(`authorize: bad source "${source}"`);
   }
-  return (req, res, next) => {
-    let index = 0;
-    const step = (err) => {
-      if (err) return next(err);
-      const gate = gates[index++];
-      return gate ? gate(req, res, step) : next();
-    };
-    step();
+  return async (req, _res, next) => {
+    try {
+      const user = req.user;
+      if (!user?.roles) throw unauthenticated();
+
+      const projectId = resolveProjectId(req, source);
+      if (isAdmin(user)) {
+        req.projectId = projectId;
+        req.projectRole = null;
+        return next();
+      }
+      if (projectId === undefined) throw projectNotFound();
+
+      const rows = await query(
+        `SELECT pm.project_role
+           FROM projects p
+           JOIN project_members pm ON pm.project_id = p.project_id AND pm.user_id = $2
+          WHERE p.project_id = $1`,
+        [projectId, user.user_id],
+      );
+      if (rows.length === 0) throw projectNotFound();
+
+      const projectRole = rows[0].project_role;
+      if (projectRole === 'viewer' && !rule.read) throw forbidden();
+      if (!globalRoleAllows(user, action) && !projectRoleAllows(action, projectRole)) {
+        throw forbidden();
+      }
+      // edit_project has no global role: only owner/manager of THIS project, handled above.
+
+      req.projectId = projectId;
+      req.projectRole = projectRole;
+      return next();
+    } catch (err) {
+      return next(err);
+    }
   };
 }
 

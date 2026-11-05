@@ -173,10 +173,16 @@ describe.skipIf(!available)('projects', () => {
       expect(res.status).toBe(201);
       expect(res.body.data).toMatchObject({ created_by: 1, your_role: 'owner', objectives: null });
     });
-    it('403 for other roles, 401 anonymous', async () => {
-      for (const role of ['field_researcher', 'lab_technician', 'analyst', 'viewer']) {
-        expect((await as[role].post('/api/projects').send({ title: 'X' })).status, role).toBe(403);
-      }
+    it('any signed-in user can create one and owns it; 401 anonymous', async () => {
+      // user 6 is only a global `viewer`: creating a project makes them its owner
+      const res = await as.viewer.post('/api/projects').send({ title: 'Viewer Survey' });
+      expect(res.status).toBe(201);
+      expect(res.body.data).toMatchObject({ your_role: 'owner', created_by: 6 });
+      // and as owner they can invite members into it
+      const add = await as.viewer
+        .post(`/api/projects/${res.body.data.project_id}/members`)
+        .send({ user_id: 3, project_role: 'contributor' });
+      expect(add.status).toBe(201);
       expect((await request(app).post('/api/projects').send({ title: 'X' })).status).toBe(401);
     });
     it('422 for blank title, bad dates and unknown keys (owner_id is not accepted); 409 for a duplicate', async () => {
@@ -276,8 +282,11 @@ describe.skipIf(!available)('projects', () => {
         "SELECT actor_id FROM audit_logs WHERE entity_type = 'project_members' AND entity_id = 2 AND action = 'insert'",
       );
       expect(audit.map((a) => a.actor_id)).toEqual([2]);
-      // the new manager (global role analyst) still cannot edit: the matrix needs a PI/administrator
-      expect((await as.analyst.delete('/api/projects/2/members/5')).status).toBe(403);
+      // the project role decides: the new manager may edit project 2 although their global role is analyst
+      expect(
+        (await as.analyst.patch('/api/projects/2').send({ objectives: 'Set by the manager' }))
+          .status,
+      ).toBe(200);
       const del = await as.principal_investigator.delete('/api/projects/2/members/5');
       expect(del.status).toBe(204);
       expect(del.text).toBe('');

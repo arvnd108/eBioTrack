@@ -1,6 +1,6 @@
 # eBioTrack — Project Contract (T00)
 
-**Version:** 1.9 (approved, G0 passed; 1.1 adds the not-blank CHECKs to 4.3; 1.2 names two response fields in section 10; 1.3 links a correction run to the run it supersedes and settles all-`fail` approval; 1.4 exposes `supersedes_analysis_id` in the analysis routes and adds the `413` status; 1.5 adds the `429` status, `too_many_attempts` error code and `Retry-After` header for login lockout; 1.6 stores the status-change `note` and adds `collector_name` and `changed_by_name` to the event and sample responses; 1.7 names the people, samples and active run in the lab responses; 1.8 names the run, marker and people on analyses, returns the rejection reason, and adds `sample_id` to taxon detections; 1.9 names the actor of every audit entry)
+**Version:** 2.0 (self-registration and project-role permissions; previously 1.9, approved, G0 passed; 1.1 adds the not-blank CHECKs to 4.3; 1.2 names two response fields in section 10; 1.3 links a correction run to the run it supersedes and settles all-`fail` approval; 1.4 exposes `supersedes_analysis_id` in the analysis routes and adds the `413` status; 1.5 adds the `429` status, `too_many_attempts` error code and `Retry-After` header for login lockout; 1.6 stores the status-change `note` and adds `collector_name` and `changed_by_name` to the event and sample responses; 1.7 names the people, samples and active run in the lab responses; 1.8 names the run, marker and people on analyses, returns the rejection reason, and adds `sample_id` to taxon detections; 1.9 names the actor of every audit entry)
 
 This is the output of task **T00** in [WORKFLOW.md](WORKFLOW.md). It fixes the names, types, values, and shapes that all four members build against, so the database, API, frontend, tests, and docs line up without anyone guessing.
 
@@ -155,6 +155,9 @@ Approved results are never edited in place. A correction is a **new** analysis r
 | `email` | text | NN, UNIQUE, `CHECK (email = lower(email))` |
 | `password_hash` | text | NN |
 | `active` | boolean | NN, default `true` |
+| `organization` | text | NULL, `ck_users_organization_not_blank` **(097)** |
+| `job_title` | text | NULL, `ck_users_job_title_not_blank` **(097)** |
+| `phone` | text | NULL, `ck_users_phone_not_blank` **(097)** |
 | `last_login_at` | timestamptz | |
 | `created_at` | timestamptz | NN, default `now()` |
 
@@ -456,6 +459,7 @@ API-only error codes, raised by the application rather than the database (no SQL
 | HTTP status | API error code | When |
 |---|---|---|
 | 413 | `payload_too_large` | A CSV upload over 10 MB (`POST /api/analyses/import`) |
+| 409 | `email_taken` | `POST /api/auth/register` with an email that is already registered; `details` names the `email` field |
 | 429 | `too_many_attempts` | Repeated failed sign-ins (`POST /api/auth/login`); the response carries a `Retry-After` header |
 
 ### Views
@@ -493,14 +497,16 @@ Names fixed so the API and tests can rely on them. Column lists are decided by t
 
 ## 9. Permission matrix
 
-Two layers: the user's **global role(s)** and their **project role** in a given project. A user may hold more than one global role. `✓` allowed, `own` limited to projects they are a member of, `—` not allowed.
+Two layers: the user's **global role(s)** and their **project role** in a given project. An action is allowed when **either** layer allows it: a global role in the table below, **or** a project role in the second table, in the project the action targets. So a user whose only global role is `viewer` (every self-registered user) can create projects, own them, and be invited into other projects as manager, contributor or viewer, and does in each project what that project role allows. A user may hold more than one global role. `✓` allowed, `own` limited to projects they are a member of, `—` not allowed.
+
+**By global role:**
 
 | Action | administrator | principal_investigator | field_researcher | lab_technician | analyst | viewer |
 |---|---|---|---|---|---|---|
 | Manage users and roles | ✓ | — | — | — | — | — |
 | Read audit log | ✓ | own | — | — | — | — |
-| Create project | ✓ | ✓ | — | — | — | — |
-| Edit project, manage members | ✓ | own (owner/manager) | — | — | — | — |
+| Create project (becomes its owner) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Edit project, manage members | ✓ | — | — | — | — | — |
 | Create and edit sites | ✓ | ✓ | own | — | — | — |
 | Create events and samples | ✓ | own | own | — | — | — |
 | Change sample status | ✓ | own | own | own | — | — |
@@ -511,7 +517,20 @@ Two layers: the user's **global role(s)** and their **project role** in a given 
 | Read approved detections, analytics, export | ✓ | own | own | own | own | own |
 | Read non-approved detections | ✓ | own | — | — | own | — |
 
-Project role `viewer` is read-only regardless of global role; project role `owner`/`manager` is needed to edit project settings and members.
+**By project role** (in that project, whatever the global role):
+
+| Action | owner | manager | contributor | viewer |
+|---|---|---|---|---|
+| Edit project, manage members and project sites | ✓ | ✓ | — | — |
+| Create and edit sites (sites belong to no project: counts if the user holds this role in any project) | ✓ | ✓ | ✓ | — |
+| Create events and samples, change sample status | ✓ | ✓ | ✓ | — |
+| Record extractions, QC, runs | ✓ | ✓ | ✓ | — |
+| Create analysis and import detections | ✓ | ✓ | ✓ | — |
+| Approve or reject an analysis | ✓ | ✓ | — | — |
+| Read project data, approved detections, analytics | ✓ | ✓ | ✓ | ✓ |
+| Read non-approved detections | ✓ | ✓ | ✓ | — |
+
+Project role `viewer` is read-only regardless of global role. A project is created through `create_project_with_owner`; the creator is its single `owner`. The audit log stays global-role based (administrator, or principal investigator for own projects).
 
 ---
 
@@ -524,6 +543,7 @@ Project role `viewer` is read-only regardless of global role; project role `owne
 | Method | Path | Min role | Request | Response `data` |
 |---|---|---|---|---|
 | POST | `/api/auth/login` | public | `{ email, password }` | user object |
+| POST | `/api/auth/register` | public | `{ full_name, email, password, organization?, job_title?, phone? }` | `201` user object (role `viewer`, signed in); `409 email_taken` |
 | POST | `/api/auth/logout` | any | — | `204` |
 | GET | `/api/auth/me` | any | — | user object |
 
@@ -762,6 +782,7 @@ The backend resolves `scientific_name` and `taxon_rank` to `taxon_id` before cal
 | 1.6 | Section 10: `PATCH /api/samples/:id/status` now stores `note` on the history row (the trigger reads the transaction-local setting `app.status_note`; none stores NULL), `GET /api/samples/:id` history entries gain `changed_by_name` (and always carry `note`), and every event object gains `collector_name`, so roles that cannot list users can show names. Additive: existing fields are unchanged. Affects T17-D (`record_sample_status_history()` reads `app.status_note`), T21 (sample and event routes), T26 (frontend: note field, names in timeline and collector column), T33 (tests), T42 (`api.md`). | Arvind |
 | 1.7 | Section 10, Laboratory: batches gain `operator_name`; QC results gain `recorded_by_name` and `sample_code`; extractions gain `sample_code`, `project_id`, `active_run_id` and `active_run_code` (the planned or running run they are booked on, null when none); run libraries gain `project_id`. Additive: existing fields are unchanged. Affects T22 (lab routes), T27 (frontend: names and codes in the lab tables, write controls only where the caller may write, booked extractions shown in the new-run picker), T33 (tests), T42 (`api.md`). | Arvind (on merge of the T27 PR) |
 | 1.8 | Section 10, Analyses and Taxa: every analysis row gains `run_code`, `marker_name`, `imported_by_name`, `approved_by_name` and `rejection` (`{ reason, rejected_by, rejected_by_name, rejected_at }` for a `rejected` analysis, read from its latest `reject` audit entry; null otherwise); `GET /api/taxa/:id/detections` rows gain `sample_id`. Additive: existing fields are unchanged. Affects T23 (analysis and taxa routes), T28 (frontend: names in the analysis list and detail, the rejection reason shown to the analyst, detections linking to their sample), T33 (tests), T42 (`api.md`). | Arvind (on merge of the T28 PR) |
+| 2.0 | Self-registration and project-role permissions. Section 4.1: `users` gains nullable `organization`, `job_title`, `phone` (migration `097`). Section 7: API error `409 email_taken`. Section 9 rewritten: an action is allowed by the global role **or** the project role in the target project (any signed-in user may create a project; project `viewer` is read-only). Section 10: `POST /api/auth/register` (public, `201`, new user gets the `viewer` role and is signed in). Stored procedures `create_project_with_owner` (no global role check) and `fn_analysis_check_actor` (project roles) changed. | Arvind |
 | 1.9 | Section 10, Analytics, dashboard, exports, audit: every audit entry (`GET /api/audit` and `GET /api/dashboard/summary` `recent_activity[]`) gains `actor_name`, the acting user's `full_name` (`null` for a system action). Additive: existing fields are unchanged. Affects T20 (audit route), T23 (dashboard route), T25 (frontend: the audit log shows names to principal investigators), T29 (frontend: the dashboard's recent activity), T33 (tests), T42 (`api.md`). | Arvind (on merge of the T29 PR) |
 
 ---

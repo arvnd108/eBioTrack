@@ -91,24 +91,21 @@ describe('Lab processing: who sees what', () => {
     expect(batch.textContent).toContain('Lakshmi Lab');
   });
 
-  it.each(['analyst', 'viewer', 'field_researcher'])(
-    'keeps %s read-only on every tab',
-    async (role) => {
-      await signInAs(role);
-      renderApp('/lab');
-      await rowsOf('DNA extractions');
-      expect(button('Record extraction')).toBeNull();
-      expect(button('New batch')).toBeNull();
-      expect(button(/^Edit the measurements/)).toBeNull();
-      const user = userEvent.setup();
-      await user.click(screen.getByRole('tab', { name: 'QC results' }));
-      await rowsOf('QC results');
-      expect(button('Record QC result')).toBeNull();
-      await user.click(screen.getByRole('tab', { name: 'Sequencing runs' }));
-      await rowsOf('Sequencing runs');
-      expect(button('New run')).toBeNull();
-    },
-  );
+  it.each(['viewer'])('keeps %s read-only on every tab', async (role) => {
+    await signInAs(role);
+    renderApp('/lab');
+    await rowsOf('DNA extractions');
+    expect(button('Record extraction')).toBeNull();
+    expect(button('New batch')).toBeNull();
+    expect(button(/^Edit the measurements/)).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: 'QC results' }));
+    await rowsOf('QC results');
+    expect(button('Record QC result')).toBeNull();
+    await user.click(screen.getByRole('tab', { name: 'Sequencing runs' }));
+    await rowsOf('Sequencing runs');
+    expect(button('New run')).toBeNull();
+  });
 
   it('hides the row controls from a lab technician who is only a viewer of the project', async () => {
     await signInAs('principal_investigator');
@@ -468,7 +465,7 @@ describe('Sequencing runs', () => {
     expect(screen.getByText('This run is completed; its status is final.')).toBeTruthy();
     cleanup();
     await api.post('/auth/logout');
-    await signInAs('analyst');
+    await signInAs('viewer');
     renderApp('/lab/runs/2');
     await rowsOf('Libraries');
     expect(screen.queryByRole('heading', { name: 'Status' })).toBeNull();

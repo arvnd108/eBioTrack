@@ -3,11 +3,17 @@
 //
 // CONTRACT section 10, Auth: POST /api/auth/login, POST /api/auth/logout, GET /api/auth/me.
 
-import type { LoginRequest, User } from '../types';
+import type { LoginRequest, RegisterRequest, User } from '../types';
 import { api } from './apiClient';
 
 export async function login(credentials: LoginRequest): Promise<User> {
   const res = await api.post<User>('/auth/login', credentials);
+  return res.data;
+}
+
+/** Creates an account (viewer role) and signs it in. */
+export async function register(details: RegisterRequest): Promise<User> {
+  const res = await api.post<User>('/auth/register', details);
   return res.data;
 }
 

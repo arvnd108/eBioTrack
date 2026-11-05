@@ -7,10 +7,20 @@
 //   - everyone else must be a member of the project, otherwise the caller gets the SAME 404 as for
 //     an unknown object (`notFound()`), so existence is not leaked;
 //   - a project role of `viewer` is read-only: 403 when `write` is true.
-// The global role gate (which roles may write at all) stays on the route (`requireRole`).
+// With `action` (a key of PERMISSIONS) the caller must also be allowed that action here: by a global
+// role, or by their role in THIS project (owner/manager/contributor can write, see permissions.js).
+// The route's `requireAction` is only the cheap first gate; this is the per-project decision.
 import { query, queryOne } from '../db/query.js';
 import { AppError } from '../middleware/errorHandler.js';
-import { ROLES } from '../middleware/permissions.js';
+import {
+  PERMISSIONS,
+  ROLES,
+  globalRoleAllows,
+  projectRoleAllows,
+} from '../middleware/permissions.js';
+
+const forbiddenError = () =>
+  new AppError(403, 'forbidden', 'You do not have permission to do this');
 
 export const projectNotFound = () => new AppError(404, 'not_found', 'Project not found');
 
@@ -26,8 +36,10 @@ const isAdmin = (user) => user.roles.includes(ROLES.ADMINISTRATOR);
 export async function assertProjectAccess(
   user,
   projectId,
-  { write = false, notFound = projectNotFound } = {},
+  { write = false, action, notFound = projectNotFound } = {},
 ) {
+  if (action && !PERMISSIONS[action])
+    throw new Error(`assertProjectAccess: unknown action ${action}`);
   if (isAdmin(user)) {
     // An explicit unknown project is still a 404 for the administrator (lists, filters).
     if (!(await queryOne('SELECT 1 AS ok FROM projects WHERE project_id = $1', [projectId]))) {
@@ -40,9 +52,26 @@ export async function assertProjectAccess(
     [projectId, user.user_id],
   );
   if (!member) throw notFound();
-  if (write && member.project_role === 'viewer') {
-    throw new AppError(403, 'forbidden', 'You do not have permission to do this');
+  const mustWrite = write || (action && !PERMISSIONS[action].read);
+  if (mustWrite && member.project_role === 'viewer') throw forbiddenError();
+  if (
+    action &&
+    !globalRoleAllows(user, action) &&
+    !projectRoleAllows(action, member.project_role)
+  ) {
+    throw forbiddenError();
   }
+}
+
+/** The user's project roles in these projects (empty when a member of none). */
+export async function projectRolesIn(user, projectIds, executor) {
+  if (projectIds.length === 0) return [];
+  const rows = await query(
+    'SELECT project_role FROM project_members WHERE user_id = $1 AND project_id = ANY($2::bigint[])',
+    [user.user_id, projectIds],
+    executor,
+  );
+  return rows.map((row) => row.project_role);
 }
 
 /** The project of an event, or null when the event does not exist. */
@@ -123,7 +152,7 @@ export async function projectIdsOfAnalysis(analysisId, executor) {
 export async function assertAnyProjectAccess(
   user,
   projectIds,
-  { write = false, notFound = projectNotFound } = {},
+  { write = false, action, notFound = projectNotFound } = {},
 ) {
   if (isAdmin(user)) return;
   const rows =
@@ -134,7 +163,10 @@ export async function assertAnyProjectAccess(
           [user.user_id, projectIds],
         );
   if (rows.length === 0) throw notFound();
-  if (write && rows.every((row) => row.project_role === 'viewer')) {
-    throw new AppError(403, 'forbidden', 'You do not have permission to do this');
+  const mustWrite = write || (action && !PERMISSIONS[action].read);
+  if (mustWrite && rows.every((row) => row.project_role === 'viewer')) throw forbiddenError();
+  if (action && !globalRoleAllows(user, action)) {
+    // At least one of the projects must give a role that allows the action.
+    if (!rows.some((row) => projectRoleAllows(action, row.project_role))) throw forbiddenError();
   }
 }

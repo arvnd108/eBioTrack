@@ -126,7 +126,7 @@ A practical complete design contains approximately **25 core tables**. These are
 
 | # | Table | Important columns / purpose |
 |---|---|---|
-| 1 | `users` | `user_id` PK, name, email, password_hash, active |
+| 1 | `users` | `user_id` PK, name, email, password_hash, optional organization/job title/phone, active |
 | 2 | `roles` | `role_id` PK, role_name |
 | 3 | `user_roles` | `user_id` FK, `role_id` FK |
 | 4 | `projects` | `project_id` PK, title, objectives, start_date, status |

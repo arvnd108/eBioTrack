@@ -324,6 +324,24 @@ describe.skipIf(!dbAvailable)('access: setup', () => {
         [{ full_name: '' }, { full_name: '   ' }],
       ],
       [
+        'ck_users_organization_not_blank',
+        'users',
+        [{ organization: 'Lab' }],
+        [{ organization: '' }, { organization: '  ' }],
+      ],
+      [
+        'ck_users_job_title_not_blank',
+        'users',
+        [{ job_title: 'Postdoc' }],
+        [{ job_title: '' }, { job_title: '  ' }],
+      ],
+      [
+        'ck_users_phone_not_blank',
+        'users',
+        [{ phone: '+1 555' }],
+        [{ phone: '' }, { phone: '  ' }],
+      ],
+      [
         'ck_users_email_lower',
         'users',
         [{ email: 'a@b.test' }],

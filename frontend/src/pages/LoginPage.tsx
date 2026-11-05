@@ -13,7 +13,7 @@
 // it in the location state), or to the dashboard.
 
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Navigate, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Navigate, useLocation, useNavigate } from 'react-router-dom';
 import { ErrorState } from '../components/common/ErrorState';
 import { FormField, fieldControlClass } from '../components/common/FormField';
 import { LoadingState } from '../components/common/LoadingState';
@@ -205,6 +205,13 @@ export default function LoginPage() {
             {submitting ? 'Signing in…' : 'Sign in'}
           </button>
         </form>
+
+        <p className="text-center text-sm text-slate-600">
+          New here?{' '}
+          <Link to="/register" className="text-emerald-700 underline">
+            Create an account
+          </Link>
+        </p>
 
         {isMockMode() && (
           <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">

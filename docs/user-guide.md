@@ -10,9 +10,12 @@ eBioTrack tracks eDNA research from field sample to taxon detection. It records 
 
 The sidebar shows only the pages your role can use. Every role can read the data of the projects it belongs to.
 
+Your **project role** (owner, manager, contributor, viewer) also counts: anyone can create a project and becomes its owner, and a user who is invited to someone else's project works there with the project role they were given, whatever their global role. The table below shows what each *global* role allows everywhere; a project role adds to it inside that project (owner and manager: edit the project, members, sites, approve analyses; contributor: record events, samples, lab work and analyses; viewer: read only).
+
 | Task | Administrator | Principal investigator | Field researcher | Lab technician | Analyst | Viewer |
 |---|:-:|:-:|:-:|:-:|:-:|:-:|
-| Create projects, manage members and sites | ✓ | ✓ (own projects) | | | | |
+| Create projects | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Manage members and sites of a project | ✓ | ✓ (own projects) | project owner or manager | project owner or manager | project owner or manager | project owner or manager |
 | Users and roles (Administration) | ✓ | | | | | |
 | Audit log | ✓ | ✓ (own projects) | | | | |
 | Add sites, record events and samples | ✓ | ✓ | ✓ | | | |
@@ -22,7 +25,9 @@ The sidebar shows only the pages your role can use. Every role can read the data
 | Approve or reject an analysis | ✓ | ✓ | | | | |
 | Explore species and analytics, download CSV | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
-## 1. Sign in
+## 1. Create an account and sign in
+
+New here? Choose **Create an account** on the sign-in page. Only name, email and a password (at least 8 characters) are required; organization, job title and phone can be skipped. You are signed in at once with the global *Viewer* role, can create your own projects and can be added to others. An administrator can later change your global role. If the email is already registered you are told so.
 
 Open the application and sign in with your email and password. After five wrong attempts in 15 minutes sign-in is locked for a while; wait and try again.
 
@@ -36,7 +41,7 @@ Use the project selector to look at one project; the choice is kept in the addre
 
 ![A user in no project](screenshots/t29-dashboard/09-user-in-no-project.png)
 
-## 2. Set up a project (administrator, principal investigator)
+## 2. Set up a project (any signed-in user)
 
 1. Open **Projects** and choose **New project**. Enter a title and optionally objectives and a start date. You become its owner.
 2. Open the project. The owner can edit it, add members with a project role (owner, manager, contributor, viewer) and link the sampling sites the project may collect at.
@@ -45,7 +50,7 @@ Use the project selector to look at one project; the choice is kept in the addre
 ![New project form](screenshots/t25-projects-admin/03-new-project-form-administrator.png)
 ![Project with members and sites](screenshots/t25-projects-admin/10-project-detail-principal-investigator-owner.png)
 
-A project role is separate from your global role. Everyone else sees the project read-only:
+A project role is separate from your global role, and you only need to be a member to see a project. Members without the owner or manager role see the project read-only:
 
 ![Read-only project](screenshots/t25-projects-admin/13b-project-detail-field-researcher-read-only.png)
 

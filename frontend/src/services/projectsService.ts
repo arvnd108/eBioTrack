@@ -15,7 +15,7 @@ import type {
 } from '../types';
 import { api } from './apiClient';
 
-/** Administrator or principal investigator; the caller becomes the owner. */
+/** Any signed-in user; the caller becomes the owner. */
 export async function createProject(body: CreateProjectRequest): Promise<Project> {
   return (await api.post<Project>('/projects', body)).data;
 }
@@ -24,7 +24,7 @@ export async function getProject(projectId: number): Promise<ProjectDetail> {
   return (await api.get<ProjectDetail>(`/projects/${projectId}`)).data;
 }
 
-/** Administrator, or a principal investigator who is the project's owner or manager. */
+/** Administrator, or the project's owner or manager. */
 export async function updateProject(
   projectId: number,
   body: UpdateProjectRequest,

@@ -134,8 +134,9 @@ describe('role-aware navigation (CONTRACT 9)', () => {
     ['administrator', ALL_PAGES],
     ['principal_investigator', ALL_PAGES],
     ['analyst', without('Administration')],
-    ['field_researcher', without('Analysis import', 'Administration')],
-    ['lab_technician', without('Analysis import', 'Administration')],
+    // project contributors (CONTRACT 9, project roles) may import detections in their project
+    ['field_researcher', without('Administration')],
+    ['lab_technician', without('Administration')],
     ['viewer', without('Analysis import', 'Administration')],
   ])('%s sees the pages their role can use', async (role, expected) => {
     await signInAs(role);
@@ -146,7 +147,7 @@ describe('role-aware navigation (CONTRACT 9)', () => {
 
   it.each([
     ['viewer', '/admin'],
-    ['lab_technician', '/analyses/import'],
+    ['viewer', '/analyses/import'],
   ])('%s opening %s by URL gets "Not permitted"', async (role, path) => {
     await signInAs(role);
     renderApp(path);
