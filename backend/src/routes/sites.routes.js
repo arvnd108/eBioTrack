@@ -34,6 +34,11 @@ const longitude = z
   .max(180, 'Longitude must be between -180 and 180');
 
 const regionQuery = z.object({ region_type: z.enum(REGION_TYPES).optional() });
+const regionBody = z.strictObject({
+  name,
+  region_type: z.enum(REGION_TYPES),
+  parent_region_id: idNumber.nullish(),
+});
 const listQuery = z.object({
   project_id: idString.optional(),
   region_id: idString.optional(),
@@ -68,6 +73,14 @@ const idParams = z.object({ id: idString });
 // Sites belong to no single project, so that gate cannot be limited to a project.
 export const regionsRouter = Router();
 regionsRouter.get('/', auth, validate({ query: regionQuery }), controller.listRegions);
+// Any signed-in user may add a region, so a site can be placed anywhere (name + type are unique).
+regionsRouter.post(
+  '/',
+  auth,
+  authorize('create_site'),
+  validate({ body: regionBody }),
+  controller.createRegion,
+);
 
 const router = Router();
 router.get(

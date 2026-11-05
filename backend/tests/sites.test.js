@@ -53,6 +53,22 @@ describe.skipIf(!available)('regions and sites', () => {
     });
   });
 
+  describe('POST /api/regions', () => {
+    it('any signed-in user adds a region; the same name and type is a 409', async () => {
+      const res = await as.viewer
+        .post('/api/regions')
+        .send({ name: 'Kerala backwaters', region_type: 'other' });
+      expect(res.status).toBe(201);
+      expect(res.body.data).toMatchObject({ name: 'Kerala backwaters', region_type: 'other' });
+      const again = await as.analyst
+        .post('/api/regions')
+        .send({ name: 'Kerala backwaters', region_type: 'other' });
+      expect(again.status).toBe(409);
+      const bad = await as.viewer.post('/api/regions').send({ name: '', region_type: 'moon' });
+      expect(bad.status).toBe(422);
+    });
+  });
+
   describe('GET /api/sites', () => {
     it('lists all sites with numeric fields, ordered by id, to every role', async () => {
       for (const role of Object.keys(as)) {

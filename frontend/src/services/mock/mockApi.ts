@@ -30,6 +30,8 @@ import {
   type AuditRow,
   type Project,
   type ProjectRole,
+  type Region,
+  type RegionType,
   type ApiErrorDetail,
   type CollectionEvent,
   type CollectionEventDetail,
@@ -201,6 +203,7 @@ interface MockState {
   projectSites: { project_id: number; site_id: number }[];
   audit: AuditRow[];
   sites: Site[];
+  regions: Region[];
   events: CollectionEvent[];
   samples: Sample[];
   measurements: EnvironmentalMeasurement[];
@@ -241,6 +244,7 @@ function freshState(): MockState {
     ),
     audit: mockAudit.map((a) => ({ ...a })),
     sites: mockSites.map((x) => ({ ...x })),
+    regions: mockRegions.map((x) => ({ ...x })),
     events: mockEvents.map((x) => ({ ...x })),
     samples: mockSamples.map((x) => ({ ...x })),
     measurements: mockMeasurements.map((x) => ({ ...x })),
@@ -1024,7 +1028,7 @@ function checkSiteBody(
 
 /** The database's FK and unique checks on sampling_sites (both use up the id on insert). */
 function siteConflict(site: Omit<Site, 'site_id'>, siteId: number | null): MockResponse | null {
-  if (!mockRegions.some((r) => r.region_id === site.region_id)) {
+  if (!state.regions.some((r) => r.region_id === site.region_id)) {
     const detail = `Key (region_id)=(${site.region_id}) is not present in table "regions".`;
     return fail(422, 'invalid_reference', detail, [{ message: detail }]);
   }
@@ -2386,7 +2390,33 @@ const routes: MockRoute[] = [
         const bad = checkEnum(type, 'region_type', REGION_TYPES);
         if (bad.length) return validationError(bad);
       }
-      return ok(mockRegions.filter((r) => type === null || r.region_type === type));
+      return ok(state.regions.filter((r) => type === null || r.region_type === type));
+    },
+  },
+  {
+    method: 'POST',
+    path: '/regions',
+    action: 'create_site',
+    handler: ({ body }) => {
+      const input = (body ?? {}) as Record<string, unknown>;
+      const name = typeof input.name === 'string' ? input.name.trim() : '';
+      const bad: ApiErrorDetail[] = [];
+      if (!name) bad.push({ field: 'name', message: 'required' });
+      bad.push(...checkEnum(input.region_type, 'region_type', REGION_TYPES));
+      if (bad.length) return validationError(bad);
+      const type = input.region_type as RegionType;
+      if (state.regions.some((r) => r.name === name && r.region_type === type)) {
+        const detail = `Key (name, region_type)=(${name}, ${type}) already exists.`;
+        return fail(409, 'duplicate', detail, [{ message: detail }]);
+      }
+      const created: Region = {
+        region_id: Math.max(999, ...state.regions.map((r) => r.region_id)) + 1,
+        name,
+        region_type: type,
+        parent_region_id: null,
+      };
+      state.regions.push(created);
+      return ok(created, undefined, 201);
     },
   },
   {

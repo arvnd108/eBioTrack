@@ -9,11 +9,12 @@
 
 import { useState, type FormEvent } from 'react';
 import { FormField, fieldControlClass } from '../../components/common/FormField';
-import { HABITAT_TYPES } from '../../domain';
+import { HABITAT_TYPES, REGION_TYPES } from '../../domain';
 import { useSubmit } from '../../hooks/useSubmit';
 import { formErrors } from '../../services/errorMessages';
-import { createSite, updateSite, type SiteFields } from '../../services/sitesService';
-import type { HabitatType, Region, Site } from '../../types';
+import { addSite } from '../../services/projectsService';
+import { createRegion, createSite, updateSite, type SiteFields } from '../../services/sitesService';
+import type { HabitatType, Region, RegionType, Site } from '../../types';
 import { humanize, parseNumber } from '../../utils/format';
 
 const FIELDS = [
@@ -26,8 +27,12 @@ const FIELDS = [
 ] as const;
 type Field = (typeof FIELDS)[number];
 
+const NEW_REGION = 'new';
+
 interface SiteFormProps {
   regions: Region[];
+  /** Projects the user may link a new site to (owner or manager); lets them use it at once. */
+  linkableProjects?: { project_id: number; title: string }[];
   /** The site being edited; leave out to create one. */
   site?: Site;
   /** Coordinates picked on the map, applied when they change. */
@@ -36,7 +41,14 @@ interface SiteFormProps {
   onCancel: () => void;
 }
 
-export function SiteForm({ regions, site, picked, onSaved, onCancel }: SiteFormProps) {
+export function SiteForm({
+  regions,
+  linkableProjects = [],
+  site,
+  picked,
+  onSaved,
+  onCancel,
+}: SiteFormProps) {
   const editing = !!site;
   const [name, setName] = useState(site?.name ?? '');
   const [regionId, setRegionId] = useState(site ? String(site.region_id) : '');
@@ -46,6 +58,10 @@ export function SiteForm({ regions, site, picked, onSaved, onCancel }: SiteFormP
   const [description, setDescription] = useState(site?.description ?? '');
   const [errors, setErrors] = useState<Partial<Record<Field, string>>>({});
   const [note, setNote] = useState<string | null>(null);
+  const [linkProject, setLinkProject] = useState('');
+  // "Add a new region…": any user may name a region of their own (name + type).
+  const [newRegionName, setNewRegionName] = useState('');
+  const [newRegionType, setNewRegionType] = useState<RegionType>('other');
   const [lastPick, setLastPick] = useState(picked);
   const save = useSubmit((body: Partial<SiteFields>) =>
     site ? updateSite(site.site_id, body) : createSite(body as SiteFields),
@@ -66,6 +82,8 @@ export function SiteForm({ regions, site, picked, onSaved, onCancel }: SiteFormP
     if (!trimmed) found.name = 'Enter the site name.';
     else if (trimmed.length > 200) found.name = 'At most 200 characters.';
     if (!regionId) found.region_id = 'Choose the region.';
+    else if (regionId === NEW_REGION && !newRegionName.trim())
+      found.region_id = 'Name the new region.';
     if (!habitat) found.habitat_type = 'Choose the habitat.';
     const lat = parseNumber(latitude);
     if (lat === null) found.latitude = 'Enter a number, or click the map.';
@@ -84,8 +102,18 @@ export function SiteForm({ regions, site, picked, onSaved, onCancel }: SiteFormP
     setErrors(found);
     if (Object.keys(found).length > 0) return;
 
+    let region = Number(regionId);
+    if (regionId === NEW_REGION) {
+      try {
+        region = (await createRegion({ name: newRegionName.trim(), region_type: newRegionType }))
+          .region_id;
+      } catch {
+        setErrors({ region_id: 'Could not add this region (it may already exist).' });
+        return;
+      }
+    }
     const values: SiteFields = {
-      region_id: Number(regionId),
+      region_id: region,
       name: name.trim(),
       latitude: parseNumber(latitude)!,
       longitude: parseNumber(longitude)!,
@@ -105,7 +133,15 @@ export function SiteForm({ regions, site, picked, onSaved, onCancel }: SiteFormP
       }
     }
     const saved = await save.run(body);
-    if (saved) onSaved(saved);
+    if (!saved) return;
+    if (!site && linkProject) {
+      try {
+        await addSite(Number(linkProject), saved.site_id); // ready for events in that project
+      } catch {
+        // the site exists; it can still be linked from the project page
+      }
+    }
+    onSaved(saved);
   }
 
   const server = save.error
@@ -152,6 +188,7 @@ export function SiteForm({ regions, site, picked, onSaved, onCancel }: SiteFormP
             className={fieldControlClass(!!fieldError('region_id'))}
           >
             <option value="">Choose a region…</option>
+            {!editing && <option value={NEW_REGION}>Add a new region…</option>}
             {regions.map((r) => (
               <option key={r.region_id} value={r.region_id}>
                 {r.name} ({humanize(r.region_type)})
@@ -159,6 +196,30 @@ export function SiteForm({ regions, site, picked, onSaved, onCancel }: SiteFormP
             ))}
           </select>
         </FormField>
+        {regionId === NEW_REGION && (
+          <>
+            <FormField label="New region name" required>
+              <input
+                value={newRegionName}
+                onChange={(e) => setNewRegionName(e.target.value)}
+                className={fieldControlClass()}
+              />
+            </FormField>
+            <FormField label="Region type">
+              <select
+                value={newRegionType}
+                onChange={(e) => setNewRegionType(e.target.value as RegionType)}
+                className={fieldControlClass()}
+              >
+                {REGION_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {humanize(t)}
+                  </option>
+                ))}
+              </select>
+            </FormField>
+          </>
+        )}
         <FormField label="Latitude" error={fieldError('latitude')} hint="-90 to 90" required>
           <input
             inputMode="decimal"
@@ -191,6 +252,25 @@ export function SiteForm({ regions, site, picked, onSaved, onCancel }: SiteFormP
             ))}
           </select>
         </FormField>
+        {!editing && linkableProjects.length > 0 && (
+          <FormField
+            label="Use in project"
+            hint="Optional. Links the site so you can record events there."
+          >
+            <select
+              value={linkProject}
+              onChange={(e) => setLinkProject(e.target.value)}
+              className={fieldControlClass()}
+            >
+              <option value="">Not now</option>
+              {linkableProjects.map((p) => (
+                <option key={p.project_id} value={p.project_id}>
+                  {p.title}
+                </option>
+              ))}
+            </select>
+          </FormField>
+        )}
         <FormField label="Description" error={fieldError('description')} hint="Optional.">
           <input
             value={description}

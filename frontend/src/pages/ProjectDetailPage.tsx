@@ -38,7 +38,7 @@ const backLink = (
 export default function ProjectDetailPage() {
   const { projectId } = useParams();
   const navigate = useNavigate();
-  const { user, can, hasRole } = useAuth();
+  const { user, can, hasRole, reloadHeldRoles } = useAuth();
   const [editing, setEditing] = useState(false);
 
   const id = Number(projectId);
@@ -145,6 +145,7 @@ export default function ProjectDetailPage() {
         canEdit={canEdit}
         currentUserId={user?.user_id ?? 0}
         onChanged={(leftProject) => {
+          void reloadHeldRoles(); // a changed membership can change what the menu offers
           // A principal investigator who leaves may no longer see the project.
           if (leftProject && !hasRole('administrator')) navigate('/projects', { replace: true });
           else project.reload();

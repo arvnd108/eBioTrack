@@ -431,6 +431,7 @@ export const ENDPOINTS = [
   },
   // Sites and regions
   { method: 'GET', path: '/api/regions', action: 'read_data', ok: [200] },
+  { method: 'POST', path: '/api/regions', action: 'create_site', body: {}, ok: [422] },
   { method: 'GET', path: '/api/sites', action: 'read_data', ok: [200] },
   { method: 'POST', path: '/api/sites', action: 'create_site', body: {}, ok: [422] },
   { method: 'GET', path: '/api/sites/:id', action: 'read_data', probe: '/api/sites/1', ok: [200] },

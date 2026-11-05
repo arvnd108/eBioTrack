@@ -159,7 +159,7 @@ describe('role-aware navigation (CONTRACT 9)', () => {
     renderApp('/');
     const banner = await screen.findByRole('banner');
     await within(banner).findByText('Pranav Investigator');
-    expect(within(banner).getByText('principal investigator')).toBeTruthy();
+    expect(within(banner).getByText(/principal investigator/)).toBeTruthy(); // plus "project owner"
   });
 });
 

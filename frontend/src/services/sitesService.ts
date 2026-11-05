@@ -4,7 +4,7 @@
 // CONTRACT 10, Sites and regions (backend T21). Reads are open to every signed-in user; creating
 // and editing need `manage_sites` (administrator, principal investigator, field researcher).
 
-import type { PageMeta, Site } from '../types';
+import type { PageMeta, Region, RegionType, Site } from '../types';
 import { api } from './apiClient';
 
 export type SiteFields = Omit<Site, 'site_id'>;
@@ -13,6 +13,14 @@ export type SiteFields = Omit<Site, 'site_id'>;
 export async function listSites(): Promise<{ sites: Site[]; total: number }> {
   const res = await api.get<Site[], PageMeta>('/sites', { limit: 100, sort: 'name' });
   return { sites: res.data, total: res.meta?.total ?? res.data.length };
+}
+
+/** Any signed-in user may add a region (name and type), so a site can be placed anywhere. */
+export async function createRegion(body: {
+  name: string;
+  region_type: RegionType;
+}): Promise<Region> {
+  return (await api.post<Region>('/regions', body)).data;
 }
 
 export async function createSite(body: SiteFields): Promise<Site> {

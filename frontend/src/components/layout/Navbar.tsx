@@ -15,7 +15,12 @@ function formatRole(role: string): string {
 }
 
 export function Navbar({ sidebarOpen, onToggleSidebar }: NavbarProps) {
-  const { user, logout } = useAuth();
+  const { user, logout, projectRoles } = useAuth();
+  // A global viewer who owns a project is also a project owner there; say so.
+  const roleLabels = [
+    ...(user?.roles ?? []).map(formatRole),
+    ...(projectRoles.includes('owner') ? ['project owner'] : []),
+  ];
   const [signingOut, setSigningOut] = useState(false);
 
   // ProtectedRoute sends the user to /login once the session is cleared.
@@ -53,9 +58,7 @@ export function Navbar({ sidebarOpen, onToggleSidebar }: NavbarProps) {
         {user && (
           <span className="hidden text-right text-sm sm:block">
             <span className="block font-medium text-slate-800">{user.full_name}</span>
-            <span className="block text-xs capitalize text-slate-500">
-              {user.roles.map(formatRole).join(', ')}
-            </span>
+            <span className="block text-xs capitalize text-slate-500">{roleLabels.join(', ')}</span>
           </span>
         )}
         <button

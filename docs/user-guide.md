@@ -62,7 +62,7 @@ A project role is separate from your global role, and you only need to be a memb
 
 ## 3. Record sites, events and samples (field researcher and up)
 
-1. **Sampling map** shows the sites. Anyone can choose **New site** to add one: region, name, habitat type (lake, river, wetland, soil, other and so on) and coordinates typed or clicked on the map. You can edit the sites you added.
+1. **Sampling map** shows the sites. Anyone can choose **New site** to add one: region (or **Add a new region…** for a place that is not listed), name, habitat type (lake, river, wetland, soil, other and so on) and coordinates typed or clicked on the map. You can edit the sites you added.
 2. **Collection events** lists visits. Choose **New event**: pick the project and site, the collection time, notes, any environmental measurements and the samples collected. Everything is saved together, or nothing is.
 3. The event page shows the measurements and the samples with their generated codes (`EB-YYYYMMDD-<event>-<number>`). **Add sample** adds another.
 
