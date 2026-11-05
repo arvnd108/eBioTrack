@@ -1,37 +1,42 @@
 # eBioTrack API Reference
 
-> **T42 · Contract v1.9 · Draft**
+> **T42 · Contract v1.9 · Verified against the running API**
 >
-> This reference summarizes the API contract in `planning/CONTRACT.md` §§8–12. It is a contract-based guide, not yet a runtime-verified specification. Endpoint details, examples, and implementation behavior must be checked against the API before T42 is accepted.
+> This reference follows `planning/CONTRACT.md` §§8–12 (v1.9). Every endpoint, role, status code, error shape and example was run against the real backend on a freshly reset and seeded database; the verification record is at the end.
 
 ## Quick start
 
-1. Start the API locally and use the configured development credentials.
+1. Start the API locally (`cd backend && npm run db:reset && npm run dev`) and use the seeded development accounts: `<role>@ebiotrack.test` for `administrator`, `principal_investigator`, `field_researcher`, `lab_technician`, `analyst` and `viewer`, all with the development password `ebiotrack-dev-2026`. These accounts exist only in the seed; never use them outside a development database.
 2. Log in to establish the session cookie (see [Login](#login)).
 3. Send that cookie with subsequent requests.
 4. For protected routes, access also depends on project membership and project role—not only the global role listed below.
 
-Base URL: `http://localhost:3000/api` (replace the host/port for your environment).
+Base URL: `http://localhost:4000/api` (the default `PORT` is 4000; replace the host/port for your environment). Requests that change data from a browser must come from an origin in `ALLOWED_ORIGINS`; `curl` sends no `Origin` header and is accepted.
 
 ## Shared conventions
 
 - JSON request and response fields use `snake_case`. Send JSON with `Content-Type: application/json`.
-- Successful JSON responses use a `data` envelope. List responses may include `meta` for pagination or import diagnostics. Logout and delete operations may return `204 No Content`.
-- Timestamps are UTC ISO-8601. List routes support the filters shown in the endpoint tables; pagination details should be confirmed against the running API.
+- Successful JSON responses use a `data` envelope. Paginated lists add `meta: { page, limit, total }`. Logout and delete operations return `204 No Content` with no body.
+- Timestamps are UTC ISO-8601. List routes support the filters shown in the endpoint tables.
+- **Pagination:** `?page=1&limit=25` (default 25). A limit above 100 is silently capped at 100 (the `meta.limit` returned shows the value used); `limit=0` or a non-integer is `422`. Paginated: users, audit, sites, events, samples, extractions, QC results, extraction batches, sequencing runs, analyses, taxa and taxon detections. Not paginated (short reference lists): roles, regions, sample types, labs and markers. Analytics, dashboard and exports return their own shapes.
+- **Invalid ids** such as `/samples/abc` return `422 validation_error`, not `400`.
 - “Any” means an authenticated user. Project visibility and membership still apply. Some inaccessible project-scoped resources may be returned as `404` to avoid revealing their existence.
 - The minimum global role is shown; project-specific authorization can impose additional restrictions.
 
 ### Error responses
 
-The documented error shape is:
+Every error has this shape; `details` is present for validation, upload and duplicate errors:
 
 ```json
-{ "error": { "code": "validation_error", "message": "..." } }
+{ "error": { "code": "validation_error", "message": "Invalid input: expected string, received undefined",
+             "details": [{ "field": "collected_at", "message": "Invalid input: expected string, received undefined" }] } }
 ```
+
+Observed codes: `unauthenticated` (401), `invalid_credentials` (401), `forbidden` (403), `not_found` (404), `invalid_transition` (409, an illegal sample or analysis status change), `duplicate` (409, a unique key already exists), `validation_error` (422), `payload_too_large` (413) and `too_many_attempts` (429).
 
 | Status | Meaning |
 |---|---|
-| `400` | Malformed request |
+| `400` | Malformed request (for example unparsable JSON) |
 | `401` | Not authenticated |
 | `403` | Authenticated but not permitted |
 | `404` | Missing or inaccessible resource |
@@ -40,7 +45,7 @@ The documented error shape is:
 | `422` | Validation failure |
 | `429` | Rate limit exceeded |
 
-Login throttling is documented as 5 failed attempts for the same client IP and email within 15 minutes, followed by `429 too_many_attempts` and a `Retry-After` header. A successful login resets the count. The current contract describes this as in-memory state, so it resets on restart. Verify these details against the implementation.
+Login throttling is documented as 5 failed attempts for the same client IP and email within 15 minutes, followed by `429 too_many_attempts` and a `Retry-After` header (900 seconds in the observed run, on the sixth attempt). A successful login resets the count. The state is held in memory, so it resets when the server restarts.
 
 Analytics and exports include only approved analyses and `pass` detections, with the caveat: “Detection does not indicate abundance; non-detection does not indicate absence.”
 
@@ -136,6 +141,20 @@ QC verdict changes are final (attempted changes return `409`). Run visibility fo
 
 Analysis rows include run/marker/person names and rejection details where applicable. Corrections use `supersedes_analysis_id`; approved results are not edited in place.
 
+## Response fields added in contract 1.6 to 1.9
+
+These names were added so pages need no extra lookups; all were observed in live responses.
+
+| Resource | Fields |
+|---|---|
+| Event (`/events`, `/events/:id`) | `collector_name` |
+| Sample (`/samples/:id`) `status_history[]` | `changed_by_name`, `note` |
+| Extraction (`/extractions`) | `sample_code`, `project_id`, `active_run_id`, `active_run_code` (the planned or running run the extraction is booked on, else `null`) |
+| QC result (`/qc-results`) | `sample_code`, `recorded_by_name` |
+| Extraction batch (`/extraction-batches`) | `operator_name` |
+| Analysis (`/analyses`, `/analyses/:id`) | `run_code`, `marker_name`, `imported_by_name`, `approved_by_name`, `rejection` (`null` unless rejected), and on `/analyses/:id` `assignment_counts` `{ pass, warn, fail }` |
+| Audit entry (`/audit`, `/dashboard/summary` `recent_activity`) | `actor_name` |
+
 ## Detection CSV import
 
 - Upload UTF-8 CSV, maximum 10 MB, with a header.
@@ -143,63 +162,113 @@ Analysis rows include run/marker/person names and rejection details where applic
 - BOM, CRLF, and quoted fields are accepted.
 - Values: non-negative integer read count; confidence from 0 to 1; lowercase `pass|warn|fail`; rank from the contract enum.
 - Each library must belong to the analysis run; each library/taxon pair must be unique in the file.
-- Import is all-or-nothing. Errors use `{ row, field, message }` (header is row 1), are capped at 100, and include `meta.total_errors`. Oversize uploads return `413`.
+- Import is all-or-nothing. Errors use `{ row, field, message }` (header is row 1) inside `error.details`, are capped at 100, and include `meta.total_errors`. A rejected file is `422`; an oversize upload is `413 payload_too_large`.
+- `POST /analyses/import` takes `multipart/form-data` with `analysis_id` and `file`. With `?dry_run=true` it validates and returns `{ "data": { "valid_rows": 14, "errors": [] } }` without writing; without it, success is `{ "data": { "inserted": 14 } }`. The analysis must be a `draft` (a second import returns `409`).
 
 ## Examples
 
-Examples below assume a local API at port 3000 and a development account configured by the project. Replace IDs and credentials with valid values. These examples are illustrative until executed against the current implementation.
+Every example below was run against a freshly seeded database; the output is what the API returned (long bodies shortened with `…`). The cookie jar `cookies.txt` is per role, so log in as the role the step needs.
 
-### Login
-
-```bash
-curl -i -c cookies.txt -H 'Content-Type: application/json' \
-  -d '{"email":"principal_investigator@ebiotrack.test","password":"YOUR_PASSWORD"}' \
-  http://localhost:3000/api/auth/login
-```
-
-### Read current user
+### Login and current user
 
 ```bash
-curl -b cookies.txt http://localhost:3000/api/auth/me
+curl -s -c cookies.txt -H 'Content-Type: application/json' \
+  -d '{"email":"field_researcher@ebiotrack.test","password":"ebiotrack-dev-2026"}' \
+  http://localhost:4000/api/auth/login
+curl -s -b cookies.txt http://localhost:4000/api/auth/me
 ```
+
+```json
+{"data":{"user_id":3,"full_name":"Farah Field","email":"field_researcher@ebiotrack.test","roles":["field_researcher"],"active":true}}
+```
+
+A wrong password is `401 invalid_credentials`; the sixth wrong attempt within 15 minutes is `429 too_many_attempts` with `Retry-After: 900`.
 
 ### List sites for a project
 
 ```bash
-curl -b cookies.txt 'http://localhost:3000/api/sites?project_id=1'
+curl -s -b cookies.txt 'http://localhost:4000/api/sites?project_id=1&limit=2'
 ```
 
-### Create an event
+```json
+{"data":[{"site_id":1,"region_id":2,"name":"Dakpathar Barrage","latitude":30.505,"longitude":77.795,"habitat_type":"river","description":"Upper reaches near Yamuna barrage"},{"site_id":2,"…":"…"}],"meta":{"page":1,"limit":2,"total":3}}
+```
+
+### Create an event with a sample and a measurement (one transaction)
 
 ```bash
-curl -b cookies.txt -H 'Content-Type: application/json' \
+curl -s -b cookies.txt -H 'Content-Type: application/json' \
   -d '{"project_id":1,"site_id":1,"collected_at":"2026-03-12T09:30:00Z","notes":"Clear water","measurements":[{"parameter":"ph","value":7.4,"unit":"pH"}],"samples":[{"sample_type_id":1,"volume_ml":1000,"depth_m":0.5,"storage_location":"Freezer A"}]}' \
-  http://localhost:3000/api/events
+  http://localhost:4000/api/events
 ```
 
-### Create a lab extraction batch
+```json
+201 {"data":{"event_id":1000,"project_id":1,"site_id":1,"collector_id":3,"collector_name":"Farah Field","collected_at":"2026-03-12T09:30:00.000Z","notes":"Clear water","samples":[{"sample_id":1000,"sample_code":"EB-20260312-1000-001","status":"collected","…":"…"}],"measurements":[{"measurement_id":1000,"parameter":"ph","…":"…"}],"…":"…"}}
+```
+
+Failures: omitting `collected_at` gives `422 validation_error` with `details[0].field = "collected_at"`; the same request as a `viewer` gives `403 forbidden`; without a cookie, `401 unauthenticated`.
+
+### Change a sample status
 
 ```bash
-curl -b cookies.txt -H 'Content-Type: application/json' \
+curl -s -b cookies.txt -X PATCH -H 'Content-Type: application/json' \
+  -d '{"new_status":"analyzed"}' http://localhost:4000/api/samples/17/status
+```
+
+```json
+409 {"error":{"code":"invalid_transition","message":"Invalid sample status transition: failed -> analyzed"}}
+```
+
+### Create a lab extraction batch (as `lab_technician`)
+
+```bash
+curl -s -b cookies.txt -H 'Content-Type: application/json' \
   -d '{"lab_id":1,"extraction_date":"2026-03-12","kit_name":"Example kit"}' \
-  http://localhost:3000/api/extraction-batches
+  http://localhost:4000/api/extraction-batches
 ```
 
-### Download an export
+```json
+201 {"data":{"batch_id":1000,"lab_id":1,"operator_id":4,"operator_name":"Lakshmi Lab","extraction_date":"2026-03-12","kit_name":"Example kit","notes":null,"created_at":"…"}}
+```
+
+### Import detections (as `analyst`), then approve (as `principal_investigator`)
 
 ```bash
-curl -b cookies.txt -o detections.csv \
-  http://localhost:3000/api/exports/1/download
+curl -s -b cookies.txt -F analysis_id=4 -F file=@tests/fixtures/detections_valid.csv \
+  'http://localhost:4000/api/analyses/import?dry_run=true'      # {"data":{"valid_rows":14,"errors":[]}}
+curl -s -b cookies.txt -F analysis_id=4 -F file=@tests/fixtures/detections_valid.csv \
+  http://localhost:4000/api/analyses/import                      # {"data":{"inserted":14}}
+curl -s -b cookies.txt -F analysis_id=4 -F file=@tests/fixtures/detections_invalid_row.csv \
+  http://localhost:4000/api/analyses/import
 ```
 
-## Acceptance checklist
+The last call leaves the analysis unchanged and returns `422`:
 
-Before marking T42 complete:
+```json
+{"error":{"code":"validation_error","message":"The file has 1 error","details":[{"row":8,"field":"library_code","message":"library LIB-0009 belongs to another sequencing run (analysis 4 uses run 1)"}]}}
+```
 
-- [ ] Compare every documented method/path, role, request field, and response with the actual route/controller implementation.
-- [ ] Confirm status codes, error shapes, authorization behavior, pagination/filter semantics, and CSV validation against the implementation.
-- [ ] Run the examples against a running API with valid fixtures; update them to match observed behavior.
-- [ ] Add representative success and failure response bodies, plus field-level request/response schemas where needed.
-- [ ] Record the test command/environment and verification result here.
+Approving a draft is `409 invalid_transition`; the analyst approving is `403 forbidden`; rejecting without a `reason` is `422`. A principal investigator approves an `imported` analysis with `POST /api/analyses/4/approve`.
 
-**Current status:** contract-based draft; route-by-route comparison and live example execution are not yet recorded. Do not treat the examples or implementation-specific notes as runtime-verified until the checklist is completed.
+### Create an export and download it
+
+```bash
+curl -s -b cookies.txt -H 'Content-Type: application/json' \
+  -d '{"export_type":"samples_csv","project_id":1}' http://localhost:4000/api/exports
+curl -s -b cookies.txt -o samples.csv http://localhost:4000/api/exports/1000/download
+```
+
+```json
+201 {"data":{"export_id":1000,"row_count":14}}
+```
+
+The download is `200 text/csv; charset=utf-8` with `Content-Disposition: attachment; filename="ebiotrack-samples_csv-1000.csv"`. An unknown export id is `404 not_found`.
+
+## Verification record
+
+Verified on 2026-11-05 against `main` (contract v1.9) with PostgreSQL 16, a database reset and seeded with `npm run db:reset`, and the server started with `npm run dev` on port 4000.
+
+- Every `GET` route in the tables above was called as `administrator`; the listed paginated and unpaginated behaviour, the contract 1.6 to 1.9 fields and the 404 for an unknown export were observed.
+- All six seeded roles were logged in. The write examples above were run as the roles stated; the permission failures shown (`403`, `401`) were observed with a `viewer`, an `analyst` and an unauthenticated request.
+- Error shape and codes, the 422 for invalid ids and limits, the limit cap of 100, the import dry run, the all-or-nothing rejection, the 10 MB limit (`413`) and the login throttle (`429`, `Retry-After: 900`) were each triggered once.
+- The remaining write routes were also called once and behaved as documented: `PATCH /sites/:id`, `PATCH /projects/:id`, member and site assignment and removal (`201`, `204`), `PATCH /extractions/:id`, `PATCH /users/:id` (`active: false`), and `PATCH /sequencing-runs/:id` (`409 invalid_transition` for a run that is already completed). A `viewer` adding a project member is `403`.
