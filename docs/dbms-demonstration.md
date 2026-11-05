@@ -122,7 +122,7 @@ for f in database/indexes/*.sql; do psql "$DATABASE_URL" -q -f "$f"; done   # no
 psql "$DATABASE_URL" -c "SELECT indexname, tablename FROM pg_indexes WHERE indexname LIKE 'idx\_%' ORDER BY 1"
 ```
 
-Thirteen `idx_*` indexes exist afterwards (one, `idx_session_expire`, belongs to the session store). The recorded before and after plans for them are in [query-plan-report.md](query-plan-report.md); to see one yourself on the seed data, use `EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM samples WHERE event_id = 1;` (on 17 rows the planner may still prefer a sequential scan, which is why the benchmarks use the volume fixture).
+Fourteen `idx_*` indexes exist afterwards (one, `idx_session_expire`, belongs to the session store; the other thirteen come from the four index files). The recorded before and after plans for them are in [query-plan-report.md](query-plan-report.md); to see one yourself on the seed data, use `EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM samples WHERE event_id = 1;` (on 17 rows the planner may still prefer a sequential scan, which is why the benchmarks use the volume fixture).
 
 ## Transaction demos
 
