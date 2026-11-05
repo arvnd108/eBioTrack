@@ -64,6 +64,7 @@ describe.skipIf(!available)('regions and sites', () => {
       expect(res.body.meta).toEqual({ page: 1, limit: 25, total: 5 });
       expect(Object.keys(res.body.data[0]).sort()).toEqual(
         [
+          'created_by',
           'description',
           'habitat_type',
           'latitude',
@@ -145,7 +146,7 @@ describe.skipIf(!available)('regions and sites', () => {
         // coordinates keep all six decimals
         expect(res.body.data.latitude).toBe(28.612345);
         expect(res.body.data.longitude).toBe(77.234567);
-        expect(Object.keys(res.body.data)).not.toContain('created_by');
+        expect(res.body.data.created_by).toBe(userId);
         ids.push([res.body.data.site_id, userId]);
       }
       for (const [siteId, userId] of ids) {
@@ -167,10 +168,25 @@ describe.skipIf(!available)('regions and sites', () => {
       expect(res.status).toBe(201);
       expect(res.body.data).toMatchObject({ name: 'Padded name', description: 'near the weir' });
     });
-    it('403 for a user who is only a project viewer', async () => {
-      for (const role of ['viewer']) {
-        expect((await as[role].post('/api/sites').send(body)).status, role).toBe(403);
-      }
+    it('any signed-in user (even a global viewer) can add a site and is recorded as its creator', async () => {
+      const res = await as.viewer
+        .post('/api/sites')
+        .send({ ...body, name: 'Viewer lake', habitat_type: 'lake' });
+      expect(res.status).toBe(201);
+      expect(res.body.data).toMatchObject({ name: 'Viewer lake', habitat_type: 'lake' });
+      // the creator may correct it; a user who is only a project viewer may not edit it
+      const id = res.body.data.site_id;
+      expect((await as.viewer.patch(`/api/sites/${id}`).send({ description: 'mine' })).status).toBe(
+        200,
+      );
+      const other = await as.analyst
+        .post('/api/sites')
+        .send({ ...body, name: 'Analyst pond', habitat_type: 'other' });
+      expect(other.status).toBe(201);
+      expect(
+        (await as.viewer.patch(`/api/sites/${other.body.data.site_id}`).send({ description: 'x' }))
+          .status,
+      ).toBe(403);
     });
     it('422 names the field for out-of-range coordinates, blank names, bad enums and unknown keys', async () => {
       const post = (patch) =>

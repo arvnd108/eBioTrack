@@ -147,33 +147,35 @@ describe.skipIf(!dbAvailable)('permission matrix over the API', () => {
   describe('permission matrix: multi-role users and the administrator', () => {
     const importProbe = (c) => c.post('/api/analyses/import', {});
     const approveProbe = (c) => c.post('/api/analyses/abc/approve');
-    const siteProbe = (c) => c.post('/api/sites', {});
+    const siteProbe = (c) => c.post('/api/sites', {}); // any signed-in user may create a site
+    const siteEditProbe = (c) => c.patch('/api/sites/1', {}); // editing needs manage_sites (or being the creator)
 
-    it('a viewer is read-only: cannot import, approve or create sites', async () => {
+    it('a viewer is read-only: cannot import, approve or edit sites (creating a site is open to everyone)', async () => {
       expect((await importProbe(users.viewer)).status).toBe(403);
       expect((await approveProbe(users.viewer)).status).toBe(403);
-      expect((await siteProbe(users.viewer)).status).toBe(403);
+      expect((await siteEditProbe(users.viewer)).status).toBe(403);
+      expect((await siteProbe(users.viewer)).status).toBe(422);
     });
 
     it('viewer + analyst: the union applies on the very next request (may import, may not approve)', async () => {
       await addGlobalRole(SEED.viewer.user_id, AN);
       expect((await importProbe(users.viewer)).status).toBe(422);
       expect((await approveProbe(users.viewer)).status).toBe(403);
-      expect((await siteProbe(users.viewer)).status).toBe(403);
+      expect((await siteEditProbe(users.viewer)).status).toBe(403);
       await removeGlobalRole(SEED.viewer.user_id, AN);
       expect((await importProbe(users.viewer)).status).toBe(403);
     });
 
-    it('viewer + field_researcher + lab_technician may create sites and record lab data, still not approve', async () => {
+    it('viewer + field_researcher + lab_technician may edit sites and record lab data, still not approve', async () => {
       await addGlobalRole(SEED.viewer.user_id, FR);
       await addGlobalRole(SEED.viewer.user_id, LT);
-      expect((await siteProbe(users.viewer)).status).toBe(422);
+      expect((await siteEditProbe(users.viewer)).status).toBe(422);
       expect((await users.viewer.post('/api/qc-results', {})).status).toBe(422);
       expect((await approveProbe(users.viewer)).status).toBe(403);
       expect((await users.viewer.get('/api/users')).status).toBe(403);
       await removeGlobalRole(SEED.viewer.user_id, FR);
       await removeGlobalRole(SEED.viewer.user_id, LT);
-      expect((await siteProbe(users.viewer)).status).toBe(403);
+      expect((await siteEditProbe(users.viewer)).status).toBe(403);
     });
 
     it('analyst + principal_investigator may approve (the decide gate is a union too)', async () => {

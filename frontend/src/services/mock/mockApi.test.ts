@@ -520,6 +520,31 @@ describe('T20 write rules match the real API (values checked against backend PR 
     ).resolves.toBeDefined();
   });
 
+  it('lets any user add a site, edit only their own, and read the audit log of the projects they own', async () => {
+    await signIn('viewer');
+    // a global viewer may add a site (location and habitat type), and correct it afterwards
+    const site = await api.post<{ site_id: number }>('/sites', {
+      region_id: 1,
+      name: 'Back garden pond',
+      latitude: 28.6,
+      longitude: 77.2,
+      habitat_type: 'lake',
+    });
+    expect(site.data.site_id).toBeGreaterThan(0);
+    const edited = await api.patch<{ description: string }>(`/sites/${site.data.site_id}`, {
+      description: 'mine',
+    });
+    expect(edited.data.description).toBe('mine');
+    await expect(api.patch('/sites/1', { description: 'not mine' })).rejects.toMatchObject({
+      status: 403,
+    });
+    // no audit log until they own a project, then only that project's entries
+    await expect(api.get('/audit')).rejects.toMatchObject({ status: 403 });
+    const project = await api.post<{ project_id: number }>('/projects', { title: 'Garden survey' });
+    const audit = await api.get<AuditEntry[]>('/audit', { entity_type: 'projects' });
+    expect(audit.data.map((a) => a.entity_id)).toEqual([project.data.project_id]);
+  });
+
   it('writes audit entries like the trigger and scopes them for a principal investigator', async () => {
     await as('principal_investigator');
     await api.patch('/projects/1', { status: 'completed' });

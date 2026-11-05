@@ -1,6 +1,6 @@
 # eBioTrack — Project Contract (T00)
 
-**Version:** 2.0 (self-registration and project-role permissions; previously 1.9, approved, G0 passed; 1.1 adds the not-blank CHECKs to 4.3; 1.2 names two response fields in section 10; 1.3 links a correction run to the run it supersedes and settles all-`fail` approval; 1.4 exposes `supersedes_analysis_id` in the analysis routes and adds the `413` status; 1.5 adds the `429` status, `too_many_attempts` error code and `Retry-After` header for login lockout; 1.6 stores the status-change `note` and adds `collector_name` and `changed_by_name` to the event and sample responses; 1.7 names the people, samples and active run in the lab responses; 1.8 names the run, marker and people on analyses, returns the rejection reason, and adds `sample_id` to taxon detections; 1.9 names the actor of every audit entry)
+**Version:** 2.1 (any user adds sites; owners read their projects' audit log; before that 2.0 (self-registration and project-role permissions; previously 1.9, approved, G0 passed; 1.1 adds the not-blank CHECKs to 4.3; 1.2 names two response fields in section 10; 1.3 links a correction run to the run it supersedes and settles all-`fail` approval; 1.4 exposes `supersedes_analysis_id` in the analysis routes and adds the `413` status; 1.5 adds the `429` status, `too_many_attempts` error code and `Retry-After` header for login lockout; 1.6 stores the status-change `note` and adds `collector_name` and `changed_by_name` to the event and sample responses; 1.7 names the people, samples and active run in the lab responses; 1.8 names the run, marker and people on analyses, returns the rejection reason, and adds `sample_id` to taxon detections; 1.9 names the actor of every audit entry))
 
 This is the output of task **T00** in [WORKFLOW.md](WORKFLOW.md). It fixes the names, types, values, and shapes that all four members build against, so the database, API, frontend, tests, and docs line up without anyone guessing.
 
@@ -504,10 +504,11 @@ Two layers: the user's **global role(s)** and their **project role** in a given 
 | Action | administrator | principal_investigator | field_researcher | lab_technician | analyst | viewer |
 |---|---|---|---|---|---|---|
 | Manage users and roles | ✓ | — | — | — | — | — |
-| Read audit log | ✓ | own | — | — | — | — |
+| Read audit log | ✓ | own | — | — | — | — (project owners: see below) |
 | Create project (becomes its owner) | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Edit project, manage members | ✓ | — | — | — | — | — |
-| Create and edit sites | ✓ | ✓ | own | — | — | — |
+| Add a site | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Edit a site | ✓ | ✓ | own | — | — | — (the creator may always edit their own site) |
 | Create events and samples | ✓ | own | own | — | — | — |
 | Change sample status | ✓ | own | own | own | — | — |
 | Record extractions, QC, runs | ✓ | own | — | own | — | — |
@@ -522,7 +523,8 @@ Two layers: the user's **global role(s)** and their **project role** in a given 
 | Action | owner | manager | contributor | viewer |
 |---|---|---|---|---|
 | Edit project, manage members and project sites | ✓ | ✓ | — | — |
-| Create and edit sites (sites belong to no project: counts if the user holds this role in any project) | ✓ | ✓ | ✓ | — |
+| Edit a site (sites belong to no project: counts if the user holds this role in any project; the creator of a site may always edit it) | ✓ | ✓ | ✓ | — |
+| Read the audit log of the project (owner only) | ✓ | — | — | — |
 | Create events and samples, change sample status | ✓ | ✓ | ✓ | — |
 | Record extractions, QC, runs | ✓ | ✓ | ✓ | — |
 | Create analysis and import detections | ✓ | ✓ | ✓ | — |
@@ -577,9 +579,9 @@ Login lockout: after 5 failed sign-ins for the same client IP and email within 1
 |---|---|---|---|---|
 | GET | `/api/regions` | any | — | regions |
 | GET | `/api/sites` | any | `?project_id&region_id&habitat_type` | sites |
-| POST | `/api/sites` | field_researcher | `{ region_id, name, latitude, longitude, habitat_type, description? }` | site |
+| POST | `/api/sites` | any (the creator is recorded as `created_by`) | `{ region_id, name, latitude, longitude, habitat_type, description? }` | site |
 | GET | `/api/sites/:id` | any | — | site |
-| PATCH | `/api/sites/:id` | field_researcher | any site field | site |
+| PATCH | `/api/sites/:id` | creator of the site, or a user who may manage sites | any site field | site |
 
 ### Collection events
 
@@ -652,7 +654,7 @@ Analysis rows name what their ids point to, so a role that cannot call `GET /api
 | GET | `/api/dashboard/summary` | any | `?project_id` | `{ projects, sites, samples, approved_detections, recent_activity[] }`; `recent_activity` holds up to 5 audit entries, newest first (an empty array for roles that cannot read the audit log), each `{ audit_id, actor_id, actor_name, entity_type, entity_id, action, details, created_at }` (the `audit_logs` columns plus the actor's name, same shape as `GET /api/audit`) |
 | POST | `/api/exports` | any | `{ export_type, project_id, filters? }` | `{ export_id, row_count }` |
 | GET | `/api/exports/:id/download` | requester | — | CSV file |
-| GET | `/api/audit` | administrator / principal_investigator | `?entity_type&entity_id&actor_id&from&to` | audit entries; each carries `actor_name`, the acting user's name (`null` when `actor_id` is null), so a principal investigator, who cannot call `GET /api/users`, can show who did what |
+| GET | `/api/audit` | administrator / principal_investigator / any project owner (own projects) | `?entity_type&entity_id&actor_id&from&to` | audit entries; each carries `actor_name`, the acting user's name (`null` when `actor_id` is null), so a principal investigator, who cannot call `GET /api/users`, can show who did what |
 
 Analytics and exports use **only** analyses with status `approved` and assignments with `qc_flag = 'pass'`. Every analytics response includes `"meta": { "caveat": "..." }` with the fixed text: *Detection does not indicate abundance; non-detection does not indicate absence.*
 
@@ -782,6 +784,7 @@ The backend resolves `scientific_name` and `taxon_rank` to `taxon_id` before cal
 | 1.6 | Section 10: `PATCH /api/samples/:id/status` now stores `note` on the history row (the trigger reads the transaction-local setting `app.status_note`; none stores NULL), `GET /api/samples/:id` history entries gain `changed_by_name` (and always carry `note`), and every event object gains `collector_name`, so roles that cannot list users can show names. Additive: existing fields are unchanged. Affects T17-D (`record_sample_status_history()` reads `app.status_note`), T21 (sample and event routes), T26 (frontend: note field, names in timeline and collector column), T33 (tests), T42 (`api.md`). | Arvind |
 | 1.7 | Section 10, Laboratory: batches gain `operator_name`; QC results gain `recorded_by_name` and `sample_code`; extractions gain `sample_code`, `project_id`, `active_run_id` and `active_run_code` (the planned or running run they are booked on, null when none); run libraries gain `project_id`. Additive: existing fields are unchanged. Affects T22 (lab routes), T27 (frontend: names and codes in the lab tables, write controls only where the caller may write, booked extractions shown in the new-run picker), T33 (tests), T42 (`api.md`). | Arvind (on merge of the T27 PR) |
 | 1.8 | Section 10, Analyses and Taxa: every analysis row gains `run_code`, `marker_name`, `imported_by_name`, `approved_by_name` and `rejection` (`{ reason, rejected_by, rejected_by_name, rejected_at }` for a `rejected` analysis, read from its latest `reject` audit entry; null otherwise); `GET /api/taxa/:id/detections` rows gain `sample_id`. Additive: existing fields are unchanged. Affects T23 (analysis and taxa routes), T28 (frontend: names in the analysis list and detail, the rejection reason shown to the analyst, detections linking to their sample), T33 (tests), T42 (`api.md`). | Arvind (on merge of the T28 PR) |
+| 2.1 | Any signed-in user may add a sampling site (`POST /api/sites`, action `create_site`); every site row gains `created_by`, and the creator may edit their own site (`PATCH /api/sites/:id`). A project owner reads the audit log (`GET /api/audit`, dashboard `recent_activity`) of the projects they own. Section 9 and 10 updated. | Arvind |
 | 2.0 | Self-registration and project-role permissions. Section 4.1: `users` gains nullable `organization`, `job_title`, `phone` (migration `097`). Section 7: API error `409 email_taken`. Section 9 rewritten: an action is allowed by the global role **or** the project role in the target project (any signed-in user may create a project; project `viewer` is read-only). Section 10: `POST /api/auth/register` (public, `201`, new user gets the `viewer` role and is signed in). Stored procedures `create_project_with_owner` (no global role check) and `fn_analysis_check_actor` (project roles) changed. | Arvind |
 | 1.9 | Section 10, Analytics, dashboard, exports, audit: every audit entry (`GET /api/audit` and `GET /api/dashboard/summary` `recent_activity[]`) gains `actor_name`, the acting user's `full_name` (`null` for a system action). Additive: existing fields are unchanged. Affects T20 (audit route), T23 (dashboard route), T25 (frontend: the audit log shows names to principal investigators), T29 (frontend: the dashboard's recent activity), T33 (tests), T42 (`api.md`). | Arvind (on merge of the T29 PR) |
 

@@ -333,6 +333,7 @@ export const MATRIX = Object.freeze({
   // project viewer is read-only. Any signed-in user may create a project.
   create_project: ALL,
   edit_project: [ADMIN, PI],
+  create_site: ALL,
   manage_sites: [ADMIN, PI, FR, LT, AN],
   create_event_sample: [ADMIN, PI, FR, LT, AN],
   change_sample_status: [ADMIN, PI, FR, LT, AN],
@@ -431,7 +432,7 @@ export const ENDPOINTS = [
   // Sites and regions
   { method: 'GET', path: '/api/regions', action: 'read_data', ok: [200] },
   { method: 'GET', path: '/api/sites', action: 'read_data', ok: [200] },
-  { method: 'POST', path: '/api/sites', action: 'manage_sites', body: {}, ok: [422] },
+  { method: 'POST', path: '/api/sites', action: 'create_site', body: {}, ok: [422] },
   { method: 'GET', path: '/api/sites/:id', action: 'read_data', probe: '/api/sites/1', ok: [200] },
   {
     method: 'PATCH',

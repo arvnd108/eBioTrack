@@ -3,6 +3,7 @@
 import { Router } from 'express';
 import { z } from 'zod';
 import * as controller from '../controllers/sites.controller.js';
+import { queryOne } from '../db/query.js';
 import { auth } from '../middleware/auth.js';
 import { authorize } from '../middleware/authorize.js';
 import { pagination } from '../middleware/pagination.js';
@@ -62,8 +63,9 @@ const patchBody = z
   );
 const idParams = z.object({ id: idString });
 
-// Reads: any signed-in user. Writes: the manage_sites role gate (sites belong to no single
-// project, so a field researcher's "own" limit cannot be enforced here).
+// Reads: any signed-in user. Create: any signed-in user (create_site), the creator is recorded.
+// Edit: the creator of the site, or the manage_sites gate (PI, field researcher, project writers).
+// Sites belong to no single project, so that gate cannot be limited to a project.
 export const regionsRouter = Router();
 regionsRouter.get('/', auth, validate({ query: regionQuery }), controller.listRegions);
 
@@ -78,16 +80,29 @@ router.get(
 router.post(
   '/',
   auth,
-  authorize('manage_sites'),
+  authorize('create_site'),
   validate({ body: createBody }),
   controller.createSite,
 );
 router.get('/:id', auth, validate({ params: idParams }), controller.getSite);
+// The creator may always correct their own site; everyone else needs manage_sites.
+const creatorOrManager = async (req, res, next) => {
+  try {
+    const row = await queryOne('SELECT created_by FROM sampling_sites WHERE site_id = $1', [
+      req.params.id,
+    ]);
+    if (row && Number(row.created_by) === Number(req.user.user_id)) return next();
+    return authorize('manage_sites')(req, res, next);
+  } catch (err) {
+    return next(err);
+  }
+};
 router.patch(
   '/:id',
   auth,
-  authorize('manage_sites'),
-  validate({ params: idParams, body: patchBody }),
+  validate({ params: idParams }),
+  creatorOrManager,
+  validate({ body: patchBody }),
   controller.updateSite,
 );
 

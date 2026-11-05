@@ -2,7 +2,7 @@
 
 > **T42 · Contract v1.9 · Verified against the running API**
 >
-> This reference follows `planning/CONTRACT.md` §§8–12 (v2.0). Every endpoint, role, status code, error shape and example was run against the real backend on a freshly reset and seeded database; the verification record is at the end.
+> This reference follows `planning/CONTRACT.md` §§8–12 (v2.1). Every endpoint, role, status code, error shape and example was run against the real backend on a freshly reset and seeded database; the verification record is at the end.
 
 ## Quick start
 
@@ -78,7 +78,7 @@ The request and success columns are concise summaries, not complete JSON Schemas
 | DELETE | `/projects/:id/members/:userId` | Project owner/manager | — | `204` |
 | POST | `/projects/:id/sites` | Project owner/manager | `{ site_id }` | `201` |
 | DELETE | `/projects/:id/sites/:siteId` | Project owner/manager | — | `204` |
-| GET | `/audit` | Administrator / PI | `?entity_type&entity_id&actor_id&from&to` | Audit entries |
+| GET | `/audit` | Administrator / PI / project owner (own projects) | `?entity_type&entity_id&actor_id&from&to` | Audit entries |
 
 ### Field and samples
 
@@ -86,9 +86,9 @@ The request and success columns are concise summaries, not complete JSON Schemas
 |---|---|---|---|---|
 | GET | `/regions` | Any | — | Regions |
 | GET | `/sites` | Any | `?project_id&region_id&habitat_type` | Sites |
-| POST | `/sites` | Field researcher | `{ region_id, name, latitude, longitude, habitat_type, description? }` | Site |
+| POST | `/sites` | Any (signed in); the creator is stored as `created_by` | `{ region_id, name, latitude, longitude, habitat_type, description? }` | Site |
 | GET | `/sites/:id` | Any | — | Site |
-| PATCH | `/sites/:id` | Field researcher | Site fields | Site |
+| PATCH | `/sites/:id` | The site's creator, field researcher or project writer | Site fields | Site |
 | GET | `/events` | Any | `?project_id&site_id&from&to` | Events |
 | POST | `/events` | Field researcher | `{ project_id, site_id, collected_at, notes?, measurements?, samples? }` | Event with samples/measurements; one transaction |
 | GET | `/events/:id` | Any | — | Event, samples, measurements |

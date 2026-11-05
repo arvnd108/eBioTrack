@@ -16,7 +16,8 @@
 //                                                               each of those PIs)
 //    Everything else is administrator-only: entities that belong to no project (users, user_roles,
 //    roles, sampling_sites, taxa, dna_markers, ...).
-//  - every other role: no access (the route gate answers 403; recentActivity returns []).
+//  - anyone else: only the projects they OWN, by the same derivation; a user who owns none is refused
+//    by the route gate (403) and gets [] from recentActivity.
 // The scope is one fixed parameterized CTE joined to audit_logs on (entity_type, entity_id), so the
 // existing index idx_audit_logs_entity_type_entity_id_created_at serves the join. No dynamic SQL.
 import { query } from '../db/query.js';
@@ -27,12 +28,13 @@ import { ROLES } from '../middleware/permissions.js';
 const AUDIT_COLUMNS = `a.audit_id, a.actor_id, a.entity_type, a.entity_id, a.action, a.details, a.created_at,
   (SELECT u.full_name FROM users u WHERE u.user_id = a.actor_id) AS actor_name`;
 
-// $1 = the PI's user_id, $7 = optional project to narrow to, $8 = true for the administrator (every project). Rows are (entity_type, entity_id) pairs the PI may see.
+// $1 = the user_id, $7 = optional project to narrow to, $8 = true for the administrator (every project), $9 = true for a principal investigator (every project they belong to; anyone else only projects they own). Rows are (entity_type, entity_id) pairs the PI may see.
 const PI_SCOPE = `
   my_projects AS (
     SELECT p.project_id FROM projects p
      WHERE ($8::boolean OR EXISTS (
-             SELECT 1 FROM project_members m WHERE m.project_id = p.project_id AND m.user_id = $1))
+             SELECT 1 FROM project_members m WHERE m.project_id = p.project_id AND m.user_id = $1
+                AND ($9::boolean OR m.project_role = 'owner')))
        AND ($7::bigint IS NULL OR p.project_id = $7::bigint)
   ),
   my_events AS (
@@ -64,7 +66,9 @@ const isAdmin = (user) => user.roles.includes(ROLES.ADMINISTRATOR);
 const isPi = (user) => user.roles.includes(ROLES.PRINCIPAL_INVESTIGATOR);
 
 /** Can this user read the audit log at all? */
-export const canReadAudit = (user) => isAdmin(user) || isPi(user);
+// Project owners read the entries of their own projects; whether the user owns one is decided by
+// the route gate (requireAction) and by the scope itself, which is empty for a user who owns none.
+export const canReadAudit = (user) => !!user;
 
 // Filters shared by the list and the count. $2..$6 are entity_type, entity_id, actor_id, from, to.
 // `$1::bigint IS NOT NULL` is always true; it only gives $1 a type on the administrator path,
@@ -73,6 +77,7 @@ const FILTERS = `
   $1::bigint IS NOT NULL
   AND ($7::bigint IS NULL OR TRUE)
   AND ($8::boolean IS NULL OR TRUE)
+  AND ($9::boolean IS NULL OR TRUE)
   AND ($2::text IS NULL OR a.entity_type = $2::text)
   AND ($3::bigint IS NULL OR a.entity_id = $3::bigint)
   AND ($4::bigint IS NULL OR a.actor_id = $4::bigint)
@@ -104,12 +109,13 @@ export async function listAudit(user, filters, { limit, offset, projectId }) {
     filters.to ?? null,
     projectId ?? null,
     isAdmin(user),
+    isPi(user),
   ];
   const rows = await query(
     `${withClause}
      SELECT ${AUDIT_COLUMNS} FROM audit_logs a ${join}
       WHERE ${FILTERS}
-      ORDER BY a.created_at DESC, a.audit_id DESC LIMIT $9 OFFSET $10`,
+      ORDER BY a.created_at DESC, a.audit_id DESC LIMIT $10 OFFSET $11`,
     [...params, limit, offset],
   );
   const [{ total }] = await query(

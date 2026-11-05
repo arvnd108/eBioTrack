@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { app } from '../src/app.js';
 import { closePool } from '../src/db/pool.js';
 import { query } from '../src/db/query.js';
-import { canReadAudit, recentActivity } from '../src/services/audit.service.js';
+import { recentActivity } from '../src/services/audit.service.js';
 import { loginAttempts } from '../src/utils/loginAttempts.js';
 import { SEED_EMAIL, probeDatabase, resetAndSeedDatabase, signIn } from './helpers.js';
 
@@ -239,9 +239,13 @@ describe.skipIf(!available)('audit', () => {
       expect(pi.length).toBeGreaterThan(0);
       expect(pi.some((e) => e.entity_type === 'users')).toBe(false);
       for (const roles of [['field_researcher'], ['lab_technician'], ['analyst'], ['viewer'], []]) {
-        expect(await recentActivity(user(3, roles))).toEqual([]);
-        expect(canReadAudit(user(3, roles))).toBe(false);
+        // user 6 is a project viewer and owns nothing: the owner-only scope is empty
+        expect(await recentActivity(user(6, roles))).toEqual([]);
       }
+      // a non-PI who owns a project sees that project's entries (the PI, user 2, owns project 1)
+      const ownerOnly = await recentActivity(user(2, ['viewer']), { limit: 100 });
+      expect(ownerOnly.length).toBeGreaterThan(0);
+      expect(ownerOnly.some((e) => e.entity_type === 'users')).toBe(false);
     });
   });
 

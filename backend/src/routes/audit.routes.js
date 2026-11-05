@@ -4,7 +4,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import * as controller from '../controllers/audit.controller.js';
 import { auth } from '../middleware/auth.js';
-import { requireRole } from '../middleware/authorize.js';
+import { requireAction } from '../middleware/authorize.js';
 import { pagination } from '../middleware/pagination.js';
 import { validate } from '../middleware/validate.js';
 import { idString, pageQuery } from '../utils/schemas.js';
@@ -28,12 +28,13 @@ const listQuery = z
   });
 
 const router = Router();
-// The administrator passes requireRole always; a principal_investigator sees own-project entries only
-// (scoped in the service, since the audit log has no project column).
+// The administrator passes always; a principal_investigator sees entries of the projects they are a
+// member of, and a project owner entries of the projects they own (scoped in the service, since the
+// audit log has no project column).
 router.get(
   '/',
   auth,
-  requireRole('principal_investigator'),
+  requireAction('read_audit_log'),
   validate({ query: listQuery }),
   pagination({ strict: true }),
   controller.listAudit,

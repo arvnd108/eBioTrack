@@ -17,8 +17,9 @@ Your **project role** (owner, manager, contributor, viewer) also counts: anyone 
 | Create projects | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Manage members and sites of a project | ✓ | ✓ (own projects) | project owner or manager | project owner or manager | project owner or manager | project owner or manager |
 | Users and roles (Administration) | ✓ | | | | | |
-| Audit log | ✓ | ✓ (own projects) | | | | |
-| Add sites, record events and samples | ✓ | ✓ | ✓ | | | |
+| Audit log | ✓ | ✓ (own projects) | project owner | project owner | project owner | project owner |
+| Add a site | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Record events and samples | ✓ | ✓ | ✓ | | | |
 | Change a sample's status | ✓ | ✓ | ✓ | ✓ | | |
 | Record extractions, QC results, runs | ✓ | ✓ | | ✓ | | |
 | Create analyses, import detections | ✓ | ✓ | | | ✓ | |
@@ -61,7 +62,7 @@ A project role is separate from your global role, and you only need to be a memb
 
 ## 3. Record sites, events and samples (field researcher and up)
 
-1. **Sampling map** shows the sites in your projects. Choose **New site** to add one: region, name, habitat, and coordinates typed or clicked on the map.
+1. **Sampling map** shows the sites. Anyone can choose **New site** to add one: region, name, habitat type (lake, river, wetland, soil, other and so on) and coordinates typed or clicked on the map. You can edit the sites you added.
 2. **Collection events** lists visits. Choose **New event**: pick the project and site, the collection time, notes, any environmental measurements and the samples collected. Everything is saved together, or nothing is.
 3. The event page shows the measurements and the samples with their generated codes (`EB-YYYYMMDD-<event>-<number>`). **Add sample** adds another.
 
@@ -133,7 +134,7 @@ In the species explorer every detection links to its sample. The sample page sho
 
 ## 8. Audit and permissions
 
-Important changes are written to the audit log by the database itself, with who and when. Administrators see all entries, principal investigators those of their own projects, on **Administration → Audit log** (also reached from the dashboard's *Full audit log* link). Never share accounts; do not put passwords or tokens in notes.
+Important changes are written to the audit log by the database itself, with who and when. Administrators see all entries, principal investigators those of the projects they belong to, and any project owner those of the projects they own, on **Administration → Audit log** (also reached from the dashboard's *Full audit log* link). Never share accounts; do not put passwords or tokens in notes.
 
 ![Audit log](screenshots/t25-projects-admin/08-admin-audit-log-administrator.png)
 

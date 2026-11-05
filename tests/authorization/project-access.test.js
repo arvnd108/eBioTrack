@@ -769,14 +769,38 @@ describe.skipIf(!dbAvailable)('project access: scoping and project roles', () =>
       expect(entries(all).filter((e) => e.startsWith('users:'))).toEqual([]);
     });
 
+    // A project OWNER reads the audit entries of the projects they own, whatever the global role;
+    // earlier suites may have made a seeded user an owner, so ask the database.
+    const owns = async (role) =>
+      (
+        await sql(
+          `SELECT 1 FROM project_members WHERE user_id = ${Number(SEED[role].user_id)} AND project_role = 'owner'`,
+        )
+      ).length > 0;
+
     it.each(['field_researcher', 'analyst', 'viewer'])(
-      '%s -> 403 on the audit log',
+      '%s -> 403 on the audit log unless they own a project',
       async (role) => {
         const res = await u[role].get('/api/audit');
+        if (await owns(role)) {
+          expect(res.status).toBe(200);
+          expect(entries(res).filter((e) => e.startsWith('users:'))).toEqual([]);
+          return;
+        }
         expect(res.status).toBe(403);
         expect(res.body.error.code).toBe('forbidden');
       },
     );
+
+    it("a user who owns a project reads that project's audit entries and nobody else's", async () => {
+      const created = await u.viewer.post('/api/projects', { title: 'Audit owner project' });
+      expect(created.status).toBe(201);
+      const id = created.body.data.project_id;
+      const res = await u.viewer.get('/api/audit?limit=100');
+      expect(res.status).toBe(200);
+      expect(entries(res)).toContain(`projects:${id}`);
+      expect(entries(res)).not.toContain('projects:2');
+    });
 
     it('recent_activity on the dashboard: entries for the audit readers, an empty array for everyone else', async () => {
       const admin = await u.administrator.get('/api/dashboard/summary');
@@ -798,7 +822,8 @@ describe.skipIf(!dbAvailable)('project access: scoping and project roles', () =>
       expect(pi.body.data.recent_activity.length).toBeGreaterThan(0);
       for (const role of ['field_researcher', 'analyst', 'viewer']) {
         const res = await u[role].get('/api/dashboard/summary');
-        expect(res.body.data.recent_activity, role).toEqual([]);
+        // empty unless the user owns a project (then only entries of the projects they own)
+        if (!(await owns(role))) expect(res.body.data.recent_activity, role).toEqual([]);
       }
     });
   });
