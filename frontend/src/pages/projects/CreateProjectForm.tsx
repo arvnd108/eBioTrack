@@ -3,6 +3,7 @@
 
 import { useState, type FormEvent } from 'react';
 import { FormField, fieldControlClass } from '../../components/common/FormField';
+import { useAuth } from '../../hooks/useAuth';
 import { useSubmit } from '../../hooks/useSubmit';
 import { formErrors } from '../../services/errorMessages';
 import { createProject } from '../../services/projectsService';
@@ -27,6 +28,7 @@ export function CreateProjectForm({ onCreated, onCancel }: CreateProjectFormProp
   const [objectives, setObjectives] = useState('');
   const [startDate, setStartDate] = useState('');
   const [errors, setErrors] = useState<ProjectErrors>({});
+  const { reloadHeldRoles } = useAuth();
   const save = useSubmit(createProject);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -40,7 +42,11 @@ export function CreateProjectForm({ onCreated, onCancel }: CreateProjectFormProp
       objectives: objectives.trim() || null,
       start_date: startDate || null,
     });
-    if (created) return onCreated(created);
+    if (created) {
+      // the new owner role unlocks events, lab, analysis import and administration in the menu
+      await reloadHeldRoles();
+      return onCreated(created);
+    }
   }
 
   // Server answers that the checks above cannot know (duplicate title, permissions).

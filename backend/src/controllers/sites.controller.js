@@ -7,6 +7,10 @@ export async function listRegions(req, res) {
   return sendSuccess(res, await sitesService.listRegions(req.query));
 }
 
+export async function createRegion(req, res) {
+  return sendSuccess(res, await sitesService.createRegion(req.body, req.user), 201);
+}
+
 export async function listSites(req, res) {
   const { rows, total } = await sitesService.listSites(req.user, req.query, req.pagination);
   return sendPaginated(res, rows, { ...req.pagination, total });

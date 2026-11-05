@@ -85,6 +85,7 @@ The request and success columns are concise summaries, not complete JSON Schemas
 | Method | Path | Minimum global role | Request / query | Success |
 |---|---|---|---|---|
 | GET | `/regions` | Any | — | Regions |
+| POST | `/regions` | Any (signed in) | `{ name, region_type }` | Region (`201`; `409` if the name and type exist) |
 | GET | `/sites` | Any | `?project_id&region_id&habitat_type` | Sites |
 | POST | `/sites` | Any (signed in); the creator is stored as `created_by` | `{ region_id, name, latitude, longitude, habitat_type, description? }` | Site |
 | GET | `/sites/:id` | Any | — | Site |

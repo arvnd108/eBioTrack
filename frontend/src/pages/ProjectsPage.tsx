@@ -140,7 +140,7 @@ export default function ProjectsPage() {
         emptyDescription={
           status
             ? 'Try another status.'
-            : 'You are not a member of any project. A principal investigator can add you to one.'
+            : 'You are not a member of any project. Create one with New project, or ask a project owner to add you.'
         }
       />
     </section>

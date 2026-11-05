@@ -43,6 +43,10 @@ export interface AuthContextValue {
   logout: () => Promise<void>;
   /** Re-runs the session check (Retry after `unavailable`). */
   refresh: () => Promise<void>;
+  /** The project roles the user holds in any project (for labels; `can` already uses them). */
+  projectRoles: readonly ProjectRole[];
+  /** Re-reads the project roles the user holds; call after creating a project or changing members. */
+  reloadHeldRoles: () => Promise<void>;
   /** True if the user holds any of the roles. Administrators pass every role check. */
   hasRole: (...roles: RoleName[]) => boolean;
   /** Permission check with the API's matrix; see `can` in src/permissions.ts. */
@@ -152,6 +156,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const reloadHeldRoles = useCallback(async () => {
+    setHeldRoles(await loadHeldRoles());
+  }, []);
+
   const hasRole = useCallback(
     (...roles: RoleName[]) =>
       !!user && (user.roles.includes('administrator') || user.roles.some((r) => roles.includes(r))),
@@ -171,8 +179,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo(
-    () => ({ user, status, sessionError, login, register, logout, refresh, hasRole, can, canAny }),
-    [user, status, sessionError, login, register, logout, refresh, hasRole, can, canAny],
+    () => ({
+      user,
+      status,
+      sessionError,
+      login,
+      register,
+      logout,
+      refresh,
+      projectRoles: heldRoles,
+      reloadHeldRoles,
+      hasRole,
+      can,
+      canAny,
+    }),
+    [
+      user,
+      status,
+      sessionError,
+      login,
+      register,
+      logout,
+      refresh,
+      heldRoles,
+      reloadHeldRoles,
+      hasRole,
+      can,
+      canAny,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

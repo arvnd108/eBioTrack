@@ -188,6 +188,7 @@ export default function SamplingMapPage() {
         <SiteForm
           key={form.mode === 'edit' ? form.site.site_id : 'new'}
           regions={regions.list}
+          linkableProjects={projects.list.filter((p) => can('edit_project', p.your_role))}
           site={form.mode === 'edit' ? form.site : undefined}
           picked={picked}
           onCancel={() => openForm(null)}

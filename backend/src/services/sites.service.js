@@ -26,6 +26,20 @@ export async function listRegions({ region_type: regionType }) {
   );
 }
 
+/** A new region; (name, type) is unique (409), an unknown parent is 422. */
+export async function createRegion(body, user) {
+  return withTransaction(
+    async (client) =>
+      queryOne(
+        `INSERT INTO regions (name, region_type, parent_region_id) VALUES ($1, $2, $3)
+         RETURNING region_id, name, region_type, parent_region_id`,
+        [body.name, body.region_type, body.parent_region_id ?? null],
+        client,
+      ),
+    { actorId: user.user_id },
+  );
+}
+
 /**
  * Every signed-in user may read sites (sites belong to no single project). With `project_id` the
  * list narrows to that project's sites, and then the caller needs access to the project.
