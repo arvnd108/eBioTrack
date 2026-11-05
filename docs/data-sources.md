@@ -11,6 +11,10 @@ The checked-in seed world and starter detection CSV are **synthetic project fixt
 | `tests/fixtures/detections_valid.csv`, `detections_invalid_row.csv` | Import-path examples, including invalid input | Test fixtures; not observational data | No external license/source is declared. |
 | Volume-data generator and its output | Scaled records for performance and query tests | Synthetic, fixed-seed test data; not for ecological inference | Generated project test data; no separate license is declared. |
 
+The repository has no `LICENSE` file, so no licence applies to any of these assets by default.
+
+Caveats that apply to every dataset shown in the application: a detection means DNA of a taxon was found, not how many individuals there are; a non-detection does not prove absence; only approved analyses and detections with a passing QC flag are counted.
+
 The repository's fixture conventions require source, license, and real-versus-synthetic labels. Where the source or license is not recorded for a file, this document deliberately does not infer one. Add explicit metadata before publishing or reusing it externally.
 
 ## Planned external sources (not currently represented by an identified imported release)
