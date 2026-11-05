@@ -199,10 +199,8 @@ describe.skipIf(!available)('POST /api/auth/register', () => {
   });
   afterEach(() => loginAttempts.clear());
   afterAll(async () => {
-    await query('DELETE FROM user_roles WHERE user_id >= 1000');
-    await query("DELETE FROM audit_logs WHERE entity_type = 'users' AND entity_id >= 1000");
-    await query('DELETE FROM users WHERE user_id >= 1000');
-    await query('DELETE FROM session');
+    // Registered users get ordinary serial ids; reset so later suites see the pristine seed.
+    await resetAndSeedDatabase();
     await closePool();
   });
 

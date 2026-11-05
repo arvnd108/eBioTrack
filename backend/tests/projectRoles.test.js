@@ -30,7 +30,10 @@ describe.skipIf(!available)('project roles for self-registered users', () => {
     ben = await register('Ben');
     cat = await register('Cat');
   });
-  afterAll(closePool);
+  afterAll(async () => {
+    await resetAndSeedDatabase();
+    await closePool();
+  });
 
   it('a new user (global viewer) creates a project and owns it', async () => {
     const res = await ana.agent.post('/api/projects').send({ title: 'Ana River Survey' });
