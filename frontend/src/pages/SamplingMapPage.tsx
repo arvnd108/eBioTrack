@@ -34,7 +34,7 @@ const LIMIT = 100;
 type FormState = { mode: 'create' } | { mode: 'edit'; site: Site } | null;
 
 export default function SamplingMapPage() {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const [filters, setFilters] = useQueryFilters(FILTERS);
   const [form, setForm] = useState<FormState>(null);
   const [picked, setPicked] = useState<{ latitude: number; longitude: number } | null>(null);
@@ -50,7 +50,10 @@ export default function SamplingMapPage() {
     sort: 'name',
   });
   const selectedId = idParam(filters.site_id) ? Number(filters.site_id) : null;
-  const canManage = can('manage_sites');
+  // Anyone signed in may add a site; correcting one needs manage_sites or being its creator.
+  const canCreate = can('create_site');
+  const canEditSite = (s: Site) =>
+    can('manage_sites') || (!!user && s.created_by !== undefined && s.created_by === user.user_id);
 
   const select = (siteId: number | null) => setFilters({ site_id: siteId ? String(siteId) : '' });
 
@@ -91,7 +94,7 @@ export default function SamplingMapPage() {
           >
             Show on map
           </button>
-          {canManage && (
+          {canEditSite(s) && (
             <button
               type="button"
               onClick={() => openForm({ mode: 'edit', site: s })}
@@ -118,7 +121,7 @@ export default function SamplingMapPage() {
             Sampling sites; click a site for its events and samples.
           </p>
         </div>
-        <Can action="manage_sites">
+        <Can action="create_site">
           {!form && (
             <button
               type="button"
@@ -214,7 +217,7 @@ export default function SamplingMapPage() {
                 <SiteSummary
                   site={site}
                   region={regions.byId.get(site.region_id)}
-                  onEdit={canManage ? () => openForm({ mode: 'edit', site }) : undefined}
+                  onEdit={canEditSite(site) ? () => openForm({ mode: 'edit', site }) : undefined}
                 />
               )}
             />
@@ -253,7 +256,7 @@ export default function SamplingMapPage() {
         onRetry={sites.reload}
         emptyTitle={anyFilter ? 'No sites match these filters' : 'No sites yet'}
         emptyDescription={
-          anyFilter ? 'Try other filters.' : canManage ? 'Add one with New site.' : undefined
+          anyFilter ? 'Try other filters.' : canCreate ? 'Add one with New site.' : undefined
         }
       />
     </section>

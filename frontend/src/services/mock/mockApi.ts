@@ -518,7 +518,7 @@ function approvedDetections(user: User) {
 /**
  * Audit entries the user may read, newest first (backend services/audit.service.js): an
  * administrator sees everything; a principal investigator sees entries about entities in a
- * project they belong to (the project and its members and sites, its events, samples,
+ * project they belong to, and anyone else the same for the projects they own (the project and its members and sites, its events, samples,
  * extractions, libraries, the runs and analyses those libraries are in, their QC results, and the
  * project's exports); other roles see nothing. `projectId` narrows to one project (the dashboard),
  * for the administrator too.
@@ -527,13 +527,17 @@ function auditFor(user: User, projectId: number | null = null): AuditEntry[] {
   let visible: AuditRow[];
   if (isAdmin(user) && projectId === null) {
     visible = state.audit;
-  } else if (isAdmin(user) || hasAnyRole(user, ['principal_investigator'])) {
+  } else {
+    // administrator: any project; principal investigator: projects they belong to; anyone else:
+    // only the projects they own (backend services/audit.service.js)
+    const isPi = hasAnyRole(user, ['principal_investigator']);
     const projects = new Set(
       state.projects
         .map((p) => p.project_id)
         .filter(
           (id) =>
-            (isAdmin(user) || roleIn(id, user.user_id) !== null) &&
+            (isAdmin(user) ||
+              (isPi ? roleIn(id, user.user_id) !== null : roleIn(id, user.user_id) === 'owner')) &&
             (projectId === null || id === projectId),
         ),
     );
@@ -575,8 +579,6 @@ function auditFor(user: User, projectId: number | null = null): AuditEntry[] {
       ),
     };
     visible = state.audit.filter((a) => scope[a.entity_type]?.has(a.entity_id) ?? false);
-  } else {
-    return [];
   }
   // CONTRACT 1.9: every entry names its actor (null for a system action).
   return [...visible]
@@ -2419,7 +2421,7 @@ const routes: MockRoute[] = [
   {
     method: 'POST',
     path: '/sites',
-    action: 'manage_sites',
+    action: 'create_site',
     handler: ({ body, user }) => {
       const input = (body ?? {}) as Record<string, unknown>;
       const fields = checkSiteBody(input, true);
@@ -2428,7 +2430,7 @@ const routes: MockRoute[] = [
       const site = { description: null, ...fields } as Omit<Site, 'site_id'>;
       const conflict = siteConflict(site, null);
       if (conflict) return conflict;
-      const created: Site = { site_id, ...site };
+      const created: Site = { site_id, ...site, created_by: user.user_id };
       state.sites.push(created);
       writeAudit(user.user_id, 'sampling_sites', site_id, 'insert', null, {
         ...created,
@@ -2451,8 +2453,15 @@ const routes: MockRoute[] = [
   {
     method: 'PATCH',
     path: '/sites/:id',
-    action: 'manage_sites',
     handler: ({ params, body, user }) => {
+      // The creator may always correct their site; everyone else needs manage_sites.
+      const existing = state.sites.find((s) => s.site_id === Number(params.id));
+      if (
+        !(existing && existing.created_by === user.user_id) &&
+        !can(user, 'manage_sites', undefined, heldProjectRoles(user))
+      ) {
+        return fail(403, 'forbidden', 'You do not have permission to do this');
+      }
       const input = (body ?? {}) as Record<string, unknown>;
       const fields = checkSiteBody(input, false);
       const bad = [...checkIdString(params.id, 'id'), ...(Array.isArray(fields) ? fields : [])];
@@ -4023,7 +4032,7 @@ const routes: MockRoute[] = [
   {
     method: 'GET',
     path: '/audit',
-    roles: ['principal_investigator'],
+    action: 'read_audit_log',
     handler: ({ user, query }) => {
       const entityType = query.get('entity_type');
       const entityId = num(query, 'entity_id');

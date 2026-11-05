@@ -10,7 +10,7 @@ import { assertProjectAccess } from './projectAccess.js';
 
 const SITE_COLUMNS = `
   s.site_id, s.region_id, s.name, s.latitude::float8 AS latitude,
-  s.longitude::float8 AS longitude, s.habitat_type, s.description`;
+  s.longitude::float8 AS longitude, s.habitat_type, s.description, s.created_by::int AS created_by`;
 
 const siteNotFound = () => new AppError(404, 'not_found', 'Site not found');
 

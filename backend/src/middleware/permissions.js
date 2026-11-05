@@ -12,7 +12,8 @@
 //
 //   Action                      global roles        project roles that also allow it   scoped
 //   manage_users                —                   —                                  no
-//   read_audit_log              PI (own)            —                                  yes
+//   read_audit_log              PI (own)            owner (own projects)               yes
+//   create_site                 everyone            —                                  no
 //   create_project              everyone            —                                  no
 //   edit_project (members,sites)—                   owner, manager                     yes
 //   manage_sites (create/edit)  PI, field           owner, manager, contributor (any)  no
@@ -50,7 +51,8 @@ const MANAGERS = ['owner', 'manager'];
  */
 export const PERMISSIONS = Object.freeze({
   manage_users: { roles: [] },
-  read_audit_log: { roles: [PI], project: true, read: true },
+  read_audit_log: { roles: [PI], projectRoles: ['owner'], project: true, read: true },
+  create_site: { roles: Object.values(ROLES) },
   create_project: { roles: Object.values(ROLES) },
   edit_project: { roles: [], projectRoles: MANAGERS, project: true },
   manage_sites: { roles: [PI, FR], projectRoles: WRITERS, anyProject: true },

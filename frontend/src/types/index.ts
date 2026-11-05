@@ -254,6 +254,8 @@ export interface Site {
   longitude: number;
   habitat_type: HabitatType;
   description: string | null;
+  /** Who added the site; the creator may always correct it. */
+  created_by?: number;
 }
 
 // Collection events -----------------------------------------------------------

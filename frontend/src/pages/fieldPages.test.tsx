@@ -379,7 +379,7 @@ describe('Collection events page', () => {
 
 describe('Sampling map page', () => {
   it('lists the sites with filters, and selects one from the table', async () => {
-    await signInAs('viewer'); // a project viewer: read-only, no New site / Edit
+    await signInAs('viewer'); // a project viewer: may add a site (anyone can) but not edit others'
     const { router, container } = renderApp('/map');
     expect(texts(await rowsOf('Sites'))).toEqual([
       'Dakpathar Barrage',
@@ -391,7 +391,7 @@ describe('Sampling map page', () => {
     await waitFor(() =>
       expect(container.querySelectorAll('path.leaflet-interactive')).toHaveLength(5),
     );
-    expect(screen.queryByRole('button', { name: 'New site' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'New site' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /^Edit / })).toBeNull();
 
     const user = userEvent.setup();
