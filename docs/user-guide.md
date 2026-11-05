@@ -1,61 +1,141 @@
 # eBioTrack user guide
 
-> **Owner:** D (Docs & Demo)
+> **Owner:** D (Docs & Demo) · T46 / issue #69
 >
-> This guide describes the intended research workflow and the records that eBioTrack tracks. The repository is still in development; not every screen or workflow described here is available in a runnable UI yet. Use the API and database documentation for implemented interfaces.
+> How to use eBioTrack, task by task. Every screenshot was taken from the running application against the real API on a freshly seeded database (see the `README.md` in each folder under [`screenshots/`](screenshots/)). The seeded development accounts are `<role>@ebiotrack.test` with the development password in `tests/fixtures/README.md`; they exist only in a development database.
 
-## 1. Sign in and choose a project
+eBioTrack tracks eDNA research from field sample to taxon detection. It records field, laboratory and analysis information and the people responsible for each step; it does not perform extraction, sequencing or bioinformatics.
 
-1. Sign in with an active account. Access is checked on the server for each request.
-2. Open a project you belong to. A project membership grants a project role; your global role is separate.
-3. Confirm the project, its linked sites, and your role before creating or changing records. Viewers should use read-only pages and exports.
+## Who can do what
 
-## 2. Set up field work
+The sidebar shows only the pages your role can use. Every role can read the data of the projects it belongs to.
 
-1. Register or select a sampling site, including its region, habitat, and coordinates.
-2. Create a collection event for the project and site, recording the collection date/time and field context.
-3. Add samples to the event. The database assigns a unique sample code; record sample type, volume/depth when known, and storage location.
-4. Record environmental measurements against the event.
-5. Check the sample registry and status history. Samples progress through valid states; do not bypass the status workflow.
+| Task | Administrator | Principal investigator | Field researcher | Lab technician | Analyst | Viewer |
+|---|:-:|:-:|:-:|:-:|:-:|:-:|
+| Create projects, manage members and sites | ✓ | ✓ (own projects) | | | | |
+| Users and roles (Administration) | ✓ | | | | | |
+| Audit log | ✓ | ✓ (own projects) | | | | |
+| Add sites, record events and samples | ✓ | ✓ | ✓ | | | |
+| Change a sample's status | ✓ | ✓ | ✓ | ✓ | | |
+| Record extractions, QC results, runs | ✓ | ✓ | | ✓ | | |
+| Create analyses, import detections | ✓ | ✓ | | | ✓ | |
+| Approve or reject an analysis | ✓ | ✓ | | | | |
+| Explore species and analytics, download CSV | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
-The event, its samples, measurements, audit entries, and initial status history are intended to be created atomically. If the operation fails, the transaction should leave no partial event behind.
+## 1. Sign in
 
-## 3. Track laboratory processing
+Open the application and sign in with your email and password. After five wrong attempts in 15 minutes sign-in is locked for a while; wait and try again.
 
-1. Create or select an extraction batch and record DNA extractions for the relevant samples.
-2. Record QC results and flags; investigate failed or contaminated controls rather than treating them as ordinary passing samples.
-3. Create sequencing libraries from extractions and associate them with a sequencing run.
-4. Keep identifiers and processing metadata consistent so a later detection can be traced back through library, extraction, sample, event, and site.
+![Sign-in page](screenshots/t25-projects-admin/01-login.png)
 
-eBioTrack tracks laboratory metadata and results; it does not perform extraction, sequencing, or bioinformatics.
+You land on the **Dashboard**: counts for your projects, what is waiting for you, and the newest activity.
 
-## 4. Import and review taxonomic results
+![Dashboard of a principal investigator](screenshots/t29-dashboard/01-principal-investigator-all-projects.png)
 
-1. Prepare a CSV using the analysis-import contract and include the analysis/run and library identifiers required by the importer.
-2. Submit the import for validation. Resolve reported validation errors before retrying; do not edit database tables directly to work around them.
-3. Review the imported analysis, its provenance, and QC flags.
-4. Approve the analysis only after scientific review. Approval is a controlled workflow, and approved results are protected from silent edits.
+Use the project selector to look at one project; the choice is kept in the address. If you belong to no project yet, the dashboard tells you what to do next.
 
-Only approved analyses with passing QC are included in the documented biodiversity summaries and detection views.
+![A user in no project](screenshots/t29-dashboard/09-user-in-no-project.png)
 
-## 5. Explore detections and summarize biodiversity
+## 2. Set up a project (administrator, principal investigator)
 
-1. Search for a taxon or open its detection history.
-2. Follow a detection back to its library, extraction, sample, collection event, and site to inspect provenance.
-3. Compare richness or detection frequency by site and period, applying consistent filters for project, marker, QC, and approved analyses.
-4. Export the filtered results when needed for further analysis.
+1. Open **Projects** and choose **New project**. Enter a title and optionally objectives and a start date. You become its owner.
+2. Open the project. The owner can edit it, add members with a project role (owner, manager, contributor, viewer) and link the sampling sites the project may collect at.
 
-A detection is not an estimate of abundance. A non-detection does not prove absence; interpret results alongside sampling effort, assay sensitivity, and quality information.
+![Projects list](screenshots/t25-projects-admin/02-projects-list-administrator.png)
+![New project form](screenshots/t25-projects-admin/03-new-project-form-administrator.png)
+![Project with members and sites](screenshots/t25-projects-admin/10-project-detail-principal-investigator-owner.png)
 
-## 6. Audit and permissions
+A project role is separate from your global role. Everyone else sees the project read-only:
 
-- Use project membership and assigned roles to determine what actions are allowed; do not share accounts.
-- Important writes create audit records. Use authorized audit views to investigate who changed a record and when.
-- Users are deactivated rather than deleted, preserving provenance.
-- Do not place passwords, access tokens, or sensitive credentials in notes or exported filenames.
+![Read-only project](screenshots/t25-projects-admin/13b-project-detail-field-researcher-read-only.png)
 
-## 7. Local development and support
+**Administrators** also open **Administration** to create users and assign roles, and to read the audit log. You cannot remove your own administrator role or deactivate yourself; users are deactivated, never deleted.
 
-The repository README documents the current development setup. For database-backed work, follow the project setup instructions and use a disposable development/test database. See [API overview](../README.md#api-overview), [Field & Samples](slices/field.md), [backup and recovery](backup-recovery.md), and [data sources](data-sources.md).
+![Administration, users](screenshots/t25-projects-admin/05-admin-users-administrator.png)
+![New user form](screenshots/t25-projects-admin/06-admin-new-user-form.png)
 
-If a described screen or operation is not present in the running build, treat this guide as workflow guidance rather than evidence that the feature is deployed. Report the missing behavior with the affected project, record type, and a reproducible example; avoid including private sample or user data.
+## 3. Record sites, events and samples (field researcher and up)
+
+1. **Sampling map** shows the sites in your projects. Choose **New site** to add one: region, name, habitat, and coordinates typed or clicked on the map.
+2. **Collection events** lists visits. Choose **New event**: pick the project and site, the collection time, notes, any environmental measurements and the samples collected. Everything is saved together, or nothing is.
+3. The event page shows the measurements and the samples with their generated codes (`EB-YYYYMMDD-<event>-<number>`). **Add sample** adds another.
+
+![Sampling map with a site popup](screenshots/t26-map-events-samples/01-sampling-map.png)
+![New site](screenshots/t26-map-events-samples/02-new-site-form.png)
+![New event with measurements and samples](screenshots/t26-map-events-samples/04-new-event-form.png)
+![Event after saving](screenshots/t26-map-events-samples/05-event-detail.png)
+
+A site must be linked to the project before an event can use it. The collection time cannot be more than a day in the future.
+
+### Find a sample and move it along
+
+**Samples** is the registry; filter by status or code prefix. Open a sample to see its event, site, extractions and full status history. The status control offers only the next statuses that are allowed (for example, a failed sample cannot become analyzed), and you can add a note that appears in the history.
+
+![Sample registry filtered](screenshots/t26-map-events-samples/07-samples-filtered.png)
+![Change status](screenshots/t26-map-events-samples/08-sample-detail-change-status.png)
+![Status history with a note](screenshots/t26-map-events-samples/09b-sample-detail-status-note.png)
+
+## 4. Track laboratory work (lab technician, principal investigator)
+
+Open **Lab processing**. It has three tabs: Extractions, QC results and Sequencing runs.
+
+1. **Extractions** tab, lower section **Extraction batches**: choose *New batch* with lab, date and kit.
+2. **Extractions** tab: *Record extraction* for a sample and batch with concentration and purity. A new extraction waits for a QC verdict; choose **Pass** or **Fail** and confirm. The verdict is final.
+3. **QC results** tab: record controls and checks for a sample (or an analysis).
+4. **Sequencing runs** tab: *New run* offers only extractions that passed QC and are not booked on another run. A planned run takes more libraries; **Start run** locks it, then **Mark completed** or **Mark failed**.
+
+![Extractions with QC verdicts](screenshots/t27-lab-processing/01-extractions.png)
+![Record an extraction](screenshots/t27-lab-processing/02-record-extraction-form.png)
+![Confirm a final verdict](screenshots/t27-lab-processing/03-qc-verdict-confirm.png)
+![New sequencing run](screenshots/t27-lab-processing/08-new-run-form.png)
+![A planned run](screenshots/t27-lab-processing/09-run-planned.png)
+
+Other roles can read these pages but see no action buttons:
+
+![Read-only run](screenshots/t27-lab-processing/14b-run-field-researcher.png)
+
+## 5. Import and review detections (analyst, principal investigator)
+
+1. Open **Analysis import** and choose **New analysis**: the sequencing run (its library codes are shown), the marker, the pipeline and reference database, and parameters as JSON.
+2. Open the draft. Prepare a CSV with the required columns (a template is offered). Choose **Check file**: nothing is saved, and any problem is listed by row. Fix the file until it reports that all rows are valid.
+3. Choose **Import**. The analysis becomes *Imported* and waits for a principal investigator.
+4. A principal investigator opens it and chooses **Approve**, or **Reject** with a reason. The person who imported an analysis cannot approve it. Approved analyses are never edited; to correct one, use **Start a correction**, which copies its settings and supersedes the old analysis when the new one is approved.
+
+![Analyses list](screenshots/t28-analysis-species-analytics/01-analyses-list.png)
+![A problem found by Check file](screenshots/t28-analysis-species-analytics/04-dry-run-errors.png)
+![A clean check](screenshots/t28-analysis-species-analytics/05-dry-run-clean.png)
+![Imported, waiting for approval](screenshots/t28-analysis-species-analytics/06-imported.png)
+![Approve or reject](screenshots/t28-analysis-species-analytics/07-approve-or-reject.png)
+![Importer cannot approve](screenshots/t28-analysis-species-analytics/10-importer-cannot-approve.png)
+
+Only **approved** analyses and detections with a **pass** QC flag count in the species explorer, the analytics and the downloads.
+
+## 6. Explore species and biodiversity (everyone)
+
+**Species explorer**: search a taxon, see its lineage, the detection frequency by site, and every detection with a link back to its sample. **Download CSV** exports the detections for one project; the caveat travels with the file.
+
+**Biodiversity analytics**: observed species per year or per site, with the sampling effort and a chart and table. A richness CSV can be downloaded.
+
+![Species search and detections](screenshots/t28-analysis-species-analytics/13-species-search-and-detections.png)
+![Analytics by year](screenshots/t28-analysis-species-analytics/16-analytics-by-year.png)
+![Analytics by site with detection frequency](screenshots/t28-analysis-species-analytics/17-analytics-by-site-with-frequency.png)
+
+**How to read the results.** A detection means DNA of that taxon was found; it is not an estimate of abundance. A non-detection does not prove absence. Interpret results alongside sampling effort, assay sensitivity and QC.
+
+## 7. Follow a detection back to the field
+
+In the species explorer every detection links to its sample. The sample page shows its event and site, status history and extractions; a sequencing run page lists its libraries with their source samples. Together they trace a detection to the library, extraction, sample, event and site it came from.
+
+## 8. Audit and permissions
+
+Important changes are written to the audit log by the database itself, with who and when. Administrators see all entries, principal investigators those of their own projects, on **Administration → Audit log** (also reached from the dashboard's *Full audit log* link). Never share accounts; do not put passwords or tokens in notes.
+
+![Audit log](screenshots/t25-projects-admin/08-admin-audit-log-administrator.png)
+
+## 9. If something does not work
+
+- A page or button is missing: your role may not allow it (see the table above), or you may not be a member of the project.
+- An action is refused with a message: read it; most explain the rule (for example, the sample status change that is not allowed).
+- *ML insights* in the sidebar is a placeholder for an optional later task.
+
+When reporting a problem, give the project, the record type and a reproducible example, without private sample or user data. For setup, see the repository README; for the API, [api.md](api.md); for backups, [backup-recovery.md](backup-recovery.md).
